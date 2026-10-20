@@ -116,6 +116,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     .kpi { background: #fff; border: 1px solid var(--linea); border-top: 3px solid var(--cian); border-radius: 12px; padding: 14px 16px; }
     .kpi b { display: block; font-family: var(--titulos); font-size: 26px; color: var(--marino); }
     .kpi span { color: var(--suave); font-size: 13px; }
+    .inicio { min-height: calc(100vh - 84px); }
+    .marca-agua-inicio { display: block; width: min(57vw, 495px); max-height: 360px; margin: 4px auto 18px; object-fit: contain; opacity: .22; filter: saturate(.8) blur(.3px); pointer-events: none; user-select: none; }
     .muted { color: var(--suave); font-size: 13px; }
     .solo-print { display: none; }
 
@@ -175,6 +177,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       .kpi { padding: 12px; }
       .kpi b { font-size: 22px; }
 
+      .marca-agua-inicio { width: min(88vw, 450px); opacity: .18; }
       .acceso { justify-content: center; padding: 16px; background-position: 75% center; }
     }
     @media print {
