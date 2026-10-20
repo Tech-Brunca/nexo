@@ -91,19 +91,35 @@ export async function crearEsquemaColegio(colegioId: number, c: Ejecutor = db())
   return esquema;
 }
 
+async function versionActual(c: Ejecutor): Promise<string | null> {
+  try {
+    const v = await c.query(`SELECT valor FROM general.meta WHERE clave='version'`);
+    return v.rows[0]?.valor ?? null;
+  } catch {
+    return null; // aún no existe el esquema general
+  }
+}
+
 export async function migrar() {
+  // Si ya está al día no se toca nada (arranques en frío de Netlify más rápidos)
+  if ((await versionActual(db())) === VERSION) return;
   const c = await db().connect();
   try {
-    await c.query('SELECT pg_advisory_lock(424242)');
+    // Candado de transacción: funciona con el Transaction pooler de Supabase,
+    // donde un candado de sesión podría quedar trabado en otra conexión.
+    await c.query('BEGIN');
+    await c.query('SELECT pg_advisory_xact_lock(424242)');
     await c.query(sqlGeneral);
-    const v = await c.query(`SELECT valor FROM general.meta WHERE clave='version'`);
-    if (v.rows[0]?.valor !== VERSION) {
+    if ((await versionActual(c)) !== VERSION) {
       const colegios = await c.query('SELECT id FROM general.colegios ORDER BY id');
       for (const col of colegios.rows) await crearEsquemaColegio(col.id, c);
       await c.query(`INSERT INTO general.meta VALUES ('version', $1) ON CONFLICT (clave) DO UPDATE SET valor=EXCLUDED.valor`, [VERSION]);
     }
+    await c.query('COMMIT');
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => {});
+    throw e;
   } finally {
-    await c.query('SELECT pg_advisory_unlock(424242)').catch(() => {});
     c.release();
   }
 }
