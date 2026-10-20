@@ -1,0 +1,48 @@
+---
+import Base from '../layouts/Base.astro';
+import { exec, q } from '../lib/db';
+import { num, str } from '../lib/util';
+const { user, inst } = Astro.locals;
+let msg = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'guardar') {
+    const ids = f.getAll('id');
+    for (let i = 0; i < ids.length; i++)
+      await exec('UPDATE periodos SET numero=?, nombre=?, fecha_ini=?, fecha_fin=?, ponderado=? WHERE id=? AND usuario_id=?',
+        [num(f.getAll('numero')[i]), str(f.getAll('nombre')[i]), str(f.getAll('fecha_ini')[i]) || null, str(f.getAll('fecha_fin')[i]) || null, num(f.getAll('ponderado')[i]), num(ids[i]), user.id]);
+    msg = 'Periodos guardados.';
+  } else if (accion === 'agregar') {
+    const n = (await q<any>('SELECT COALESCE(MAX(numero),0)+1 AS n FROM periodos WHERE usuario_id=? AND institucion_id=?', [user.id, inst!.id]))[0].n;
+    await exec('INSERT INTO periodos (usuario_id, institucion_id, numero, nombre, ponderado) VALUES (?,?,?,?,0)', [user.id, inst!.id, n, `Periodo ${n}`]);
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM periodos WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+  }
+}
+const periodos = await q<any>('SELECT * FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [user.id, inst!.id]);
+const suma = periodos.reduce((s, p) => s + Number(p.ponderado), 0);
+---
+<Base titulo="Periodos">
+  <h1>Periodos</h1>
+  <p class="sub">Periodos en {inst!.nombre}: fechas (para ubicar la asistencia) y peso en la nota anual.</p>
+  {msg && <div class="msg ok">{msg}</div>}
+  {suma !== 100 && <div class="msg aviso">Los ponderados suman {suma}%. Deberían sumar 100%.</div>}
+  <form method="post" class="tabla">
+    <input type="hidden" name="accion" value="guardar" />
+    <table>
+      <tr><th>N.º</th><th>Nombre</th><th>Inicio</th><th>Fin</th><th class="n">Ponderado %</th><th></th></tr>
+      {periodos.map((p) => (
+        <tr><td><input type="hidden" name="id" value={p.id} /><input name="numero" value={p.numero} style="width:60px" /></td>
+          <td><input name="nombre" value={p.nombre} /></td>
+          <td><input type="date" name="fecha_ini" value={p.fecha_ini ?? ''} /></td>
+          <td><input type="date" name="fecha_fin" value={p.fecha_fin ?? ''} /></td>
+          <td><input name="ponderado" value={p.ponderado} style="width:80px" /></td>
+          <td><button class="mini peligro" form={`b${p.id}`}>Eliminar</button></td></tr>
+      ))}
+    </table>
+    <p style="padding:0 10px"><button>Guardar</button> <button class="sec" form="agr">Agregar periodo</button></p>
+  </form>
+  <form id="agr" method="post"><input type="hidden" name="accion" value="agregar" /></form>
+  {periodos.map((p) => <form id={`b${p.id}`} method="post" onsubmit="return confirm('¿Eliminar el periodo y sus evaluaciones?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={p.id} /></form>)}
+</Base>

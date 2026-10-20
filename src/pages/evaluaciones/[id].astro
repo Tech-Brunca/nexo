@@ -1,0 +1,112 @@
+---
+import Base from '../../layouts/Base.astro';
+import { exec, q, one } from '../../lib/db';
+import { estudiantesDe } from '../../lib/calc';
+import { num, numOrNull, str, fmt, r2, NIVELES_LOGRO } from '../../lib/util';
+const { user } = Astro.locals;
+const id = Number(Astro.params.id);
+const ev = await one<any>(`SELECT e.*, c.nombre AS componente, c.tipo, s.nivel, s.nombre AS seccion, p.nombre AS periodo
+  FROM evaluaciones e JOIN componentes c ON c.id=e.componente_id JOIN secciones s ON s.id=e.seccion_id JOIN periodos p ON p.id=e.periodo_id
+  WHERE e.id=? AND s.usuario_id=?`, [id, user.id]);
+if (!ev) return Astro.redirect('/evaluaciones');
+const porInd = ev.tipo === 'indicadores';
+let msg = '', error = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'notas') {
+    // Solo se aceptan estudiantes de esta sección e indicadores de esta evaluación
+    const validos = new Set((await estudiantesDe(ev.seccion_id)).map((e) => e.id));
+    const indsEv = new Set((await q<any>('SELECT indicador_id FROM evaluacion_indicadores WHERE evaluacion_id=?', [id])).map((r) => r.indicador_id));
+    for (const [k, v] of f.entries()) {
+      if (k.startsWith('p_') && validos.has(Number(k.slice(2)))) {
+        const pts = numOrNull(v);
+        if (pts !== null && (pts < 0 || pts > ev.puntos_total)) { error = `Hay puntos fuera del rango 0–${ev.puntos_total}; no se guardaron esos.`; continue; }
+        await exec('INSERT INTO notas (evaluacion_id, estudiante_id, puntos, observacion) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE puntos=VALUES(puntos), observacion=VALUES(observacion)',
+          [id, Number(k.slice(2)), pts, str(f.get('o_' + k.slice(2)))]);
+      } else if (k.startsWith('v_')) {
+        const [, est, ind] = k.split('_');
+        if (!validos.has(Number(est)) || !indsEv.has(Number(ind))) continue;
+        await exec('INSERT INTO valoraciones VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE nivel=VALUES(nivel)', [id, Number(est), Number(ind), str(v) === '' ? null : Number(v)]);
+      }
+    }
+    if (!error) msg = 'Calificaciones guardadas.';
+  } else if (accion === 'datos') {
+    await exec('UPDATE evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, fecha=? WHERE id=?', [str(f.get('nombre')), num(f.get('puntos_total')), num(f.get('porcentaje')), str(f.get('fecha')) || null, id]);
+    return Astro.redirect(`/evaluaciones/${id}`);
+  }
+}
+const ests = await estudiantesDe(ev.seccion_id);
+const sub = Astro.url.searchParams.get('sub') ?? '';
+const lista = sub ? ests.filter((e) => e.subgrupo === sub) : ests;
+const subgrupos = [...new Set(ests.map((e) => e.subgrupo).filter(Boolean))].sort();
+const notas = new Map((await q<any>('SELECT * FROM notas WHERE evaluacion_id=?', [id])).map((n) => [n.estudiante_id, n]));
+const inds = porInd ? await q<any>('SELECT i.* FROM evaluacion_indicadores ei JOIN indicadores i ON i.id=ei.indicador_id WHERE ei.evaluacion_id=? ORDER BY i.id', [id]) : [];
+const vals = new Map((await q<any>('SELECT * FROM valoraciones WHERE evaluacion_id=?', [id])).map((v) => [`${v.estudiante_id}_${v.indicador_id}`, v.nivel]));
+const pctInd = (estId: number) => {
+  const ns = inds.map((i) => vals.get(`${estId}_${i.id}`)).filter((n) => n !== null && n !== undefined) as number[];
+  return ns.length ? r2((ns.reduce((s, n) => s + n, 0) / (3 * ns.length)) * ev.porcentaje) : null;
+};
+---
+<Base titulo={ev.nombre}>
+  <p class="no-print"><a href={`/evaluaciones?seccion=${ev.seccion_id}&periodo=${ev.periodo_id}`}>← Evaluaciones</a></p>
+  <h1>{ev.nombre}</h1>
+  <p class="sub">{ev.componente} · Sección {ev.nivel}-{ev.seccion} · {ev.periodo} · Valor {ev.porcentaje}%{!porInd && ` · ${ev.puntos_total} puntos`}</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  <details class="tarjeta no-print"><summary>Editar datos de la evaluación</summary>
+    <form method="post" class="fila" style="margin-top:10px"><input type="hidden" name="accion" value="datos" />
+      <label style="flex:1">Nombre<input name="nombre" value={ev.nombre} /></label>
+      {!porInd && <label>Puntos totales<input name="puntos_total" value={ev.puntos_total} style="width:90px" /></label>}
+      {porInd && <input type="hidden" name="puntos_total" value="0" />}
+      <label>Valor %<input name="porcentaje" value={ev.porcentaje} style="width:90px" /></label>
+      <label>Fecha<input type="date" name="fecha" value={ev.fecha ?? ''} /></label><button class="sec">Guardar</button></form>
+  </details>
+  {subgrupos.length > 0 && (
+    <form class="fila no-print" style="margin-bottom:10px"><label>Subgrupo<select name="sub" onchange="this.form.submit()"><option value="">Todos</option>{subgrupos.map((s) => <option selected={s === sub}>{s}</option>)}</select></label></form>
+  )}
+  {porInd && inds.length === 0 && <div class="msg aviso">Esta evaluación no tiene indicadores asociados.</div>}
+  <form method="post">
+    <input type="hidden" name="accion" value="notas" />
+    {porInd ? (
+      <>
+        <p class="muted no-print">Sin calificar = no se toma en cuenta · Sin entregar = 0 · Inicial = 1 · Intermedio = 2 · Avanzado = 3.
+          Aplicar a todos: {inds.map((i, k) => <select class="todos" data-ind={i.id} title={i.nombre} style="margin-left:4px"><option value="x">Ind. {k + 1}</option>{Object.entries(NIVELES_LOGRO).map(([v, t]) => <option value={v}>{t}</option>)}</select>)}</p>
+        <div class="tabla"><table>
+          <tr><th>Estudiante</th>{inds.map((i, k) => <th title={i.nombre}>Ind. {k + 1}</th>)}<th class="n">Obtenido %</th></tr>
+          {lista.map((e) => (
+            <tr><td>{e.apellidos} {e.nombre}</td>
+              {inds.map((i) => {
+                const v = vals.get(`${e.id}_${i.id}`);
+                return <td><select name={`v_${e.id}_${i.id}`} data-ind={i.id}>{Object.entries(NIVELES_LOGRO).map(([val, t]) => <option value={val} selected={(v === null || v === undefined ? '' : String(v)) === val}>{t}</option>)}</select></td>;
+              })}
+              <td class="n">{fmt(pctInd(e.id))}</td></tr>
+          ))}
+        </table></div>
+        <div class="tarjeta" style="margin-top:12px">{inds.map((i, k) => <p style="margin:4px 0"><b>Ind. {k + 1}:</b> {i.nombre}</p>)}</div>
+      </>
+    ) : (
+      <div class="tabla"><table>
+        <tr><th>Estudiante</th><th class="n">Puntos (de {ev.puntos_total})</th><th class="n">Nota</th><th class="n">Obtenido %</th><th>Observación</th></tr>
+        {lista.map((e) => {
+          const n = notas.get(e.id); const p = n?.puntos;
+          return <tr><td>{e.apellidos} {e.nombre}</td>
+            <td><input name={`p_${e.id}`} value={p ?? ''} inputmode="decimal" style="max-width:100px;text-align:right" /></td>
+            <td class="n">{p !== null && p !== undefined && ev.puntos_total ? fmt((p / ev.puntos_total) * 100) : '—'}</td>
+            <td class="n">{p !== null && p !== undefined && ev.puntos_total ? fmt((p / ev.puntos_total) * ev.porcentaje) : '—'}</td>
+            <td><input name={`o_${e.id}`} value={n?.observacion ?? ''} /></td></tr>;
+        })}
+      </table></div>
+    )}
+    <p class="no-print"><button>Guardar calificaciones</button> <button type="button" class="sec" onclick="print()">Imprimir</button></p>
+  </form>
+  <script is:inline>
+    document.querySelectorAll('select.todos').forEach((t) => t.onchange = () => {
+      if (t.value === 'x') return;
+      document.querySelectorAll(`select[name^="v_"][data-ind="${t.dataset.ind}"]`).forEach((s) => s.value = t.value);
+    });
+    // Enter baja a la siguiente fila en la columna de puntos
+    document.querySelectorAll('input[name^="p_"]').forEach((el, i, all) => el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); (all[i + 1] || el).focus(); }
+    }));
+  </script>
+</Base>

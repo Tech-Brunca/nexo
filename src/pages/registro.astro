@@ -1,0 +1,40 @@
+---
+import Base from '../layouts/Base.astro';
+import { hashClave, claveValida, esCorreoAdmin } from '../lib/auth';
+import { one, exec } from '../lib/db';
+import { str } from '../lib/util';
+let error = '';
+const v = { nombre: '', correo: '', cedula: '', nota: '' };
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  v.nombre = str(f.get('nombre')); v.correo = str(f.get('correo')).toLowerCase(); v.cedula = str(f.get('cedula')); v.nota = str(f.get('nota')).slice(0, 300);
+  const clave = str(f.get('clave'));
+  if (!v.nombre || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.correo)) error = 'Indique su nombre y un correo válido.';
+  else if (!claveValida(clave)) error = 'La contraseña debe tener al menos 8 caracteres.';
+  else if (clave !== str(f.get('clave2'))) error = 'Las contraseñas no coinciden.';
+  else if (await one('SELECT id FROM usuarios WHERE correo=?', [v.correo])) error = 'Ya existe una cuenta con ese correo.';
+  else {
+    const admin = esCorreoAdmin(v.correo);
+    await exec('INSERT INTO usuarios (correo, nombre, cedula, pass_hash, rol, estado, nota_registro) VALUES (?,?,?,?,?,?,?)',
+      [v.correo, v.nombre, v.cedula, await hashClave(clave), admin ? 'admin' : 'docente', admin ? 'activo' : 'pendiente', v.nota]);
+    return Astro.redirect(admin ? '/login' : '/login?registrado=1');
+  }
+}
+---
+<Base titulo="Solicitar acceso" sinMenu>
+  <div style="min-height:100vh;display:grid;place-items:center;padding:20px">
+    <form method="post" class="tarjeta" style="width:min(420px,100%);padding:28px">
+      <h1>Solicitar acceso</h1>
+      <p class="sub">Un administrador revisará y aprobará su cuenta.</p>
+      {error && <div class="msg mal">{error}</div>}
+      <label>Nombre completo<input name="nombre" value={v.nombre} required /></label>
+      <label style="margin-top:10px">Correo<input type="email" name="correo" value={v.correo} autocomplete="username" required /></label>
+      <label style="margin-top:10px">Cédula (opcional)<input name="cedula" value={v.cedula} /></label>
+      <label style="margin-top:10px">Contraseña (mínimo 8 caracteres)<input type="password" name="clave" autocomplete="new-password" required minlength="8" /></label>
+      <label style="margin-top:10px">Repetir contraseña<input type="password" name="clave2" autocomplete="new-password" required /></label>
+      <label style="margin-top:10px">Institución(es) donde trabaja<textarea name="nota" placeholder="Ej.: CTP Platanares, Liceo …">{v.nota}</textarea></label>
+      <p><button style="width:100%">Enviar solicitud</button></p>
+      <p class="muted"><a href="/login">Volver a ingresar</a></p>
+    </form>
+  </div>
+</Base>

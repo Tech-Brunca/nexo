@@ -1,0 +1,63 @@
+---
+import Base from '../layouts/Base.astro';
+import Selector from '../components/Selector.astro';
+import { exec } from '../lib/db';
+import { estudiantesDe, seccion } from '../lib/calc';
+import { calcularAnual } from '../lib/calc';
+import { numOrNull, fmt, csv } from '../lib/util';
+const { user, inst } = Astro.locals;
+const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
+const sec = seccionId ? await seccion(user.id, seccionId, inst!.id) : null;
+let msg = '';
+if (sec && Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const validos = new Set((await estudiantesDe(seccionId)).map((e) => e.id));
+  for (const [k] of f.entries()) {
+    if (!k.startsWith('c1_')) continue;
+    const est = Number(k.slice(3));
+    if (!validos.has(est)) continue;
+    const n1 = numOrNull(f.get('c1_' + est)), n2 = numOrNull(f.get('c2_' + est));
+    if (n1 === null && n2 === null) await exec('DELETE FROM convocatorias WHERE estudiante_id=? AND seccion_id=?', [est, seccionId]);
+    else await exec('INSERT INTO convocatorias VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE nota1=VALUES(nota1), nota2=VALUES(nota2)', [est, seccionId, n1, n2]);
+  }
+  msg = 'Convocatorias guardadas.';
+}
+const r = sec ? await calcularAnual(user.id, seccionId) : null;
+const cfg = { institucion: inst!.nombre, docente: user.nombre };
+if (r && Astro.url.searchParams.get('csv')) {
+  return new Response(csv([
+    ['Cédula', 'Estudiante', ...r.periodos.map((p: any) => `${p.nombre} (${p.ponderado}%)`), 'Nota anual', 'Conv. 1', 'Conv. 2', 'Condición'],
+    ...r.filas.map((f) => [f.est.cedula, `${f.est.apellidos} ${f.est.nombre}`, ...f.porPer, f.anual, f.conv?.nota1 ?? '', f.conv?.nota2 ?? '', f.condicion]),
+  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="nota-anual-${r.sec.nivel}-${r.sec.nombre}.csv"` } });
+}
+const chip = (c: string) => (c.startsWith('Aprobado') ? 'ok' : c === 'Aplazado' ? 'aviso' : 'mal');
+---
+<Base titulo="Nota anual">
+  <h1>Nota anual y convocatorias</h1>
+  <p class="sub">Promedio ponderado de los periodos. Quien quede bajo la nota mínima pasa a convocatorias.</p>
+  <Selector seccionId={seccionId} />
+  {msg && <div class="msg ok">{msg}</div>}
+  {r && (
+    <form method="post">
+      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {r.sec.nivel}-{r.sec.nombre} · Curso {r.sec.anio} · Docente: {cfg.docente}</p></div>
+      <div class="tabla"><table>
+        <tr><th>#</th><th>Estudiante</th>{r.periodos.map((p: any) => <th class="n">{p.nombre}<br />{p.ponderado}%</th>)}<th class="n">Anual</th><th class="n">Conv. 1</th><th class="n">Conv. 2</th><th>Condición</th></tr>
+        {r.filas.map((f, i) => (
+          <tr><td>{i + 1}</td><td>{f.est.apellidos} {f.est.nombre}</td>
+            {f.porPer.map((n: number) => <td class="n">{fmt(n)}</td>)}
+            <td class="n"><b>{fmt(f.anual)}</b></td>
+            {f.anual < r.notaApb ? (
+              <>
+                <td><input name={`c1_${f.est.id}`} value={f.conv?.nota1 ?? ''} style="width:70px;text-align:right" /></td>
+                <td><input name={`c2_${f.est.id}`} value={f.conv?.nota2 ?? ''} style="width:70px;text-align:right" /></td>
+              </>
+            ) : <><td></td><td></td></>}
+            <td><span class={`chip ${chip(f.condicion)}`}>{f.condicion}</span></td></tr>
+        ))}
+      </table></div>
+      <p class="no-print"><button>Guardar convocatorias</button>
+        <a class="btn sec" href={`?seccion=${seccionId}&csv=1`}>Exportar CSV</a> <button type="button" class="sec" onclick="print()">Imprimir acta</button></p>
+      <p class="muted">Nota mínima de la sección: {r.notaApb}. Use −1 o deje vacío si el estudiante no se presentó a una convocatoria.</p>
+    </form>
+  )}
+</Base>

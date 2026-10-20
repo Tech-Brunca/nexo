@@ -1,0 +1,38 @@
+name: reddi
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: registro
+      MARIADB_USER: registro
+      MARIADB_PASSWORD: ${DB_PASSWORD:-registro123}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root123}
+      TZ: America/Costa_Rica
+    volumes:
+      - datos:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_USER: registro
+      DB_PASSWORD: ${DB_PASSWORD:-registro123}
+      DB_NAME: registro
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-hferreto@gmail.com}
+      SESSION_SECRET: ${SESSION_SECRET:-cambie-esta-clave-secreta}
+      TZ: America/Costa_Rica
+    ports:
+      - "8090:4321"
+
+volumes:
+  datos:

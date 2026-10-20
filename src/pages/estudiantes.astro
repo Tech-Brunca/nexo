@@ -1,0 +1,61 @@
+---
+import Base from '../layouts/Base.astro';
+import { exec, q } from '../lib/db';
+import { num, str } from '../lib/util';
+const { user, inst } = Astro.locals;
+let msg = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'editar') {
+    await exec('UPDATE estudiantes SET cedula=?, apellidos=?, nombre=?, fecha_nac=?, genero=?, encargado=?, telefono=?, extranjero=?, activo=? WHERE id=? AND usuario_id=?',
+      [str(f.get('cedula')), str(f.get('apellidos')), str(f.get('nombre')), str(f.get('fecha_nac')) || null, str(f.get('genero')) || null,
+       str(f.get('encargado')), str(f.get('telefono')), f.get('extranjero') ? 1 : 0, f.get('activo') ? 1 : 0, num(f.get('id')), user.id]);
+    msg = 'Datos actualizados.';
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM estudiantes WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+    msg = 'Estudiante eliminado con sus notas y asistencia.';
+  }
+}
+const buscar = Astro.url.searchParams.get('q') ?? '';
+const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
+const lista = await q<any>(
+  `SELECT e.*, GROUP_CONCAT(CONCAT(s.nivel,'-',s.nombre) ORDER BY s.nivel SEPARATOR ', ') AS secciones
+   FROM estudiantes e LEFT JOIN matriculas m ON m.estudiante_id=e.id LEFT JOIN secciones s ON s.id=m.seccion_id
+   WHERE e.usuario_id = ? AND e.institucion_id = ? AND (? = '' OR e.cedula LIKE ? OR CONCAT(e.apellidos,' ',e.nombre) LIKE ?)
+   GROUP BY e.id ORDER BY e.apellidos, e.nombre LIMIT 500`,
+  [user.id, inst!.id, buscar, `%${buscar}%`, `%${buscar}%`]);
+---
+<Base titulo="Estudiantes">
+  <h1>Estudiantes</h1>
+  <p class="sub">Su lista de estudiantes en {inst!.nombre}. Para agregarlos a un grupo, entre a la <a href="/secciones">sección</a>.</p>
+  {msg && <div class="msg ok">{msg}</div>}
+  <form class="tarjeta fila"><label style="flex:1">Buscar por nombre o cédula<input name="q" value={buscar} /></label><button class="sec">Buscar</button></form>
+  <div class="tabla"><table>
+    <tr><th>Cédula</th><th>Estudiante</th><th>Secciones</th><th>Encargado(a)</th><th>Teléfono</th><th>Estado</th><th></th></tr>
+    {lista.map((e) => editar === e.id ? (
+      <tr><td colspan="7">
+        <form method="post" class="fila">
+          <input type="hidden" name="accion" value="editar" /><input type="hidden" name="id" value={e.id} />
+          <label>Cédula<input name="cedula" value={e.cedula} size="12" /></label>
+          <label>Apellidos<input name="apellidos" value={e.apellidos} /></label>
+          <label>Nombre<input name="nombre" value={e.nombre} /></label>
+          <label>Nacimiento<input type="date" name="fecha_nac" value={e.fecha_nac ?? ''} /></label>
+          <label>Género<select name="genero"><option value="">—</option><option selected={e.genero === 'F'}>F</option><option selected={e.genero === 'M'}>M</option></select></label>
+          <label>Encargado(a)<input name="encargado" value={e.encargado} /></label>
+          <label>Teléfono<input name="telefono" value={e.telefono} size="10" /></label>
+          <label><span><input type="checkbox" name="extranjero" checked={!!e.extranjero} /> Extranjero</span></label>
+          <label><span><input type="checkbox" name="activo" checked={!!e.activo} /> Activo</span></label>
+          <button>Guardar</button><a class="btn sec" href={`?q=${encodeURIComponent(buscar)}`}>Cancelar</a>
+        </form>
+        <form method="post" style="margin-top:8px" onsubmit="return confirm('¿Eliminar definitivamente? Se borran sus notas y asistencia.')">
+          <input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={e.id} /><button class="mini peligro">Eliminar estudiante</button>
+        </form>
+      </td></tr>
+    ) : (
+      <tr><td>{e.cedula}</td><td>{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
+        <td>{e.activo ? <span class="chip ok">Activo</span> : <span class="chip mal">Inactivo</span>}</td>
+        <td><a href={`?q=${encodeURIComponent(buscar)}&editar=${e.id}`}>Editar</a></td></tr>
+    ))}
+  </table></div>
+</Base>

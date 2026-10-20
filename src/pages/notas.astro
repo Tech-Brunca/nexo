@@ -1,0 +1,60 @@
+---
+import Base from '../layouts/Base.astro';
+import Selector from '../components/Selector.astro';
+import { q } from '../lib/db';
+import { calcularPeriodo } from '../lib/calc';
+import { fmt, csv } from '../lib/util';
+const { user, inst } = Astro.locals;
+const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
+const periodos = await q<any>('SELECT id FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [user.id, inst!.id]);
+const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
+const periodoId = periodos.find((p) => p.id === pedido)?.id ?? periodos[0]?.id ?? 0;
+const detalle = Astro.url.searchParams.get('detalle') === '1';
+const r0 = seccionId && periodoId ? await calcularPeriodo(user.id, seccionId, periodoId) : null;
+const r = r0 && r0.sec.institucion_id === inst!.id ? r0 : null;
+const cfg = { institucion: inst!.nombre, docente: user.nombre };
+if (r && Astro.url.searchParams.get('csv')) {
+  return new Response(csv([
+    ['Cédula', 'Estudiante', ...r.comps.map((c) => `${c.nombre} (${c.porcentaje}%)`), 'Nota', 'Condición'],
+    ...r.filas.map((f) => [f.est.cedula, `${f.est.apellidos} ${f.est.nombre}`, ...r.comps.map((c) => f.porComp[c.id]), f.total, f.condicion]),
+  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="notas-${r.sec.nivel}-${r.sec.nombre}-p${r.per.numero}.csv"` } });
+}
+const prom = r && r.filas.length ? r.filas.reduce((s, f) => s + f.total, 0) / r.filas.length : null;
+const aprob = r ? r.filas.filter((f) => f.condicion === 'Aprobado').length : 0;
+---
+<Base titulo="Calificaciones">
+  <h1>Calificaciones del periodo</h1>
+  <p class="sub">Nota por componente calculada a partir de las evaluaciones, indicadores y asistencia.</p>
+  <Selector seccionId={seccionId} periodoId={periodoId} conPeriodo />
+  {r && (
+    <>
+      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {r.sec.nivel}-{r.sec.nombre} · {r.per.nombre} · Docente: {cfg.docente}</p></div>
+      <div class="grid-kpi no-print" style="margin-bottom:14px">
+        <div class="kpi"><b>{fmt(prom)}</b><span>Promedio del grupo</span></div>
+        <div class="kpi"><b style="color:var(--verde)">{aprob}</b><span>Aprobados (≥ {r.notaApb})</span></div>
+        <div class="kpi"><b style="color:var(--rojo)">{r.filas.length - aprob}</b><span>Bajo la nota mínima</span></div>
+      </div>
+      <div class="tabla"><table>
+        <tr><th>#</th><th>Estudiante</th>
+          {r.comps.map((c) => detalle && c.tipo !== 'asistencia'
+            ? r.evals.filter((e) => e.componente_id === c.id).map((e) => <th class="n" title={c.nombre}>{e.nombre}<br />{e.porcentaje}%</th>).concat(<th class="n">{c.nombre}<br />{c.porcentaje}%</th>)
+            : <th class="n">{c.nombre}<br />{c.porcentaje}%</th>)}
+          <th class="n">Nota</th><th>Condición</th></tr>
+        {r.filas.map((f, i) => (
+          <tr><td>{i + 1}</td><td>{f.est.apellidos} {f.est.nombre}</td>
+            {r.comps.map((c) => detalle && c.tipo !== 'asistencia'
+              ? r.evals.filter((e) => e.componente_id === c.id).map((e) => <td class="n muted">{fmt(f.detalle[e.id])}</td>).concat(<td class="n"><b>{fmt(f.porComp[c.id])}</b></td>)
+              : <td class="n">{fmt(f.porComp[c.id])}{c.tipo === 'asistencia' && <span class="muted"> ({fmt(f.pctAus)}% aus.)</span>}</td>)}
+            <td class="n"><b>{fmt(f.total)}</b></td>
+            <td><span class={`chip ${f.condicion === 'Aprobado' ? 'ok' : 'mal'}`}>{f.condicion}</span></td></tr>
+        ))}
+      </table></div>
+      <p class="no-print">
+        <a class="btn sec" href={`?seccion=${seccionId}&periodo=${periodoId}&detalle=${detalle ? 0 : 1}`}>{detalle ? 'Ver resumen' : 'Ver detalle por evaluación'}</a>
+        <a class="btn sec" href={`?seccion=${seccionId}&periodo=${periodoId}&csv=1`}>Exportar CSV (Excel)</a>
+        <button class="sec" onclick="print()">Imprimir</button>
+      </p>
+      {r.comps.length === 0 && <div class="msg aviso">El nivel {r.sec.nivel} no tiene componentes configurados.</div>}
+    </>
+  )}
+</Base>

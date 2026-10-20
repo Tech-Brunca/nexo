@@ -1,0 +1,91 @@
+---
+import Base from '../layouts/Base.astro';
+import { exec, q } from '../lib/db';
+import { num, str } from '../lib/util';
+const EJEMPLO: [string, number, string][] = [
+  ['Trabajo cotidiano', 40, 'indicadores'], ['Tareas', 10, 'puntos'], ['Pruebas', 35, 'puntos'],
+  ['Proyecto', 10, 'puntos'], ['Asistencia', 5, 'asistencia'],
+];
+let msg = '';
+const { user, inst } = Astro.locals;
+const U = user.id, I = inst!.id;
+const niveles = (await q<any>('SELECT DISTINCT nivel FROM secciones WHERE usuario_id=? AND institucion_id=? ORDER BY CAST(nivel AS UNSIGNED)', [U, I])).map((r) => r.nivel);
+let nivel = Astro.url.searchParams.get('nivel') ?? niveles[0] ?? '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  nivel = str(f.get('nivel')) || nivel;
+  const accion = str(f.get('accion'));
+  if (accion === 'agregar' && str(f.get('nombre'))) {
+    await exec('INSERT INTO componentes (usuario_id, institucion_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?,?)',
+      [U, I, nivel, str(f.get('nombre')), num(f.get('porcentaje')), str(f.get('tipo')) || 'puntos', num(f.get('orden'))]);
+  } else if (accion === 'guardar') {
+    const ids = f.getAll('id');
+    for (let i = 0; i < ids.length; i++)
+      await exec('UPDATE componentes SET nombre=?, porcentaje=?, tipo=?, orden=? WHERE id=? AND usuario_id=?',
+        [str(f.getAll('nombre')[i]), num(f.getAll('porcentaje')[i]), str(f.getAll('tipo')[i]), num(f.getAll('orden')[i]), num(ids[i]), U]);
+    msg = 'Componentes guardados.';
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM componentes WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
+  } else if (accion === 'ejemplo') {
+    for (const [i, [n, p, t]] of EJEMPLO.entries()) await exec('INSERT INTO componentes (usuario_id, institucion_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?,?)', [U, I, nivel, n, p, t, i + 1]);
+    msg = 'Se cargó un ejemplo. Ajuste los porcentajes según el programa de su asignatura.';
+  } else if (accion === 'copiar') {
+    const destino = str(f.get('destino'));
+    if (destino) {
+      await exec('INSERT INTO componentes (usuario_id, institucion_id, nivel, nombre, porcentaje, tipo, orden) SELECT usuario_id, institucion_id, ?, nombre, porcentaje, tipo, orden FROM componentes WHERE usuario_id=? AND institucion_id=? AND nivel=?', [destino, U, I, nivel]);
+      msg = `Componentes copiados al nivel ${destino}.`;
+    }
+  }
+}
+const comps = nivel ? await q<any>('SELECT * FROM componentes WHERE usuario_id=? AND institucion_id=? AND nivel=? ORDER BY orden, id', [U, I, nivel]) : [];
+const suma = comps.reduce((s, c) => s + Number(c.porcentaje), 0);
+const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)', asistencia: 'Asistencia (automático)' };
+---
+<Base titulo="Componentes">
+  <h1>Componentes de evaluación</h1>
+  <p class="sub">Valor de cada componente por nivel en {inst!.nombre} (académico y técnico pueden diferir entre colegios). Las evaluaciones se reparten ese porcentaje.</p>
+  {msg && <div class="msg ok">{msg}</div>}
+  <form method="get" class="tarjeta fila">
+    <label>Nivel
+      <select name="nivel" onchange="this.form.submit()">
+        {niveles.length === 0 && <option value="">Cree secciones primero</option>}
+        {niveles.map((n) => <option selected={n === nivel}>{n}</option>)}
+      </select>
+    </label>
+  </form>
+  {nivel && (
+    <>
+      {comps.length > 0 && suma !== 100 && <div class="msg aviso">Los componentes del nivel {nivel} suman {suma}%. Deberían sumar 100%.</div>}
+      <form method="post" class="tabla">
+        <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="nivel" value={nivel} />
+        <table>
+          <tr><th>Orden</th><th>Componente</th><th class="n">Porcentaje</th><th>Se califica</th><th></th></tr>
+          {comps.map((c) => (
+            <tr><td><input type="hidden" name="id" value={c.id} /><input name="orden" value={c.orden} style="width:60px" /></td>
+              <td><input name="nombre" value={c.nombre} /></td><td><input name="porcentaje" value={c.porcentaje} style="width:80px" /></td>
+              <td><select name="tipo">{Object.entries(TIPOS).map(([k, v]) => <option value={k} selected={c.tipo === k}>{v}</option>)}</select></td>
+              <td><button class="mini peligro" form={`b${c.id}`}>Eliminar</button></td></tr>
+          ))}
+          <tr><th colspan="2">Total</th><th class="n">{suma}%</th><th colspan="2"></th></tr>
+        </table>
+        {comps.length > 0 && <p style="padding:0 10px"><button>Guardar cambios</button></p>}
+      </form>
+      {comps.map((c) => <form id={`b${c.id}`} method="post" onsubmit="return confirm('¿Eliminar componente y sus evaluaciones?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="id" value={c.id} /></form>)}
+      <form method="post" class="tarjeta fila" style="margin-top:16px">
+        <input type="hidden" name="accion" value="agregar" /><input type="hidden" name="nivel" value={nivel} />
+        <label>Orden<input name="orden" value={comps.length + 1} style="width:60px" /></label>
+        <label style="flex:1">Nuevo componente<input name="nombre" required /></label>
+        <label>Porcentaje<input name="porcentaje" style="width:80px" required /></label>
+        <label>Se califica<select name="tipo">{Object.entries(TIPOS).map(([k, v]) => <option value={k}>{v}</option>)}</select></label>
+        <button>Agregar</button>
+      </form>
+      <div class="fila">
+        {comps.length === 0 && <form method="post"><input type="hidden" name="accion" value="ejemplo" /><input type="hidden" name="nivel" value={nivel} /><button class="sec">Cargar ejemplo para empezar</button></form>}
+        {comps.length > 0 && niveles.length > 1 && (
+          <form method="post" class="fila"><input type="hidden" name="accion" value="copiar" /><input type="hidden" name="nivel" value={nivel} />
+            <label>Copiar a nivel<select name="destino">{niveles.filter((n) => n !== nivel).map((n) => <option>{n}</option>)}</select></label><button class="sec">Copiar</button></form>
+        )}
+      </div>
+    </>
+  )}
+</Base>

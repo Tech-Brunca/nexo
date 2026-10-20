@@ -1,0 +1,86 @@
+---
+import Base from '../layouts/Base.astro';
+import Selector from '../components/Selector.astro';
+import { exec, q, one } from '../lib/db';
+import { estudiantesDe, seccion, ausencias } from '../lib/calc';
+import { num, str, hoy, fmt, csv, TIPOS_AUSENCIA } from '../lib/util';
+const { user, inst } = Astro.locals;
+const U = user.id;
+const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
+const fecha = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('fecha') ?? '') ? Astro.url.searchParams.get('fecha')! : hoy();
+const sec = seccionId ? await seccion(U, seccionId, inst!.id) : null;
+let msg = '';
+if (sec && Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'lista') {
+    const validos = new Set((await estudiantesDe(seccionId)).map((e) => e.id));
+    for (const [k, v] of f.entries()) {
+      if (!k.startsWith('t_')) continue;
+      const est = Number(k.slice(2)), tipo = str(v);
+      if (!validos.has(est) || (tipo && !['AI', 'AJ', 'TI', 'TJ'].includes(tipo))) continue;
+      if (!tipo) await exec('DELETE FROM asistencia WHERE estudiante_id=? AND seccion_id=? AND fecha=?', [est, seccionId, fecha]);
+      else await exec(`INSERT INTO asistencia (estudiante_id, seccion_id, fecha, tipo, lecciones, observacion) VALUES (?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE tipo=VALUES(tipo), lecciones=VALUES(lecciones), observacion=VALUES(observacion)`,
+        [est, seccionId, fecha, tipo, Math.max(1, num(f.get('l_' + est), 1)), str(f.get('o_' + est))]);
+    }
+    msg = `Asistencia del ${fecha} guardada.`;
+  } else if (accion === 'justificar') {
+    await exec(`UPDATE asistencia SET tipo = CASE tipo WHEN 'AI' THEN 'AJ' WHEN 'TI' THEN 'TJ' WHEN 'AJ' THEN 'AI' ELSE 'TI' END WHERE id=? AND seccion_id=?`, [num(f.get('id')), seccionId]);
+  }
+}
+const ests = sec ? await estudiantesDe(seccionId) : [];
+const delDia = new Map((sec ? await q<any>('SELECT * FROM asistencia WHERE seccion_id=? AND fecha=?', [seccionId, fecha]) : []).map((a) => [a.estudiante_id, a]));
+const per = sec ? await one<any>('SELECT * FROM periodos WHERE usuario_id=? AND institucion_id=? AND (fecha_ini IS NULL OR fecha_ini<=?) AND (fecha_fin IS NULL OR fecha_fin>=?) ORDER BY numero LIMIT 1', [U, sec.institucion_id, fecha, fecha]) : null;
+const lec = sec && per ? await one<any>('SELECT cantidad FROM lecciones WHERE seccion_id=? AND periodo_id=?', [seccionId, per.id]) : null;
+const tot = sec ? await ausencias(U, seccionId, per?.fecha_ini ?? null, per?.fecha_fin ?? null) : new Map();
+const historial = sec ? await q<any>(`SELECT a.*, e.apellidos, e.nombre FROM asistencia a JOIN estudiantes e ON e.id=a.estudiante_id
+  WHERE a.seccion_id=? AND (? IS NULL OR a.fecha>=?) AND (? IS NULL OR a.fecha<=?) ORDER BY a.fecha DESC, e.apellidos LIMIT 200`,
+  [seccionId, per?.fecha_ini ?? null, per?.fecha_ini ?? null, per?.fecha_fin ?? null, per?.fecha_fin ?? null]) : [];
+
+if (sec && Astro.url.searchParams.get('csv')) {
+  const filas = await q<any>(`SELECT a.fecha, e.cedula, e.apellidos, e.nombre, a.tipo, a.lecciones, a.observacion FROM asistencia a
+    JOIN estudiantes e ON e.id=a.estudiante_id WHERE a.seccion_id=? ORDER BY a.fecha, e.apellidos`, [seccionId]);
+  return new Response(csv([['Fecha', 'Cédula', 'Apellidos', 'Nombre', 'Tipo', 'Lecciones', 'Observación'],
+    ...filas.map((r) => [r.fecha, r.cedula, r.apellidos, r.nombre, TIPOS_AUSENCIA[r.tipo], r.lecciones, r.observacion])]),
+    { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="asistencia-${sec.nivel}-${sec.nombre}.csv"` } });
+}
+const lecciones = Number(lec?.cantidad ?? 0);
+---
+<Base titulo="Asistencia">
+  <h1>Asistencia</h1>
+  <p class="sub">Marque solo a quien falta o llega tarde; el resto queda presente.</p>
+  <Selector seccionId={seccionId} fecha={fecha} />
+  {msg && <div class="msg ok">{msg}</div>}
+  {sec && (
+    <>
+      <form method="post">
+        <input type="hidden" name="accion" value="lista" />
+        <div class="tabla"><table>
+          <tr><th>#</th><th>Estudiante</th><th>{fecha}</th><th class="n">Lecciones</th><th>Observación</th><th class="n">AI</th><th class="n">AJ</th><th class="n">TI</th><th class="n">% Ausentismo</th></tr>
+          {ests.map((e, i) => {
+            const a = delDia.get(e.id); const t = tot.get(e.id);
+            const pct = lecciones > 0 && t ? (t.equivalentes / lecciones) * 100 : null;
+            return <tr><td>{i + 1}</td><td>{e.apellidos} {e.nombre}</td>
+              <td><select name={`t_${e.id}`} style={a ? 'border-color:var(--rojo)' : ''}><option value="">Presente</option>{Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option value={k} selected={a?.tipo === k}>{v}</option>)}</select></td>
+              <td><input name={`l_${e.id}`} value={a?.lecciones ?? 1} style="width:60px;text-align:right" /></td>
+              <td><input name={`o_${e.id}`} value={a?.observacion ?? ''} /></td>
+              <td class="n">{t?.AI ?? 0}</td><td class="n">{t?.AJ ?? 0}</td><td class="n">{t?.TI ?? 0}</td>
+              <td class="n">{pct === null ? '—' : <span class={`chip ${pct >= 10 ? 'mal' : pct >= 5 ? 'aviso' : 'ok'}`}>{fmt(pct)}%</span>}</td></tr>;
+          })}
+        </table></div>
+        <p><button>Guardar asistencia</button> <a class="btn sec" href={`?seccion=${seccionId}&csv=1`}>Exportar CSV</a></p>
+      </form>
+      <p class="muted">Totales de {per?.nombre ?? 'todo el curso'} (lecciones). {lecciones === 0 ? <>Para el % de ausentismo registre las lecciones efectivas en la <a href={`/secciones/${seccionId}`}>sección</a>.</> : `Lecciones efectivas: ${lecciones}.`}</p>
+      <h2>Registro del periodo</h2>
+      <div class="tabla"><table>
+        <tr><th>Fecha</th><th>Estudiante</th><th>Tipo</th><th class="n">Lecciones</th><th>Observación</th><th></th></tr>
+        {historial.length === 0 && <tr><td colspan="6" class="muted">Sin ausencias ni tardías.</td></tr>}
+        {historial.map((h) => (
+          <tr><td>{h.fecha}</td><td>{h.apellidos} {h.nombre}</td><td><span class={`chip ${h.tipo.endsWith('J') ? 'ok' : 'mal'}`}>{TIPOS_AUSENCIA[h.tipo]}</span></td><td class="n">{h.lecciones}</td><td>{h.observacion}</td>
+            <td><form method="post"><input type="hidden" name="accion" value="justificar" /><input type="hidden" name="id" value={h.id} /><button class="mini sec">{h.tipo.endsWith('I') ? 'Justificar' : 'Quitar justificación'}</button></form></td></tr>
+        ))}
+      </table></div>
+    </>
+  )}
+</Base>

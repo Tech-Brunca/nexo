@@ -1,0 +1,82 @@
+---
+import Base from '../layouts/Base.astro';
+import { exec, q } from '../lib/db';
+import { num, numOrNull, str, parseCsv } from '../lib/util';
+let msg = '', error = '';
+const { user } = Astro.locals;
+const U = user.id;
+const asgPropia = async (v: FormDataEntryValue | null) => {
+  const a = numOrNull(v);
+  return a && (await q('SELECT id FROM asignaturas WHERE id=? AND usuario_id=?', [a, U])).length ? a : null;
+};
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'guardar') {
+    const id = num(f.get('id'));
+    const datos = [await asgPropia(f.get('asignatura_id')), str(f.get('nivel')), numOrNull(f.get('periodo_numero')), str(f.get('nombre')), str(f.get('inicial')), str(f.get('intermedio')), str(f.get('avanzado'))];
+    if (!datos[1] || !datos[3]) error = 'Nivel e indicador son obligatorios.';
+    else if (id) await exec('UPDATE indicadores SET asignatura_id=?, nivel=?, periodo_numero=?, nombre=?, inicial=?, intermedio=?, avanzado=? WHERE id=? AND usuario_id=?', [...datos, id, U]);
+    else await exec('INSERT INTO indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)', [U, ...datos]);
+    if (!error) msg = 'Indicador guardado.';
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM indicadores WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
+  } else if (accion === 'importar') {
+    const a = f.get('archivo');
+    if (a instanceof File && a.size) {
+      const filas = parseCsv(await a.text()); filas.shift();
+      const asg = await asgPropia(f.get('asignatura_id'));
+      let n = 0;
+      for (const r of filas) {
+        if (!r[0] || !r[1]) continue;
+        await exec('INSERT INTO indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)',
+          [U, asg, r[0].trim(), numOrNull(r[2] ?? null), r[1].trim(), r[3] ?? '', r[4] ?? '', r[5] ?? '']);
+        n++;
+      }
+      msg = `${n} indicadores importados.`;
+    }
+  }
+}
+const nivel = Astro.url.searchParams.get('nivel') ?? '';
+const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
+const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? ORDER BY nombre', [U]);
+const niveles = (await q<any>('SELECT DISTINCT nivel FROM secciones WHERE usuario_id=? UNION SELECT DISTINCT nivel FROM indicadores WHERE usuario_id=? ORDER BY CAST(nivel AS UNSIGNED)', [U, U])).map((r) => r.nivel);
+const lista = await q<any>(`SELECT i.*, a.nombre AS asignatura FROM indicadores i LEFT JOIN asignaturas a ON a.id=i.asignatura_id
+  WHERE i.usuario_id=? AND (?='' OR i.nivel=?) ORDER BY CAST(i.nivel AS UNSIGNED), i.periodo_numero, i.id`, [U, nivel, nivel]);
+const ed = lista.find((x) => x.id === editar) ?? { id: 0, nivel, nombre: '', inicial: '', intermedio: '', avanzado: '', periodo_numero: '', asignatura_id: null };
+---
+<Base titulo="Indicadores">
+  <h1>Indicadores de aprendizaje</h1>
+  <p class="sub">Sus indicadores (sirven en todas sus instituciones). Se usan en los componentes «por indicadores»: Inicial = 1 punto, Intermedio = 2, Avanzado = 3; Sin entregar = 0; Sin calificar no cuenta.</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  <form method="post" class="tarjeta">
+    <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="id" value={ed.id} />
+    <div class="fila">
+      <label>Nivel<input name="nivel" value={ed.nivel} size="4" required /></label>
+      <label>Periodo (vacío = todos)<input name="periodo_numero" value={ed.periodo_numero ?? ''} size="4" /></label>
+      <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id} selected={a.id === ed.asignatura_id}>{a.nombre}</option>)}</select></label>
+    </div>
+    <label style="margin-top:10px">Indicador o aprendizaje esperado<textarea name="nombre" required>{ed.nombre}</textarea></label>
+    <div class="fila" style="margin-top:10px">
+      <label style="flex:1">Inicial (1 pto)<textarea name="inicial">{ed.inicial}</textarea></label>
+      <label style="flex:1">Intermedio (2 pts)<textarea name="intermedio">{ed.intermedio}</textarea></label>
+      <label style="flex:1">Avanzado (3 pts)<textarea name="avanzado">{ed.avanzado}</textarea></label>
+    </div>
+    <p><button>{ed.id ? 'Guardar cambios' : 'Agregar indicador'}</button> {ed.id ? <a class="btn sec" href="/indicadores">Cancelar</a> : null}</p>
+  </form>
+  <form method="post" enctype="multipart/form-data" class="tarjeta fila">
+    <input type="hidden" name="accion" value="importar" />
+    <label>Importar CSV (nivel; indicador; periodo; inicial; intermedio; avanzado)<input type="file" name="archivo" accept=".csv" /></label>
+    <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id}>{a.nombre}</option>)}</select></label>
+    <button class="sec">Importar</button>
+  </form>
+  <form method="get" class="fila" style="margin-bottom:10px"><label>Filtrar nivel<select name="nivel" onchange="this.form.submit()"><option value="">Todos</option>{niveles.map((n) => <option selected={n === nivel}>{n}</option>)}</select></label></form>
+  <div class="tabla"><table>
+    <tr><th>Nivel</th><th>Per.</th><th>Indicador</th><th>Asignatura</th><th></th></tr>
+    {lista.map((i) => (
+      <tr><td>{i.nivel}</td><td>{i.periodo_numero ?? 'Todos'}</td><td>{i.nombre}</td><td>{i.asignatura ?? '—'}</td>
+        <td style="white-space:nowrap"><a href={`?nivel=${nivel}&editar=${i.id}`}>Editar</a>
+          <form method="post" style="display:inline" onsubmit="return confirm('¿Eliminar indicador?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={i.id} /> <button class="mini peligro">×</button></form></td></tr>
+    ))}
+  </table></div>
+</Base>

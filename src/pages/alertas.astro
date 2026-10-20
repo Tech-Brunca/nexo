@@ -1,0 +1,48 @@
+---
+import Base from '../layouts/Base.astro';
+import { q, getAjustes } from '../lib/db';
+import { hoy, csv } from '../lib/util';
+const { user, inst } = Astro.locals;
+const aj = await getAjustes(user.id);
+const cfg = { institucion: inst!.nombre, docente: user.nombre, alerta_dias: aj.alerta_dias, alerta_ausencias: aj.alerta_ausencias };
+const dias = Number(Astro.url.searchParams.get('dias') ?? cfg.alerta_dias);
+const minimo = Number(Astro.url.searchParams.get('min') ?? cfg.alerta_ausencias);
+const filas = await q<any>(
+  `SELECT e.id, e.cedula, e.apellidos, e.nombre, e.encargado, e.telefono, e.fecha_nac, s.id AS seccion_id, s.nivel, s.nombre AS seccion,
+     SUM(a.lecciones) AS lecciones, COUNT(*) AS dias, MAX(a.fecha) AS ultima
+   FROM asistencia a JOIN estudiantes e ON e.id=a.estudiante_id JOIN secciones s ON s.id=a.seccion_id
+   WHERE s.usuario_id=? AND s.institucion_id=? AND a.tipo='AI' AND a.fecha BETWEEN DATE_SUB(?, INTERVAL ? DAY) AND ?
+   GROUP BY e.id, s.id HAVING lecciones >= ? ORDER BY lecciones DESC, e.apellidos`,
+  [user.id, inst!.id, hoy(), dias, hoy(), minimo]);
+const edad = (f: string | null) => (f ? Math.floor((Date.now() - new Date(f).getTime()) / 31557600000) : '');
+if (Astro.url.searchParams.get('csv')) {
+  return new Response(csv([
+    ['Cédula', 'Estudiante', 'Edad', 'Sección', 'Lecciones ausente', 'Días', 'Última ausencia', 'Encargado', 'Teléfono'],
+    ...filas.map((f) => [f.cedula, `${f.apellidos} ${f.nombre}`, edad(f.fecha_nac), `${f.nivel}-${f.seccion}`, f.lecciones, f.dias, f.ultima, f.encargado, f.telefono]),
+  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="alerta-temprana.csv"' } });
+}
+const wa = (t: string) => { const d = t.replace(/\D/g, ''); return d.length === 8 ? `https://wa.me/506${d}` : d.length > 8 ? `https://wa.me/${d}` : null; };
+---
+<Base titulo="Alerta temprana">
+  <h1>Alerta temprana de ausentismo</h1>
+  <p class="sub">Estudiantes con ausencias injustificadas recientes, para contactar al encargado a tiempo.</p>
+  <form class="tarjeta fila no-print">
+    <label>Últimos días<input type="number" name="dias" value={dias} style="width:90px" /></label>
+    <label>Lecciones ausente, desde<input type="number" name="min" value={minimo} style="width:90px" /></label>
+    <button class="sec">Actualizar</button>
+    <a class="btn sec" href={`?dias=${dias}&min=${minimo}&csv=1`}>Exportar CSV</a>
+    <button type="button" class="sec" onclick="print()">Imprimir</button>
+  </form>
+  <div class="solo-print"><h2>{cfg.institucion}</h2><p>Alerta temprana · últimos {dias} días · Docente: {cfg.docente}</p></div>
+  {filas.length === 0 ? <div class="msg ok">Ningún estudiante en alerta con estos criterios.</div> : (
+    <div class="tabla"><table>
+      <tr><th>Estudiante</th><th class="n">Edad</th><th>Sección</th><th class="n">Lecciones</th><th class="n">Días</th><th>Última</th><th>Encargado(a)</th><th>Teléfono</th></tr>
+      {filas.map((f) => (
+        <tr><td><b>{f.apellidos} {f.nombre}</b><br /><span class="muted">{f.cedula}</span></td><td class="n">{edad(f.fecha_nac)}</td>
+          <td><a href={`/asistencia?seccion=${f.seccion_id}`}>{f.nivel}-{f.seccion}</a></td>
+          <td class="n"><span class="chip mal">{f.lecciones}</span></td><td class="n">{f.dias}</td><td>{f.ultima}</td><td>{f.encargado || '—'}</td>
+          <td>{f.telefono ? (wa(f.telefono) ? <a href={wa(f.telefono)!} target="_blank" rel="noopener">{f.telefono}</a> : f.telefono) : '—'}</td></tr>
+      ))}
+    </table></div>
+  )}
+</Base>

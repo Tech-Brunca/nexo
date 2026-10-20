@@ -1,0 +1,66 @@
+---
+import Base from '../../layouts/Base.astro';
+import { exec, q } from '../../lib/db';
+import { hashClave, claveValida } from '../../lib/auth';
+import { num, str } from '../../lib/util';
+const { user } = Astro.locals;
+let msg = '', error = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  const id = num(f.get('id'));
+  if (id === user.id && accion !== 'clave') error = 'No puede cambiar el estado ni el rol de su propia cuenta.';
+  else if (accion === 'aprobar') { await exec(`UPDATE usuarios SET estado='activo' WHERE id=?`, [id]); msg = 'Cuenta aprobada.'; }
+  else if (accion === 'bloquear') { await exec(`UPDATE usuarios SET estado='bloqueado' WHERE id=?`, [id]); msg = 'Cuenta desactivada.'; }
+  else if (accion === 'rol') { await exec('UPDATE usuarios SET rol=? WHERE id=?', [str(f.get('rol')) === 'admin' ? 'admin' : 'docente', id]); msg = 'Rol actualizado.'; }
+  else if (accion === 'rechazar') { await exec(`DELETE FROM usuarios WHERE id=? AND estado='pendiente'`, [id]); msg = 'Solicitud rechazada.'; }
+  else if (accion === 'clave') {
+    const c = str(f.get('clave'));
+    if (!claveValida(c)) error = 'La contraseña temporal debe tener al menos 8 caracteres.';
+    else { await exec('UPDATE usuarios SET pass_hash=? WHERE id=?', [await hashClave(c), id]); msg = 'Contraseña temporal asignada. Pida al docente cambiarla en «Mi cuenta».'; }
+  }
+}
+const filtro = Astro.url.searchParams.get('estado') ?? '';
+const usuarios = await q<any>(`SELECT u.*, GROUP_CONCAT(i.nombre ORDER BY i.nombre SEPARATOR ', ') AS instituciones,
+  (SELECT COUNT(*) FROM secciones s WHERE s.usuario_id=u.id) AS secciones
+  FROM usuarios u LEFT JOIN usuario_instituciones ui ON ui.usuario_id=u.id LEFT JOIN instituciones i ON i.id=ui.institucion_id
+  WHERE (?='' OR u.estado=?) GROUP BY u.id ORDER BY FIELD(u.estado,'pendiente','activo','bloqueado'), u.nombre`, [filtro, filtro]);
+const pendientes = usuarios.filter((u) => u.estado === 'pendiente').length;
+const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<string, string>;
+---
+<Base titulo="Usuarios">
+  <h1>Usuarios</h1>
+  <p class="sub">Apruebe las solicitudes de acceso y administre las cuentas.{pendientes > 0 && ` Hay ${pendientes} pendiente(s).`}</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  <form class="fila" style="margin-bottom:12px"><label>Mostrar<select name="estado" onchange="this.form.submit()">
+    {[['', 'Todos'], ['pendiente', 'Pendientes'], ['activo', 'Activos'], ['bloqueado', 'Desactivados']].map(([v, t]) => <option value={v} selected={v === filtro}>{t}</option>)}
+  </select></label></form>
+  <div class="tabla"><table>
+    <tr><th>Docente</th><th>Instituciones / nota</th><th>Estado</th><th>Rol</th><th class="n">Secciones</th><th>Último acceso</th><th></th></tr>
+    {usuarios.map((u) => (
+      <tr>
+        <td><b>{u.nombre}</b><br /><span class="muted">{u.correo}{u.cedula && ` · ${u.cedula}`}</span></td>
+        <td>{u.instituciones ?? <span class="muted">{u.nota_registro || '—'}</span>}</td>
+        <td><span class={`chip ${chip[u.estado]}`}>{u.estado}</span></td>
+        <td>{u.id === user.id ? u.rol : (
+          <form method="post"><input type="hidden" name="accion" value="rol" /><input type="hidden" name="id" value={u.id} />
+            <select name="rol" onchange="this.form.submit()"><option value="docente" selected={u.rol === 'docente'}>docente</option><option value="admin" selected={u.rol === 'admin'}>admin</option></select></form>
+        )}</td>
+        <td class="n">{u.secciones}</td>
+        <td class="muted">{u.ultimo_acceso ?? 'nunca'}</td>
+        <td style="white-space:nowrap;text-align:right">
+          {u.id !== user.id && u.estado !== 'activo' && <form method="post" style="display:inline"><input type="hidden" name="accion" value="aprobar" /><input type="hidden" name="id" value={u.id} /><button class="mini">{u.estado === 'pendiente' ? 'Aprobar' : 'Reactivar'}</button></form>}
+          {u.id !== user.id && u.estado === 'activo' && <form method="post" style="display:inline" onsubmit="return confirm('¿Desactivar esta cuenta? Sus datos se conservan.')"><input type="hidden" name="accion" value="bloquear" /><input type="hidden" name="id" value={u.id} /><button class="mini peligro">Desactivar</button></form>}
+          {u.estado === 'pendiente' && <form method="post" style="display:inline" onsubmit="return confirm('¿Rechazar y borrar la solicitud?')"><input type="hidden" name="accion" value="rechazar" /><input type="hidden" name="id" value={u.id} /> <button class="mini peligro">Rechazar</button></form>}
+          {u.estado !== 'pendiente' && (
+            <details style="display:inline-block"><summary class="muted">Clave</summary>
+              <form method="post" class="fila" style="margin-top:6px"><input type="hidden" name="accion" value="clave" /><input type="hidden" name="id" value={u.id} />
+                <input name="clave" placeholder="temporal (8+)" minlength="8" style="width:130px" /><button class="mini sec">Asignar</button></form>
+            </details>
+          )}
+        </td>
+      </tr>
+    ))}
+  </table></div>
+  <p class="muted">Los administradores ven esta lista y las instituciones, pero no las notas ni los estudiantes de otros docentes.</p>
+</Base>

@@ -1,0 +1,51 @@
+---
+import Base from '../layouts/Base.astro';
+import { q, one, getAjustes } from '../lib/db';
+import { hoy } from '../lib/util';
+const { user, inst } = Astro.locals;
+const aj = await getAjustes(user.id);
+const k = await one<any>(`SELECT
+  (SELECT COUNT(*) FROM secciones WHERE usuario_id=? AND institucion_id=?) AS secciones,
+  (SELECT COUNT(*) FROM estudiantes WHERE usuario_id=? AND institucion_id=? AND activo=1) AS estudiantes,
+  (SELECT COUNT(*) FROM evaluaciones e JOIN secciones s ON s.id=e.seccion_id WHERE s.usuario_id=? AND s.institucion_id=?) AS evaluaciones,
+  (SELECT COUNT(*) FROM asistencia a JOIN secciones s ON s.id=a.seccion_id WHERE s.usuario_id=? AND s.institucion_id=? AND a.fecha=?) AS ausHoy`,
+  [user.id, inst!.id, user.id, inst!.id, user.id, inst!.id, user.id, inst!.id, hoy()]);
+const alertas = await one<any>(
+  `SELECT COUNT(DISTINCT estudiante_id) AS n FROM (
+     SELECT a.estudiante_id, a.seccion_id, SUM(a.lecciones) AS l FROM asistencia a JOIN secciones s ON s.id=a.seccion_id
+     WHERE s.usuario_id=? AND s.institucion_id=? AND a.tipo='AI' AND a.fecha BETWEEN DATE_SUB(?, INTERVAL ? DAY) AND ?
+     GROUP BY a.estudiante_id, a.seccion_id HAVING l >= ?) t`,
+  [user.id, inst!.id, hoy(), aj.alerta_dias, hoy(), aj.alerta_ausencias]);
+const secciones = await q<any>(
+  `SELECT s.id, s.nivel, s.nombre, a.nombre AS asignatura, COUNT(m.id) AS n
+   FROM secciones s LEFT JOIN asignaturas a ON a.id=s.asignatura_id LEFT JOIN matriculas m ON m.seccion_id=s.id
+   WHERE s.usuario_id=? AND s.institucion_id=?
+   GROUP BY s.id ORDER BY CAST(s.nivel AS UNSIGNED), s.nombre`, [user.id, inst!.id]);
+const pendientes = user.rol === 'admin' ? (await one<any>(`SELECT COUNT(*) n FROM usuarios WHERE estado='pendiente'`)).n : 0;
+---
+<Base titulo="Inicio">
+  <h1>Hola, {user.nombre.split(' ')[0]}</h1>
+  <p class="sub">{inst!.nombre} · Curso lectivo {aj.curso_lectivo}</p>
+  {pendientes > 0 && <div class="msg aviso">Hay {pendientes} solicitud(es) de acceso por aprobar. <a href="/admin/usuarios?estado=pendiente">Revisar</a></div>}
+  <div class="grid-kpi">
+    <div class="kpi"><b>{k.secciones}</b><span>Secciones</span></div>
+    <div class="kpi"><b>{k.estudiantes}</b><span>Estudiantes activos</span></div>
+    <div class="kpi"><b>{k.evaluaciones}</b><span>Evaluaciones creadas</span></div>
+    <div class="kpi"><b>{k.ausHoy}</b><span>Ausencias/tardías hoy</span></div>
+    <a class="kpi" href="/alertas" style="text-decoration:none;color:inherit"><b style={alertas.n ? 'color:var(--rojo)' : ''}>{alertas.n}</b><span>En alerta de ausentismo ({aj.alerta_dias} días)</span></a>
+  </div>
+  <h2>Mis secciones en {inst!.nombre}</h2>
+  {secciones.length === 0 ? <p class="muted">Aún no hay secciones. <a href="/secciones">Crear la primera</a>.</p> : (
+    <div class="tabla"><table>
+      <tr><th>Sección</th><th>Asignatura</th><th class="n">Estudiantes</th><th></th></tr>
+      {secciones.map((s) => (
+        <tr><td><b>{s.nivel}-{s.nombre}</b></td><td>{s.asignatura ?? '—'}</td><td class="n">{s.n}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <a href={`/asistencia?seccion=${s.id}`}>Pasar lista</a> ·
+            <a href={`/evaluaciones?seccion=${s.id}`}>Evaluar</a> ·
+            <a href={`/notas?seccion=${s.id}`}>Notas</a>
+          </td></tr>
+      ))}
+    </table></div>
+  )}
+</Base>

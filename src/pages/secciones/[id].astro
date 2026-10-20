@@ -1,0 +1,130 @@
+---
+import Base from '../../layouts/Base.astro';
+import { exec, q, one } from '../../lib/db';
+import { estudiantesDe, seccion } from '../../lib/calc';
+import { num, numOrNull, str, parseCsv } from '../../lib/util';
+const { user, inst } = Astro.locals;
+const id = Number(Astro.params.id);
+const sec = await seccion(user.id, id, inst!.id);
+if (!sec) return Astro.redirect('/secciones');
+let msg = '', error = '';
+
+async function guardarEstudiante(d: Record<string, string>, subgrupo = '') {
+  const ced = (d.cedula || '').trim();
+  if (!ced || !d.apellidos || !d.nombre) return false;
+  const fn = /^\d{4}-\d{2}-\d{2}$/.test(d.fecha_nac || '') ? d.fecha_nac
+    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.test(d.fecha_nac || '') ? d.fecha_nac.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, (_, a, b, c) => `${c}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`) : null;
+  await exec(
+    `INSERT INTO estudiantes (usuario_id, institucion_id, cedula, apellidos, nombre, fecha_nac, genero, encargado, telefono, extranjero)
+     VALUES (?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE apellidos=VALUES(apellidos), nombre=VALUES(nombre),
+     fecha_nac=COALESCE(VALUES(fecha_nac), fecha_nac), genero=COALESCE(VALUES(genero), genero),
+     encargado=VALUES(encargado), telefono=VALUES(telefono), activo=1`,
+    [user.id, sec.institucion_id, ced, d.apellidos.trim(), d.nombre.trim(), fn, (d.genero || '').trim().slice(0, 1).toUpperCase() || null,
+     (d.encargado || '').trim(), (d.telefono || '').trim(), /^(s|si|sí|1|x)$/i.test(d.extranjero || '') ? 1 : 0]);
+  const e = await one<any>('SELECT id FROM estudiantes WHERE usuario_id=? AND institucion_id=? AND cedula=?', [user.id, sec.institucion_id, ced]);
+  await exec('INSERT INTO matriculas (estudiante_id, seccion_id, subgrupo) VALUES (?,?,?) ON DUPLICATE KEY UPDATE subgrupo=VALUES(subgrupo)',
+    [e.id, id, subgrupo.trim().toUpperCase().slice(0, 5)]);
+  return true;
+}
+
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'agregar') {
+    const d: any = {}; for (const k of ['cedula', 'apellidos', 'nombre', 'fecha_nac', 'genero', 'encargado', 'telefono']) d[k] = str(f.get(k));
+    (await guardarEstudiante(d, str(f.get('subgrupo')))) ? (msg = 'Estudiante agregado.') : (error = 'Cédula, apellidos y nombre son obligatorios.');
+  } else if (accion === 'importar') {
+    const archivo = f.get('archivo');
+    if (archivo instanceof File && archivo.size) {
+      const filas = parseCsv(await archivo.text());
+      const cab = filas.shift()!.map((c) => c.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+      const col = (n: string) => cab.findIndex((c) => c.startsWith(n));
+      const idx = { cedula: col('cedula'), apellidos: col('apellido'), nombre: col('nombre'), fecha_nac: col('fecha'), genero: col('genero'), encargado: col('encargad'), telefono: col('telefono'), extranjero: col('extranjer'), subgrupo: col('subgrupo') };
+      if (idx.cedula < 0 || idx.apellidos < 0 || idx.nombre < 0) error = 'El archivo debe tener columnas cedula, apellidos y nombre. Descargue la plantilla.';
+      else {
+        let n = 0;
+        for (const r of filas) {
+          const d: any = {}; for (const [k, i] of Object.entries(idx)) d[k] = i >= 0 ? r[i] ?? '' : '';
+          if (await guardarEstudiante(d, d.subgrupo)) n++;
+        }
+        msg = `${n} estudiantes importados o actualizados.`;
+      }
+    } else error = 'Elija un archivo CSV.';
+  } else if (accion === 'quitar') {
+    await exec('DELETE FROM matriculas WHERE estudiante_id=? AND seccion_id=?', [num(f.get('estudiante_id')), id]);
+  } else if (accion === 'subgrupo') {
+    await exec('UPDATE matriculas SET subgrupo=? WHERE estudiante_id=? AND seccion_id=?', [str(f.get('subgrupo')).toUpperCase().slice(0, 5), num(f.get('estudiante_id')), id]);
+  } else if (accion === 'datos') {
+    const asg = numOrNull(f.get('asignatura_id'));
+    const propia = asg && (await q('SELECT id FROM asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
+    await exec('UPDATE secciones SET nivel=?, nombre=?, asignatura_id=?, nota_aprobatoria=? WHERE id=? AND usuario_id=?',
+      [str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), id, user.id]);
+    return Astro.redirect(`/secciones/${id}`);
+  } else if (accion === 'lecciones') {
+    const mios = new Set((await q<any>('SELECT id FROM periodos WHERE usuario_id=? AND institucion_id=?', [user.id, sec.institucion_id])).map((p) => p.id));
+    for (const [k, v] of f.entries()) if (k.startsWith('lec_') && mios.has(Number(k.slice(4))))
+      await exec('INSERT INTO lecciones VALUES (?,?,?) ON DUPLICATE KEY UPDATE cantidad=VALUES(cantidad)', [id, Number(k.slice(4)), num(v)]);
+    msg = 'Lecciones guardadas.';
+  }
+}
+const ests = await estudiantesDe(id);
+const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
+const periodos = await q<any>(`SELECT p.*, l.cantidad FROM periodos p LEFT JOIN lecciones l ON l.periodo_id=p.id AND l.seccion_id=?
+  WHERE p.usuario_id=? AND p.institucion_id=? ORDER BY numero`, [id, user.id, sec.institucion_id]);
+const edad = (f: string | null) => f ? Math.floor((Date.now() - new Date(f).getTime()) / 31557600000) : '';
+---
+<Base titulo={`Sección ${sec.nivel}-${sec.nombre}`}>
+  <p class="no-print"><a href="/secciones">← Secciones</a></p>
+  <h1>Sección {sec.nivel}-{sec.nombre}</h1>
+  <p class="sub">{sec.asignatura ?? 'Sin asignatura'} · {ests.length} estudiantes · Curso {sec.anio}</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+
+  <details class="tarjeta no-print"><summary><b>Datos de la sección y lecciones efectivas</b></summary>
+    <form method="post" class="fila" style="margin-top:12px">
+      <input type="hidden" name="accion" value="datos" />
+      <label>Nivel<input name="nivel" value={sec.nivel} size="4" /></label>
+      <label>Sección<input name="nombre" value={sec.nombre} size="6" /></label>
+      <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id} selected={a.id === sec.asignatura_id}>{a.nombre}</option>)}</select></label>
+      <label>Nota aprobatoria<input name="nota_aprobatoria" value={sec.nota_aprobatoria ?? ''} size="5" /></label>
+      <button class="sec">Guardar</button>
+    </form>
+    <form method="post" class="fila" style="margin-top:12px">
+      <input type="hidden" name="accion" value="lecciones" />
+      {periodos.map((p) => <label>Lecciones {p.nombre}<input type="number" name={`lec_${p.id}`} value={p.cantidad ?? 0} style="width:100px" /></label>)}
+      <button class="sec">Guardar lecciones</button>
+      <span class="muted">Base para calcular el % de ausentismo.</span>
+    </form>
+  </details>
+
+  <div class="tarjeta no-print">
+    <form method="post" class="fila">
+      <input type="hidden" name="accion" value="agregar" />
+      <label>Cédula<input name="cedula" required size="12" /></label>
+      <label>Apellidos<input name="apellidos" required /></label>
+      <label>Nombre<input name="nombre" required /></label>
+      <label>Nacimiento<input type="date" name="fecha_nac" /></label>
+      <label>Género<select name="genero"><option value="">—</option><option>F</option><option>M</option></select></label>
+      <label>Encargado(a)<input name="encargado" /></label>
+      <label>Teléfono<input name="telefono" size="10" /></label>
+      <label>Subgrupo<input name="subgrupo" size="3" /></label>
+      <button>Agregar</button>
+    </form>
+    <form method="post" enctype="multipart/form-data" class="fila" style="margin-top:12px">
+      <input type="hidden" name="accion" value="importar" />
+      <label>Importar lista (CSV)<input type="file" name="archivo" accept=".csv,text/csv" /></label>
+      <button class="sec">Importar</button>
+      <a href="/plantilla-estudiantes.csv">Descargar plantilla</a>
+      <span class="muted">Guarde la lista de Excel como «CSV (delimitado por comas)». Si la cédula ya existe, se actualizan sus datos.</span>
+    </form>
+  </div>
+
+  <div class="tabla"><table>
+    <tr><th>#</th><th>Cédula</th><th>Estudiante</th><th class="n">Edad</th><th>Encargado(a)</th><th>Teléfono</th><th>Subgrupo</th><th class="no-print"></th></tr>
+    {ests.map((e, i) => (
+      <tr><td>{i + 1}</td><td>{e.cedula}</td><td>{e.apellidos} {e.nombre}</td><td class="n">{edad(e.fecha_nac)}</td><td>{e.encargado}</td><td>{e.telefono}</td>
+        <td><form method="post" class="no-print" style="display:flex;gap:4px"><input type="hidden" name="accion" value="subgrupo" /><input type="hidden" name="estudiante_id" value={e.id} /><input name="subgrupo" value={e.subgrupo} style="width:50px" onchange="this.form.submit()" /></form><span class="solo-print">{e.subgrupo}</span></td>
+        <td class="no-print" style="text-align:right"><form method="post" onsubmit="return confirm('¿Quitar de la sección?')"><input type="hidden" name="accion" value="quitar" /><input type="hidden" name="estudiante_id" value={e.id} /><button class="mini peligro">Quitar</button></form></td></tr>
+    ))}
+  </table></div>
+  <p class="no-print"><button class="sec" onclick="print()">Imprimir lista</button></p>
+</Base>

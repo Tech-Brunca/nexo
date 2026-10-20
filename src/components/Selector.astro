@@ -1,0 +1,32 @@
+---
+// Selector de sección (y opcionalmente periodo / fecha) que recarga la página por GET
+import { q } from '../lib/db';
+interface Props { seccionId?: number; periodoId?: number; conPeriodo?: boolean; fecha?: string; extra?: Record<string, string> }
+const { seccionId, periodoId, conPeriodo = false, fecha, extra = {} } = Astro.props;
+const { user, inst } = Astro.locals;
+const secciones = await q<any>(
+  `SELECT s.id, s.nivel, s.nombre, a.nombre AS asignatura FROM secciones s LEFT JOIN asignaturas a ON a.id = s.asignatura_id
+   WHERE s.usuario_id = ? AND s.institucion_id = ? ORDER BY CAST(s.nivel AS UNSIGNED), s.nombre`,
+  [user.id, inst!.id],
+);
+const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [user.id, inst!.id]) : [];
+---
+<form method="get" class="tarjeta fila no-print">
+  <label>Sección
+    <select name="seccion" onchange="this.form.submit()">
+      <option value="">— Elegir —</option>
+      {secciones.map((s) => <option value={s.id} selected={s.id === seccionId}>{s.nivel}-{s.nombre}{s.asignatura ? ` · ${s.asignatura}` : ''}</option>)}
+    </select>
+  </label>
+  {conPeriodo && (
+    <label>Periodo
+      <select name="periodo" onchange="this.form.submit()">
+        {periodos.map((p) => <option value={p.id} selected={p.id === periodoId}>{p.nombre}</option>)}
+      </select>
+    </label>
+  )}
+  {fecha !== undefined && <label>Fecha<input type="date" name="fecha" value={fecha} onchange="this.form.submit()" /></label>}
+  {Object.entries(extra).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+  <noscript><button>Ver</button></noscript>
+  {secciones.length === 0 && <span class="muted">Primero cree una sección en <a href="/secciones">Secciones</a>.</span>}
+</form>

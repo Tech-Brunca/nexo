@@ -1,0 +1,105 @@
+---
+import Base from '../layouts/Base.astro';
+import { db, q } from '../lib/db';
+import { str } from '../lib/util';
+const { user, instituciones } = Astro.locals;
+const U = user.id;
+
+// Tablas del docente en orden de dependencias. fk: columna -> tabla cuyos ids se remapean.
+// opcional: llaves que quedan en NULL si su referencia no existe (en vez de descartar la fila).
+const TABLAS: { t: string; sql: string; fk: Record<string, string>; auto?: boolean; opcional?: string[] }[] = [
+  { t: 'ajustes', sql: 'SELECT * FROM ajustes WHERE usuario_id=?', fk: {} },
+  { t: 'escala_asistencia', sql: 'SELECT * FROM escala_asistencia WHERE usuario_id=?', fk: {} },
+  { t: 'asignaturas', sql: 'SELECT * FROM asignaturas WHERE usuario_id=?', fk: {}, auto: true },
+  { t: 'periodos', sql: 'SELECT * FROM periodos WHERE usuario_id=?', fk: {}, auto: true },
+  { t: 'componentes', sql: 'SELECT * FROM componentes WHERE usuario_id=?', fk: {}, auto: true },
+  { t: 'indicadores', sql: 'SELECT * FROM indicadores WHERE usuario_id=?', fk: { asignatura_id: 'asignaturas' }, auto: true, opcional: ['asignatura_id'] },
+  { t: 'secciones', sql: 'SELECT * FROM secciones WHERE usuario_id=?', fk: { asignatura_id: 'asignaturas' }, auto: true, opcional: ['asignatura_id'] },
+  { t: 'estudiantes', sql: 'SELECT * FROM estudiantes WHERE usuario_id=?', fk: {}, auto: true },
+  { t: 'matriculas', sql: 'SELECT m.* FROM matriculas m JOIN secciones s ON s.id=m.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true },
+  { t: 'lecciones', sql: 'SELECT l.* FROM lecciones l JOIN secciones s ON s.id=l.seccion_id WHERE s.usuario_id=?', fk: { seccion_id: 'secciones', periodo_id: 'periodos' } },
+  { t: 'evaluaciones', sql: 'SELECT e.* FROM evaluaciones e JOIN secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { componente_id: 'componentes', seccion_id: 'secciones', periodo_id: 'periodos' }, auto: true },
+  { t: 'evaluacion_indicadores', sql: 'SELECT ei.* FROM evaluacion_indicadores ei JOIN evaluaciones e ON e.id=ei.evaluacion_id JOIN secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', indicador_id: 'indicadores' } },
+  { t: 'notas', sql: 'SELECT n.* FROM notas n JOIN evaluaciones e ON e.id=n.evaluacion_id JOIN secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', estudiante_id: 'estudiantes' } },
+  { t: 'valoraciones', sql: 'SELECT v.* FROM valoraciones v JOIN evaluaciones e ON e.id=v.evaluacion_id JOIN secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', estudiante_id: 'estudiantes', indicador_id: 'indicadores' } },
+  { t: 'asistencia', sql: 'SELECT a.* FROM asistencia a JOIN secciones s ON s.id=a.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true },
+  { t: 'convocatorias', sql: 'SELECT c.* FROM convocatorias c JOIN secciones s ON s.id=c.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' } },
+];
+
+let msg = '', error = '';
+if (Astro.url.searchParams.get('descargar')) {
+  const data: Record<string, any[]> = {};
+  for (const x of TABLAS) data[x.t] = await q(x.sql, [U]);
+  const fecha = new Date().toISOString().slice(0, 10);
+  return new Response(JSON.stringify({ app: 'reddi-web', version: 2, fecha, data }), {
+    headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="respaldo-reddi-${fecha}.json"` },
+  });
+}
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const a = f.get('archivo');
+  if (str(f.get('confirmar')) !== 'RESTAURAR') error = 'Escriba RESTAURAR para confirmar.';
+  else if (!(a instanceof File) || !a.size) error = 'Elija el archivo de respaldo.';
+  else {
+    let json: any = null;
+    try { json = JSON.parse(await a.text()); } catch { error = 'El archivo no es un respaldo válido.'; }
+    if (json && json.app === 'reddi-web' && json.data) {
+      const misInst = new Set(instituciones.map((i) => i.id));
+      const conn = await db().getConnection();
+      let omitidas = 0;
+      try {
+        await conn.beginTransaction();
+        // Borra solo los datos de este docente (las tablas hijas caen en cascada)
+        for (const t of ['secciones', 'estudiantes', 'periodos', 'componentes', 'indicadores', 'asignaturas', 'escala_asistencia', 'ajustes'])
+          await conn.query(`DELETE FROM \`${t}\` WHERE usuario_id=?`, [U]);
+        const mapa: Record<string, Map<number, number>> = {};
+        for (const x of TABLAS) {
+          mapa[x.t] = new Map();
+          for (const fila of json.data[x.t] ?? []) {
+            const r: Record<string, any> = { ...fila };
+            if ('usuario_id' in r) r.usuario_id = U;
+            if ('institucion_id' in r && !misInst.has(Number(r.institucion_id))) { omitidas++; continue; }
+            let valida = true;
+            for (const [col, tabla] of Object.entries(x.fk)) {
+              if (r[col] === null || r[col] === undefined) continue;
+              const nuevo = mapa[tabla]?.get(Number(r[col]));
+              if (nuevo === undefined) { if (x.opcional?.includes(col)) r[col] = null; else { valida = false; break; } }
+              else r[col] = nuevo;
+            }
+            if (!valida) { omitidas++; continue; }
+            const viejo = r.id; if (x.auto) delete r.id;
+            const cols = Object.keys(r);
+            const [res]: any = await conn.query(`INSERT INTO \`${x.t}\` (${cols.map((c) => `\`${c}\``).join(',')}) VALUES (?)`, [cols.map((c) => r[c])]);
+            if (x.auto) mapa[x.t].set(Number(viejo), res.insertId);
+          }
+        }
+        await conn.commit();
+        msg = `Respaldo del ${json.fecha} restaurado.` + (omitidas ? ` Se omitieron ${omitidas} registros de instituciones que ya no están en su cuenta.` : '');
+      } catch (e: any) {
+        await conn.rollback(); error = 'No se pudo restaurar: ' + e.message;
+      } finally { conn.release(); }
+    } else if (!error) error = 'El archivo no es un respaldo de ReDDi Web.';
+  }
+}
+const conteo = (await q<any>(`SELECT (SELECT COUNT(*) FROM estudiantes WHERE usuario_id=?) e,
+  (SELECT COUNT(*) FROM evaluaciones ev JOIN secciones s ON s.id=ev.seccion_id WHERE s.usuario_id=?) ev,
+  (SELECT COUNT(*) FROM asistencia a JOIN secciones s ON s.id=a.seccion_id WHERE s.usuario_id=?) a`, [U, U, U]))[0];
+---
+<Base titulo="Respaldo">
+  <h1>Respaldo y restauración</h1>
+  <p class="sub">Copia de todos sus datos (en todas sus instituciones). Guárdela en otra unidad o en la nube; no la suba a GitHub.</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  <div class="tarjeta">
+    <p>Sus datos: {conteo.e} estudiantes, {conteo.ev} evaluaciones, {conteo.a} registros de asistencia.</p>
+    <a class="btn" href="?descargar=1">Descargar respaldo (.json)</a>
+  </div>
+  <form method="post" enctype="multipart/form-data" class="tarjeta">
+    <h2 style="margin-top:0">Restaurar</h2>
+    <p class="msg aviso">Restaurar reemplaza TODOS sus datos por los del archivo. Los datos de otros docentes no se tocan.</p>
+    <div class="fila">
+      <label>Archivo de respaldo<input type="file" name="archivo" accept=".json" /></label>
+      <label>Escriba RESTAURAR<input name="confirmar" autocomplete="off" /></label>
+      <button class="peligro">Restaurar</button>
+    </div>
+  </form>
+</Base>

@@ -1,0 +1,93 @@
+---
+import Base from '../../layouts/Base.astro';
+import Selector from '../../components/Selector.astro';
+import { exec, q, one } from '../../lib/db';
+import { seccion } from '../../lib/calc';
+import { num, str, hoy } from '../../lib/util';
+const { user, inst } = Astro.locals;
+const U = user.id;
+const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
+const periodos = await q<any>('SELECT id, numero FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [U, inst!.id]);
+const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
+const periodoId = periodos.find((p) => p.id === pedido)?.id ?? periodos[0]?.id ?? 0;
+const sec = seccionId ? await seccion(U, seccionId, inst!.id) : null;
+let error = '';
+if (sec && Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'crear') {
+    const comp = await one<any>('SELECT * FROM componentes WHERE id=? AND usuario_id=? AND institucion_id=?', [num(f.get('componente_id')), U, sec.institucion_id]);
+    if (!comp || !str(f.get('nombre')) || !periodoId) error = 'Elija componente y nombre.';
+    else {
+      const r = await exec('INSERT INTO evaluaciones (componente_id, seccion_id, periodo_id, nombre, puntos_total, porcentaje, fecha) VALUES (?,?,?,?,?,?,?)',
+        [comp.id, seccionId, periodoId, str(f.get('nombre')), comp.tipo === 'indicadores' ? 0 : num(f.get('puntos_total')), num(f.get('porcentaje')), str(f.get('fecha')) || null]);
+      const misInd = new Set((await q<any>('SELECT id FROM indicadores WHERE usuario_id=?', [U])).map((i) => i.id));
+      for (const i of f.getAll('indicadores')) if (misInd.has(num(i))) await exec('INSERT IGNORE INTO evaluacion_indicadores VALUES (?,?)', [r.insertId, num(i)]);
+      return Astro.redirect(`/evaluaciones/${r.insertId}`);
+    }
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM evaluaciones WHERE id=? AND seccion_id=?', [num(f.get('id')), seccionId]);
+  }
+}
+const comps = sec ? await q<any>(`SELECT c.*, COALESCE(SUM(e.porcentaje),0) AS usado FROM componentes c
+  LEFT JOIN evaluaciones e ON e.componente_id=c.id AND e.seccion_id=? AND e.periodo_id=?
+  WHERE c.usuario_id=? AND c.institucion_id=? AND c.nivel=? GROUP BY c.id ORDER BY c.orden, c.id`, [seccionId, periodoId, U, sec.institucion_id, sec.nivel]) : [];
+const evals = sec ? await q<any>(`SELECT e.*, c.nombre AS componente, c.tipo,
+  (SELECT COUNT(*) FROM notas n WHERE n.evaluacion_id=e.id AND n.puntos IS NOT NULL) +
+  (SELECT COUNT(DISTINCT v.estudiante_id) FROM valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
+  FROM evaluaciones e JOIN componentes c ON c.id=e.componente_id WHERE e.seccion_id=? AND e.periodo_id=? ORDER BY c.orden, e.fecha, e.id`, [seccionId, periodoId]) : [];
+const per = periodos.find((p) => p.id === periodoId);
+const indicadores = sec ? await q<any>(`SELECT * FROM indicadores WHERE usuario_id=? AND nivel=? AND (asignatura_id IS NULL OR asignatura_id <=> ?)
+  AND (periodo_numero IS NULL OR periodo_numero=?) ORDER BY id`, [U, sec.nivel, sec.asignatura_id, per?.numero ?? 0]) : [];
+const nEst = sec ? (await one<any>('SELECT COUNT(*) n FROM matriculas WHERE seccion_id=?', [seccionId])).n : 0;
+---
+<Base titulo="Evaluaciones">
+  <h1>Evaluaciones</h1>
+  <p class="sub">Pruebas, tareas, proyectos y trabajo cotidiano de cada sección y periodo.</p>
+  <Selector seccionId={seccionId} periodoId={periodoId} conPeriodo />
+  {error && <div class="msg mal">{error}</div>}
+  {sec && comps.length === 0 && <div class="msg aviso">El nivel {sec.nivel} no tiene componentes. Configúrelos en <a href={`/componentes?nivel=${sec.nivel}`}>Componentes</a>.</div>}
+  {sec && comps.length > 0 && (
+    <>
+      <div class="grid-kpi" style="margin-bottom:16px">
+        {comps.map((c) => (
+          <div class="kpi"><span>{c.nombre}</span><b style="font-size:20px">{Number(c.usado)} / {Number(c.porcentaje)}%</b>
+            <span>{c.tipo === 'asistencia' ? 'Se calcula con la asistencia' : Number(c.usado) < Number(c.porcentaje) ? `Faltan ${Number(c.porcentaje) - Number(c.usado)}% por asignar` : 'Completo'}</span></div>
+        ))}
+      </div>
+      <div class="tabla"><table>
+        <tr><th>Componente</th><th>Evaluación</th><th>Fecha</th><th class="n">Puntos</th><th class="n">Valor %</th><th class="n">Calificados</th><th></th></tr>
+        {evals.length === 0 && <tr><td colspan="7" class="muted">Aún no hay evaluaciones en este periodo.</td></tr>}
+        {evals.map((e) => (
+          <tr><td>{e.componente}</td><td><a href={`/evaluaciones/${e.id}`}><b>{e.nombre}</b></a></td><td>{e.fecha ?? '—'}</td>
+            <td class="n">{e.tipo === 'indicadores' ? 'Indicadores' : e.puntos_total}</td><td class="n">{e.porcentaje}</td><td class="n">{e.calificados}/{nEst}</td>
+            <td style="text-align:right"><a class="btn mini sec" href={`/evaluaciones/${e.id}`}>Calificar</a>
+              <form method="post" style="display:inline" onsubmit="return confirm('¿Eliminar la evaluación y sus notas?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={e.id} /><button class="mini peligro">×</button></form></td></tr>
+        ))}
+      </table></div>
+      <form method="post" class="tarjeta" style="margin-top:16px">
+        <input type="hidden" name="accion" value="crear" />
+        <h2 style="margin-top:0">Nueva evaluación</h2>
+        <div class="fila">
+          <label>Componente<select name="componente_id" id="comp">{comps.filter((c) => c.tipo !== 'asistencia').map((c) => <option value={c.id} data-tipo={c.tipo} data-libre={Number(c.porcentaje) - Number(c.usado)}>{c.nombre}</option>)}</select></label>
+          <label style="flex:1">Nombre<input name="nombre" placeholder="Prueba 1, Tarea 2, Trabajo cotidiano semana 3…" required /></label>
+          <label id="pts">Puntos totales<input type="number" step="0.5" name="puntos_total" style="width:100px" /></label>
+          <label>Valor %<input type="number" step="0.01" name="porcentaje" id="pct" style="width:90px" required /></label>
+          <label>Fecha<input type="date" name="fecha" value={hoy()} /></label>
+        </div>
+        <fieldset id="inds" style="margin-top:12px;border:1px solid var(--linea);border-radius:8px">
+          <legend class="muted">Indicadores a evaluar (nivel {sec.nivel})</legend>
+          {indicadores.length === 0 ? <span class="muted">No hay indicadores para este nivel. <a href="/indicadores">Agregar</a>.</span>
+            : indicadores.map((i) => <label style="flex-direction:row;gap:8px;color:var(--tinta);font-size:14px;margin:4px 0"><input type="checkbox" name="indicadores" value={i.id} checked /> {i.nombre}</label>)}
+        </fieldset>
+        <p><button>Crear y calificar</button></p>
+      </form>
+      <script is:inline>
+        const s = document.getElementById('comp'), pts = document.getElementById('pts'), inds = document.getElementById('inds'), pct = document.getElementById('pct');
+        const upd = () => { const o = s.selectedOptions[0]; if (!o) return; const ind = o.dataset.tipo === 'indicadores';
+          pts.style.display = ind ? 'none' : ''; inds.style.display = ind ? '' : 'none'; if (!pct.value) pct.placeholder = 'libre ' + o.dataset.libre; };
+        s && (s.onchange = upd, upd());
+      </script>
+    </>
+  )}
+</Base>
