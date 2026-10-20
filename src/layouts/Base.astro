@@ -31,72 +31,117 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0A3D91" />
   <link rel="icon" href="/favicon.svg" />
   <title>{titulo} · Nexo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
   <style is:global>
     :root {
-      --tinta: #1d2a2f; --suave: #5b6b70; --linea: #d9e1e0; --papel: #f6f8f7; --blanco: #fff;
-      --verde: #1f6f5c; --verde-claro: #e3f1ec; --rojo: #b3402f; --rojo-claro: #fbe9e5; --ambar: #a86b00; --ambar-claro: #fff3d6;
+      /* Paleta de marca Nexo */
+      --marino: #0A3D91; --marino-osc: #072B6A; --teal: #0C7C90; --cian: #12CFF3; --aqua: #49E1FF;
+      --hielo: #EAF8FC; --gris: #F4F7FA;
+      /* Uso */
+      --tinta: #13233f; --suave: #5a6b82; --linea: #dde6ef; --papel: var(--gris); --blanco: #fff;
+      --verde: #137a52; --verde-claro: #e2f5ec; --rojo: #b3402f; --rojo-claro: #fbe9e5; --ambar: #a86b00; --ambar-claro: #fff3d6;
+      --titulos: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: var(--tinta); background: var(--papel);
     }
     * { box-sizing: border-box; }
     body { margin: 0; }
-    a { color: var(--verde); }
-    .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-    nav.lateral { background: var(--tinta); color: #cfdcd9; padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-    nav.lateral .marca { font-weight: 700; color: #fff; font-size: 17px; margin: 0 8px 18px; line-height: 1.2; }
-    nav.lateral .marca small { display: block; font-weight: 400; color: #8fa6a1; font-size: 12px; }
-    nav.lateral a { display: block; color: #cfdcd9; text-decoration: none; padding: 8px 10px; border-radius: 6px; font-size: 14px; }
-    nav.lateral a:hover { background: #2c3c42; }
-    nav.lateral a.on { background: var(--verde); color: #fff; }
-    nav.lateral form button { margin: 16px 8px 0; background: none; border: 1px solid #45575d; color: #cfdcd9; width: calc(100% - 16px); }
-    nav.lateral .grupo { margin: 14px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8fa6a1; }
-    nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: #2c3c42; color: #fff; border-color: #45575d; font-size: 13px; }
-    nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #8fa6a1; }
-    nav.lateral .quien a { display: inline; padding: 0; color: #cfdcd9; text-decoration: underline; }
-    nav.lateral .colegio { margin: 0 8px 12px; padding: 10px; border-radius: 8px; background: #2c3c42; color: #fff; font-size: 13px; font-weight: 600; }
-    nav.lateral .colegio a { display: block; padding: 4px 0 0; font-weight: 400; color: #9fd3c3; font-size: 12px; }
-    main { padding: 24px 28px 60px; max-width: 1400px; }
-    h1 { font-size: 24px; margin: 0 0 4px; }
+    a { color: var(--teal); }
+    a:hover { color: var(--marino); }
+    .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+
+    /* Menú lateral */
+    nav.lateral { background: linear-gradient(180deg, var(--marino) 0%, var(--marino-osc) 100%); color: #cfe0f5; padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    .marca { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .marca img { width: 40px; height: 40px; flex: none; }
+    .marca b { font-family: var(--titulos); font-weight: 800; font-size: 22px; letter-spacing: .02em; line-height: 1; }
+    .marca b span { color: var(--cian); }
+    .marca small { display: block; font-size: 11px; font-weight: 400; margin-top: 3px; letter-spacing: .01em; }
+    nav.lateral a.marca { display: flex; margin: 0 6px 18px; padding: 0; border: 0; }
+    nav.lateral .marca:hover { background: none; }
+    nav.lateral .marca b { color: #fff; }
+    nav.lateral .marca b span { color: var(--aqua); }
+    nav.lateral .marca small { color: #a9c4e6; }
+    nav.lateral a { display: block; color: #d4e4f7; text-decoration: none; padding: 8px 10px; border-radius: 8px; font-size: 14px; border-left: 3px solid transparent; }
+    nav.lateral a:hover { background: rgba(255,255,255,.08); color: #fff; }
+    nav.lateral a.on { background: rgba(18,207,243,.16); color: #fff; border-left-color: var(--cian); font-weight: 600; }
+    nav.lateral form button { margin: 16px 8px 0; background: transparent; border: 1px solid rgba(255,255,255,.28); color: #d4e4f7; width: calc(100% - 16px); font-weight: 400; }
+    nav.lateral form button:hover { background: rgba(255,255,255,.08); }
+    nav.lateral .grupo { margin: 16px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--aqua); opacity: .85; font-weight: 600; }
+    nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2); font-size: 13px; }
+    nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #a9c4e6; }
+    nav.lateral .quien a { display: inline; padding: 0; border: 0; color: #fff; text-decoration: underline; }
+    nav.lateral .colegio { margin: 0 6px 12px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(73,225,255,.25); color: #fff; font-size: 13px; font-weight: 600; }
+    nav.lateral .colegio a { padding: 4px 0 0; border: 0; font-weight: 400; color: var(--aqua); font-size: 12px; }
+    nav.lateral .colegio a:hover { background: none; text-decoration: underline; }
+
+    /* Contenido */
+    main { padding: 26px 30px 60px; max-width: 1400px; }
+    h1, h2 { font-family: var(--titulos); color: var(--marino); }
+    h1 { font-size: 24px; font-weight: 700; margin: 0 0 4px; }
     .sub { color: var(--suave); margin: 0 0 20px; font-size: 14px; }
-    h2 { font-size: 17px; margin: 28px 0 10px; }
-    .tarjeta { background: var(--blanco); border: 1px solid var(--linea); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+    h2 { font-size: 17px; font-weight: 700; margin: 28px 0 10px; }
+    .tarjeta { background: var(--blanco); border: 1px solid var(--linea); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(10,61,145,.04); }
     .fila { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
     label { display: flex; flex-direction: column; font-size: 12px; color: var(--suave); gap: 4px; }
-    input, select, textarea { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid #b9c6c4; border-radius: 6px; background: #fff; color: var(--tinta); }
+    input, select, textarea { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid #c6d4e3; border-radius: 8px; background: #fff; color: var(--tinta); }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--cian); box-shadow: 0 0 0 3px rgba(18,207,243,.22); }
     textarea { min-height: 70px; }
-    button, .btn { font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--verde); background: var(--verde); color: #fff; cursor: pointer; text-decoration: none; display: inline-block; }
-    button.sec, .btn.sec { background: #fff; color: var(--verde); }
+    button, .btn { font: inherit; font-size: 14px; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--aqua); background: var(--aqua); color: var(--marino); cursor: pointer; text-decoration: none; display: inline-block; transition: background .15s, border-color .15s; }
+    button:hover, .btn:hover { background: var(--cian); border-color: var(--cian); color: var(--marino); }
+    button.sec, .btn.sec { background: #fff; color: var(--marino); border-color: #c6d4e3; }
+    button.sec:hover, .btn.sec:hover { background: var(--hielo); border-color: var(--cian); }
     button.peligro { background: #fff; color: var(--rojo); border-color: var(--rojo); }
+    button.peligro:hover { background: var(--rojo-claro); }
     button.mini { padding: 3px 8px; font-size: 12px; }
+    button:focus-visible, .btn:focus-visible, a:focus-visible { outline: 3px solid rgba(18,207,243,.5); outline-offset: 2px; }
     table { border-collapse: collapse; width: 100%; background: #fff; font-size: 14px; }
     th, td { border-bottom: 1px solid var(--linea); padding: 7px 8px; text-align: left; vertical-align: middle; }
-    th { background: #eef3f2; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--suave); position: sticky; top: 0; }
+    th { background: var(--hielo); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--teal); position: sticky; top: 0; }
+    tr:hover td { background: #f8fcfe; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     td input { padding: 4px 6px; width: 100%; min-width: 60px; }
-    .tabla { overflow-x: auto; border: 1px solid var(--linea); border-radius: 10px; }
+    .tabla { overflow-x: auto; border: 1px solid var(--linea); border-radius: 12px; }
     .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
     .ok { background: var(--verde-claro); color: var(--verde); }
     .mal { background: var(--rojo-claro); color: var(--rojo); }
     .aviso { background: var(--ambar-claro); color: var(--ambar); }
-    .msg { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+    .msg { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; }
     .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-    .kpi { background: #fff; border: 1px solid var(--linea); border-radius: 10px; padding: 14px 16px; }
-    .kpi b { display: block; font-size: 26px; }
+    .kpi { background: #fff; border: 1px solid var(--linea); border-top: 3px solid var(--cian); border-radius: 12px; padding: 14px 16px; }
+    .kpi b { display: block; font-family: var(--titulos); font-size: 26px; color: var(--marino); }
     .kpi span { color: var(--suave); font-size: 13px; }
     .muted { color: var(--suave); font-size: 13px; }
     .solo-print { display: none; }
+
+    /* Pantallas de ingreso */
+    .acceso { min-height: 100vh; display: flex; align-items: center; padding: 24px 6vw; background: #071f4d url('/fondo-acceso.webp') center right / cover no-repeat; }
+    .acceso-tarjeta { width: min(420px, 100%); padding: 30px 30px 24px !important; border: 0 !important; border-radius: 16px !important; box-shadow: 0 20px 50px rgba(3,18,48,.45); }
+    .acceso-tarjeta .marca { flex-direction: column; text-align: center; gap: 8px; margin-bottom: 18px; }
+    .acceso-tarjeta .marca img { width: 76px; height: 76px; }
+    .acceso-tarjeta .marca b { color: var(--marino); font-size: 34px; }
+    .acceso-tarjeta .marca small { color: var(--suave); font-size: 13px; }
+    .acceso-tarjeta h1 { font-size: 20px; text-align: center; }
+    .acceso-tarjeta .sub { text-align: center; }
+    .acceso-tarjeta button { padding: 10px 14px; font-size: 15px; }
+
     @media (max-width: 800px) {
       .app { grid-template-columns: 1fr; }
       nav.lateral { position: static; height: auto; display: flex; flex-wrap: wrap; gap: 4px; }
-      nav.lateral .marca { width: 100%; }
+      nav.lateral .marca, nav.lateral .quien, nav.lateral .colegio { width: 100%; }
       main { padding: 16px; }
+      .acceso { justify-content: center; padding: 16px; background-position: 75% center; }
     }
     @media print {
       nav.lateral, .no-print, button, .btn { display: none !important; }
       .app { display: block; } main { padding: 0; max-width: none; }
-      .tarjeta, .tabla { border: none; } .solo-print { display: block; }
-      th { position: static; }
+      .tarjeta, .tabla { border: none; box-shadow: none; } .solo-print { display: block; }
+      th { position: static; color: var(--tinta); background: #eef3f6; }
+      tr:hover td { background: none; }
     }
   </style>
 </head>
@@ -104,7 +149,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
   {sinMenu ? <slot /> : (
     <div class="app">
       <nav class="lateral">
-        <div class="marca">Nexo<small>Registro docente</small></div>
+        <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
         {inst && <div class="colegio">{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div>}
         {inst && menu.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}

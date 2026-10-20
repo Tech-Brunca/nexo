@@ -8,7 +8,7 @@ const SIN_COLEGIO = ['/cuenta', '/admin', '/ajustes', '/indicadores', '/plantill
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
   const ruta = ctx.url.pathname;
-  if (ruta.startsWith('/_astro') || ruta === '/favicon.svg') return next();
+  if (ruta.startsWith('/_astro') || /^\/[\w-]+\.(svg|webp|png|ico)$/.test(ruta)) return next();
   await asegurarEsquema();
   if (PUBLICAS.includes(ruta)) return conEsquema(null, next);
 
