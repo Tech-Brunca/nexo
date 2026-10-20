@@ -1,4 +1,4 @@
-name: reddi
+name: nexo
 services:
   db:
     image: mariadb:11

@@ -1,4 +1,4 @@
-# ReDDi Web
+# Nexo
 
 Registro digital docente multiusuario: asistencia, evaluaciones, indicadores,
 calificaciones por periodo, nota anual con convocatorias y alerta temprana de
@@ -20,7 +20,7 @@ el código y el esquema son propios.
 ## En la PC (WSL + Docker Desktop)
 
 ```
-cd ~/proyectos/reddi
+cd ~/proyectos/nexo
 docker compose up -d --build
 ```
 
@@ -65,7 +65,7 @@ DB_ROOT_PASSWORD=otra-clave-mas
 
 ### 2. Sitio (Netlify)
 
-1. *Add new site → Import from Git* → repositorio `reddi-web`. Netlify toma `netlify.toml` solo.
+1. *Add new site → Import from Git* → repositorio `nexo`. Netlify toma `netlify.toml` solo.
 2. *Site configuration → Environment variables*:
 
    | Variable | Valor |

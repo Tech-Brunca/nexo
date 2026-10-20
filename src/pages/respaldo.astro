@@ -31,8 +31,8 @@ if (Astro.url.searchParams.get('descargar')) {
   const data: Record<string, any[]> = {};
   for (const x of TABLAS) data[x.t] = await q(x.sql, [U]);
   const fecha = new Date().toISOString().slice(0, 10);
-  return new Response(JSON.stringify({ app: 'reddi-web', version: 2, fecha, data }), {
-    headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="respaldo-reddi-${fecha}.json"` },
+  return new Response(JSON.stringify({ app: 'nexo', version: 2, fecha, data }), {
+    headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="respaldo-nexo-${fecha}.json"` },
   });
 }
 if (Astro.request.method === 'POST') {
@@ -43,7 +43,7 @@ if (Astro.request.method === 'POST') {
   else {
     let json: any = null;
     try { json = JSON.parse(await a.text()); } catch { error = 'El archivo no es un respaldo válido.'; }
-    if (json && json.app === 'reddi-web' && json.data) {
+    if (json && (json.app === 'nexo' || json.app === 'reddi-web') && json.data) {
       const misInst = new Set(instituciones.map((i) => i.id));
       const conn = await db().getConnection();
       let omitidas = 0;
@@ -78,7 +78,7 @@ if (Astro.request.method === 'POST') {
       } catch (e: any) {
         await conn.rollback(); error = 'No se pudo restaurar: ' + e.message;
       } finally { conn.release(); }
-    } else if (!error) error = 'El archivo no es un respaldo de ReDDi Web.';
+    } else if (!error) error = 'El archivo no es un respaldo de Nexo.';
   }
 }
 const conteo = (await q<any>(`SELECT (SELECT COUNT(*) FROM estudiantes WHERE usuario_id=?) e,

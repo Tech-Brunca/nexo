@@ -37,7 +37,7 @@ Importar SEA, Respaldo/Restaurar, Configuración, Notificaciones por WhatsApp.
 
 ## Tablas de `sisef` → esquema propio
 
-| ReDDi | ReDDi Web |
+| ReDDi | Nexo |
 |---|---|
 | parametros, docentes | instituciones, usuarios, ajustes |
 | asignaturas, asn_dct | asignaturas |
@@ -56,8 +56,8 @@ Importar SEA, Respaldo/Restaurar, Configuración, Notificaciones por WhatsApp.
 Exportar/importar SEA, notificaciones por WhatsApp, los ≈20 informes con formato
 oficial, importación directa desde la base de ReDDi.
 
-## Diferencias de ReDDi Web v2 frente a ReDDi
+## Diferencias de Nexo frente a ReDDi
 
-ReDDi es de un solo docente y una sola PC. ReDDi Web v2 es multiusuario: cada docente
+ReDDi es de un solo docente y una sola PC. Nexo es multiusuario: cada docente
 tiene su cuenta (aprobada por un administrador), trabaja en una o varias instituciones
 y sus estudiantes, secciones, indicadores y notas son solo suyos.

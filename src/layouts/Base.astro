@@ -27,7 +27,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="/favicon.svg" />
-  <title>{titulo} · ReDDi Web</title>
+  <title>{titulo} · Nexo</title>
   <style is:global>
     :root {
       --tinta: #1d2a2f; --suave: #5b6b70; --linea: #d9e1e0; --papel: #f6f8f7; --blanco: #fff;
@@ -97,7 +97,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
   {sinMenu ? <slot /> : (
     <div class="app">
       <nav class="lateral">
-        <div class="marca">ReDDi Web<small>Registro docente</small></div>
+        <div class="marca">Nexo<small>Registro docente</small></div>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
         {instituciones?.length > 1 ? (
           <form method="get" action="/cambiar-institucion" style="margin:0">
