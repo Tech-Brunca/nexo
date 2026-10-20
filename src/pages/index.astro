@@ -24,28 +24,33 @@ const secciones = await q<any>(
 const pendientes = user.rol === 'admin' ? (await one<any>(`SELECT COUNT(*) AS n FROM general.usuarios WHERE estado='pendiente'`)).n : 0;
 ---
 <Base titulo="Inicio">
-  <h1>Hola, {user.nombre.split(' ')[0]}</h1>
-  <p class="sub">{inst!.nombre} · Curso lectivo {aj.curso_lectivo}</p>
-  {pendientes > 0 && <div class="msg aviso">Hay {pendientes} solicitud(es) de acceso por aprobar. <a href="/admin/usuarios?estado=pendiente">Revisar</a></div>}
-  <div class="grid-kpi">
-    <div class="kpi"><b>{k.secciones}</b><span>Secciones</span></div>
-    <div class="kpi"><b>{k.estudiantes}</b><span>Estudiantes activos</span></div>
-    <div class="kpi"><b>{k.evaluaciones}</b><span>Evaluaciones creadas</span></div>
-    <div class="kpi"><b>{k.aushoy}</b><span>Ausencias/tardías hoy</span></div>
-    <a class="kpi" href="/alertas" style="text-decoration:none;color:inherit"><b style={alertas.n ? 'color:var(--rojo)' : ''}>{alertas.n}</b><span>En alerta de ausentismo ({aj.alerta_dias} días)</span></a>
+  <div class="inicio">
+    <div class="inicio-contenido">
+      <h1>Hola, {user.nombre.split(' ')[0]}</h1>
+      <p class="sub">{inst!.nombre} · Curso lectivo {aj.curso_lectivo}</p>
+      {pendientes > 0 && <div class="msg aviso">Hay {pendientes} solicitud(es) de acceso por aprobar. <a href="/admin/usuarios?estado=pendiente">Revisar</a></div>}
+      <div class="grid-kpi">
+        <div class="kpi"><b>{k.secciones}</b><span>Secciones</span></div>
+        <div class="kpi"><b>{k.estudiantes}</b><span>Estudiantes activos</span></div>
+        <div class="kpi"><b>{k.evaluaciones}</b><span>Evaluaciones creadas</span></div>
+        <div class="kpi"><b>{k.aushoy}</b><span>Ausencias/tardías hoy</span></div>
+        <a class="kpi" href="/alertas" style="text-decoration:none;color:inherit"><b style={alertas.n ? 'color:var(--rojo)' : ''}>{alertas.n}</b><span>En alerta de ausentismo ({aj.alerta_dias} días)</span></a>
+      </div>
+      <h2>Mis secciones en {inst!.nombre}</h2>
+      {secciones.length === 0 ? <p class="muted">Aún no hay secciones. <a href="/secciones">Crear la primera</a>.</p> : (
+        <div class="tabla"><table>
+          <tr><th>Sección</th><th>Asignatura</th><th class="n">Estudiantes</th><th></th></tr>
+          {secciones.map((s) => (
+            <tr><td><b>{s.nivel}-{s.nombre}</b></td><td>{s.asignatura ?? '—'}</td><td class="n">{s.n}</td>
+              <td style="text-align:right;white-space:nowrap">
+                <a href={`/asistencia?seccion=${s.id}`}>Pasar lista</a> ·
+                <a href={`/evaluaciones?seccion=${s.id}`}>Evaluar</a> ·
+                <a href={`/notas?seccion=${s.id}`}>Notas</a>
+              </td></tr>
+          ))}
+        </table></div>
+      )}
+      <img class="marca-agua-inicio" src="/images/logo-nexo.png" alt="Logo NEXO" />
+    </div>
   </div>
-  <h2>Mis secciones en {inst!.nombre}</h2>
-  {secciones.length === 0 ? <p class="muted">Aún no hay secciones. <a href="/secciones">Crear la primera</a>.</p> : (
-    <div class="tabla"><table>
-      <tr><th>Sección</th><th>Asignatura</th><th class="n">Estudiantes</th><th></th></tr>
-      {secciones.map((s) => (
-        <tr><td><b>{s.nivel}-{s.nombre}</b></td><td>{s.asignatura ?? '—'}</td><td class="n">{s.n}</td>
-          <td style="text-align:right;white-space:nowrap">
-            <a href={`/asistencia?seccion=${s.id}`}>Pasar lista</a> ·
-            <a href={`/evaluaciones?seccion=${s.id}`}>Evaluar</a> ·
-            <a href={`/notas?seccion=${s.id}`}>Notas</a>
-          </td></tr>
-      ))}
-    </table></div>
-  )}
 </Base>

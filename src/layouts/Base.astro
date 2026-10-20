@@ -56,7 +56,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     nav.lateral .quien a { display: inline; padding: 0; color: #cfdcd9; text-decoration: underline; }
     nav.lateral .colegio { margin: 0 8px 12px; padding: 10px; border-radius: 8px; background: #2c3c42; color: #fff; font-size: 13px; font-weight: 600; }
     nav.lateral .colegio a { display: block; padding: 4px 0 0; font-weight: 400; color: #9fd3c3; font-size: 12px; }
-    main { padding: 24px 28px 60px; max-width: 1400px; }
+    main { padding: 24px 28px 60px; max-width: 1400px; position: relative; z-index: 0; }
     h1 { font-size: 24px; margin: 0 0 4px; }
     .sub { color: var(--suave); margin: 0 0 20px; font-size: 14px; }
     h2 { font-size: 17px; margin: 28px 0 10px; }
@@ -84,6 +84,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     .kpi { background: #fff; border: 1px solid var(--linea); border-radius: 10px; padding: 14px 16px; }
     .kpi b { display: block; font-size: 26px; }
     .kpi span { color: var(--suave); font-size: 13px; }
+    .inicio { min-height: calc(100vh - 84px); }
+    .marca-agua-inicio { display: block; width: min(57vw, 495px); max-height: 360px; margin: 4px auto 18px; object-fit: contain; opacity: .22; filter: saturate(.8) blur(.3px); pointer-events: none; user-select: none; }
     .muted { color: var(--suave); font-size: 13px; }
     .solo-print { display: none; }
     @media (max-width: 800px) {
@@ -91,6 +93,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       nav.lateral { position: static; height: auto; display: flex; flex-wrap: wrap; gap: 4px; }
       nav.lateral .marca { width: 100%; }
       main { padding: 16px; }
+      .marca-agua-inicio { width: min(88vw, 450px); opacity: .18; }
     }
     @media print {
       nav.lateral, .no-print, button, .btn { display: none !important; }
