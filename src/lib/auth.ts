@@ -2,7 +2,14 @@ import { createHmac, timingSafeEqual, randomBytes, scrypt as _scrypt } from 'nod
 import { promisify } from 'node:util';
 
 const scrypt = promisify(_scrypt) as (p: string, s: Buffer, n: number) => Promise<Buffer>;
-const secret = () => process.env.SESSION_SECRET || 'cambie-esta-clave-secreta';
+// En línea (DATABASE_URL definida) se exige una clave propia: el código es público y la
+// clave de ejemplo permitiría falsificar sesiones.
+const secret = () => {
+  const s = process.env.SESSION_SECRET ?? '';
+  if (process.env.DATABASE_URL && (s.length < 16 || s === 'cambie-esta-clave-secreta'))
+    throw new Error('Falta SESSION_SECRET (mínimo 16 caracteres) en las variables de entorno.');
+  return s || 'cambie-esta-clave-secreta';
+};
 export const COOKIE = 'rd_sesion';
 export const COOKIE_INST = 'rd_inst';
 export const DURACION_H = 12;
