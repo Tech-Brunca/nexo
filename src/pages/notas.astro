@@ -40,7 +40,7 @@ const aprob = r ? r.filas.filter((f) => f.condicion === 'Aprobado').length : 0;
             : <th class="n">{c.nombre}<br />{c.porcentaje}%</th>)}
           <th class="n">Nota</th><th>Condición</th></tr>
         {r.filas.map((f, i) => (
-          <tr><td>{i + 1}</td><td>{f.est.apellidos} {f.est.nombre}</td>
+          <tr><td>{i + 1}</td><td class="nom">{f.est.apellidos} {f.est.nombre}</td>
             {r.comps.map((c) => detalle && c.tipo !== 'asistencia'
               ? r.evals.filter((e) => e.componente_id === c.id).map((e) => <td class="n muted">{fmt(f.detalle[e.id])}</td>).concat(<td class="n"><b>{fmt(f.porComp[c.id])}</b></td>)
               : <td class="n">{fmt(f.porComp[c.id])}{c.tipo === 'asistencia' && <span class="muted"> ({fmt(f.pctAus)}% aus.)</span>}</td>)}

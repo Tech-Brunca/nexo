@@ -53,7 +53,7 @@ const lista = await q<any>(
         </form>
       </td></tr>
     ) : (
-      <tr><td>{e.cedula}</td><td>{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
+      <tr><td>{e.cedula}</td><td class="nom">{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
         <td>{e.activo ? <span class="chip ok">Activo</span> : <span class="chip mal">Inactivo</span>}</td>
         <td><a href={`?q=${encodeURIComponent(buscar)}&editar=${e.id}`}>Editar</a></td></tr>
     ))}

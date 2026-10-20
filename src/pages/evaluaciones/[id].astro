@@ -126,7 +126,7 @@ const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
           {lista.map((e, n) => {
             const niv = nivelesDe(e.id); const r = pctIndicadores(niv, ev.porcentaje, aj.ne_cuenta_cero);
             return <tr data-est={e.id}>
-              <td class="no-print"><input type="checkbox" class="sel" /></td><td class="arr">{n + 1}</td><td class="arr">{e.apellidos} {e.nombre}</td>
+              <td class="no-print"><input type="checkbox" class="sel" /></td><td class="arr">{n + 1}</td><td class="arr nom">{e.apellidos} {e.nombre}</td>
               {inds.map((i, k) => (
                 <td><select name={`v_${e.id}_${i.id}`} data-ind={i.id} class="niv">{NIVELES.map(([v, t]) => <option value={v} selected={(niv[k] === null ? '' : String(niv[k])) === v}>{t}</option>)}</select></td>
               ))}
@@ -141,7 +141,7 @@ const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
             const nt = notas.get(e.id); const p = nt?.no_entrego ? null : nt?.puntos;
             const tiene = p !== null && p !== undefined && ev.puntos_total;
             return <tr data-est={e.id}>
-              <td class="no-print"><input type="checkbox" class="sel" /></td><td class="arr">{n + 1}</td><td class="arr">{e.apellidos} {e.nombre}</td>
+              <td class="no-print"><input type="checkbox" class="sel" /></td><td class="arr">{n + 1}</td><td class="arr nom">{e.apellidos} {e.nombre}</td>
               <td><input name={`p_${e.id}`} class="pts" value={p ?? ''} inputmode="decimal" style="max-width:100px;text-align:right" disabled={nt?.no_entrego} /></td>
               <td style="text-align:center"><input type="checkbox" name={`ne_${e.id}`} class="ne" checked={!!nt?.no_entrego} /></td>
               <td class="n nota">{nt?.no_entrego ? '0' : tiene ? fmt((p / ev.puntos_total) * 100) : '—'}</td>

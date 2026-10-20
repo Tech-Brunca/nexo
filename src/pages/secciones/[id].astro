@@ -123,7 +123,7 @@ const edad = (f: string | null) => f ? Math.floor((Date.now() - new Date(f).getT
   <div class="tabla"><table>
     <tr><th>#</th><th>Cédula</th><th>Estudiante</th><th class="n">Edad</th><th>Encargado(a)</th><th>Teléfono</th><th>Subgrupo</th><th class="no-print"></th></tr>
     {ests.map((e, i) => (
-      <tr><td>{i + 1}</td><td>{e.cedula}</td><td>{e.apellidos} {e.nombre}</td><td class="n">{edad(e.fecha_nac)}</td><td>{e.encargado}</td><td>{e.telefono}</td>
+      <tr><td>{i + 1}</td><td>{e.cedula}</td><td class="nom">{e.apellidos} {e.nombre}</td><td class="n">{edad(e.fecha_nac)}</td><td>{e.encargado}</td><td>{e.telefono}</td>
         <td><form method="post" class="no-print" style="display:flex;gap:4px"><input type="hidden" name="accion" value="subgrupo" /><input type="hidden" name="estudiante_id" value={e.id} /><input name="subgrupo" value={e.subgrupo} style="width:50px" onchange="this.form.submit()" /></form><span class="solo-print">{e.subgrupo}</span></td>
         <td class="no-print" style="text-align:right"><form method="post" onsubmit="return confirm('¿Quitar de la sección?')"><input type="hidden" name="accion" value="quitar" /><input type="hidden" name="estudiante_id" value={e.id} /><button class="mini peligro">Quitar</button></form></td></tr>
     ))}

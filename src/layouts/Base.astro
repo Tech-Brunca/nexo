@@ -105,6 +105,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     tr:hover td { background: #f8fcfe; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     td input { padding: 4px 6px; width: 100%; min-width: 60px; }
+    td input[type=checkbox], td input[type=radio] { width: auto; min-width: 0; }
     .tabla { overflow-x: auto; border: 1px solid var(--linea); border-radius: 12px; }
     .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
     .ok { background: var(--verde-claro); color: var(--verde); }
@@ -129,15 +130,55 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     .acceso-tarjeta .sub { text-align: center; }
     .acceso-tarjeta button { padding: 10px 14px; font-size: 15px; }
 
+    /* Barra superior del teléfono (oculta en PC) */
+    .barra-movil, .velo { display: none; }
+
     @media (max-width: 800px) {
-      .app { grid-template-columns: 1fr; }
-      nav.lateral { position: static; height: auto; display: flex; flex-wrap: wrap; gap: 4px; }
-      nav.lateral .marca, nav.lateral .quien, nav.lateral .colegio { width: 100%; }
-      main { padding: 16px; }
+      .app { grid-template-columns: minmax(0, 1fr); }
+      main { padding: 16px 14px 90px; min-width: 0; }
+      h1 { font-size: 21px; }
+      h2 { font-size: 16px; }
+
+      .barra-movil { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 40; padding: 8px 12px; background: var(--marino); color: #fff; box-shadow: 0 2px 8px rgba(3,18,48,.25); }
+      .barra-movil .menu-btn { flex: none; width: 42px; height: 42px; padding: 0; display: grid; place-items: center; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff; font-size: 20px; line-height: 1; }
+      .barra-movil .marca img { width: 30px; height: 30px; }
+      .barra-movil .marca b { color: #fff; font-size: 18px; }
+      .barra-movil .marca b span { color: var(--aqua); }
+      .barra-movil .donde { margin-left: auto; font-size: 12px; color: #cfe0f5; text-align: right; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      nav.lateral { position: fixed; z-index: 60; inset: 0 auto 0 0; width: min(290px, 84vw); height: 100dvh; transform: translateX(-102%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(3,18,48,.35); padding-bottom: 40px; }
+      nav.lateral a { padding: 11px 12px; font-size: 15px; }
+      body.menu-abierto nav.lateral { transform: none; }
+      body.menu-abierto .velo { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(3,18,48,.5); }
+      body.menu-abierto { overflow: hidden; }
+
+      /* Formularios cómodos para el dedo (16px evita el zoom automático del iPhone) */
+      input, select, textarea { font-size: 16px; padding: 9px 10px; }
+      button, .btn { padding: 9px 14px; }
+      button.mini { padding: 5px 9px; }
+      .fila { gap: 10px 8px; }
+      .fila > label { flex: 1 1 140px; }
+      .fila > label input, .fila > label select { width: 100%; }
+      .tarjeta { padding: 14px; overflow-x: auto; }
+
+      /* Tablas: se desplazan dentro de su recuadro, sin estirar la página */
+      .tabla { -webkit-overflow-scrolling: touch; }
+      table { font-size: 13px; }
+      th, td { padding: 7px 6px; }
+      th { font-size: 11px; }
+      td input { font-size: 15px; padding: 6px; }
+      td textarea { min-width: 230px; }
+      td b, td a { white-space: nowrap; }
+      /* El nombre del estudiante queda fijo a la izquierda al desplazar la tabla */
+      td.nom { white-space: nowrap; position: sticky; left: 0; z-index: 1; background: #fff; box-shadow: inset -1px 0 0 var(--linea); }
+      .grid-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .kpi { padding: 12px; }
+      .kpi b { font-size: 22px; }
+
       .acceso { justify-content: center; padding: 16px; background-position: 75% center; }
     }
     @media print {
-      nav.lateral, .no-print, button, .btn { display: none !important; }
+      nav.lateral, .barra-movil, .velo, .no-print, button, .btn { display: none !important; }
       .app { display: block; } main { padding: 0; max-width: none; }
       .tarjeta, .tabla { border: none; box-shadow: none; } .solo-print { display: block; }
       th { position: static; color: var(--tinta); background: #eef3f6; }
@@ -147,8 +188,14 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 </head>
 <body>
   {sinMenu ? <slot /> : (
+    <header class="barra-movil">
+      <button type="button" class="menu-btn" aria-label="Abrir menú" aria-controls="menu" aria-expanded="false" data-menu>☰</button>
+      <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><b>NE<span>XO</span></b></a>
+      {inst && <span class="donde">{inst.nombre}</span>}
+    </header>
+    <div class="velo" data-menu></div>
     <div class="app">
-      <nav class="lateral">
+      <nav class="lateral" id="menu">
         <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
         {inst && <div class="colegio">{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div>}
@@ -162,5 +209,12 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       <main><slot /></main>
     </div>
   )}
+  <script is:inline>
+    // Menú lateral del teléfono
+    document.querySelectorAll('[data-menu]').forEach((el) => el.addEventListener('click', () => {
+      const abierto = document.body.classList.toggle('menu-abierto');
+      document.querySelector('.menu-btn')?.setAttribute('aria-expanded', String(abierto));
+    }));
+  </script>
 </body>
 </html>

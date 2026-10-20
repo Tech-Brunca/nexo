@@ -43,7 +43,7 @@ const chip = (c: string) => (c.startsWith('Aprobado') ? 'ok' : c === 'Aplazado' 
       <div class="tabla"><table>
         <tr><th>#</th><th>Estudiante</th>{r.periodos.map((p: any) => <th class="n">{p.nombre}<br />{p.ponderado}%</th>)}<th class="n">Anual</th><th class="n">Conv. 1</th><th class="n">Conv. 2</th><th>Condición</th></tr>
         {r.filas.map((f, i) => (
-          <tr><td>{i + 1}</td><td>{f.est.apellidos} {f.est.nombre}</td>
+          <tr><td>{i + 1}</td><td class="nom">{f.est.apellidos} {f.est.nombre}</td>
             {f.porPer.map((n: number) => <td class="n">{fmt(n)}</td>)}
             <td class="n"><b>{fmt(f.anual)}</b></td>
             {f.anual < r.notaApb ? (

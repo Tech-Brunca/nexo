@@ -48,7 +48,7 @@ const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_
       </form>
     ))}
   </div>
-  <style>.grid-inf { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; } .grid-inf .tarjeta { margin: 0; }</style>
+  <style>.grid-inf { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 14px; } .grid-inf .tarjeta { margin: 0; }</style>
   <script is:inline>
     // El selector de estudiante muestra solo los de la sección elegida
     document.querySelectorAll('.grid-inf form').forEach((f) => {
