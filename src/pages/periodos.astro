@@ -10,17 +10,17 @@ if (Astro.request.method === 'POST') {
   if (accion === 'guardar') {
     const ids = f.getAll('id');
     for (let i = 0; i < ids.length; i++)
-      await exec('UPDATE periodos SET numero=?, nombre=?, fecha_ini=?, fecha_fin=?, ponderado=? WHERE id=? AND usuario_id=?',
+      await exec('UPDATE {S}.periodos SET numero=?, nombre=?, fecha_ini=?, fecha_fin=?, ponderado=? WHERE id=? AND usuario_id=?',
         [num(f.getAll('numero')[i]), str(f.getAll('nombre')[i]), str(f.getAll('fecha_ini')[i]) || null, str(f.getAll('fecha_fin')[i]) || null, num(f.getAll('ponderado')[i]), num(ids[i]), user.id]);
     msg = 'Periodos guardados.';
   } else if (accion === 'agregar') {
-    const n = (await q<any>('SELECT COALESCE(MAX(numero),0)+1 AS n FROM periodos WHERE usuario_id=? AND institucion_id=?', [user.id, inst!.id]))[0].n;
-    await exec('INSERT INTO periodos (usuario_id, institucion_id, numero, nombre, ponderado) VALUES (?,?,?,?,0)', [user.id, inst!.id, n, `Periodo ${n}`]);
+    const n = (await q<any>('SELECT COALESCE(MAX(numero),0)+1 AS n FROM {S}.periodos WHERE usuario_id=?', [user.id]))[0].n;
+    await exec('INSERT INTO {S}.periodos (usuario_id, numero, nombre, ponderado) VALUES (?,?,?,0)', [user.id, n, `Periodo ${n}`]);
   } else if (accion === 'borrar') {
-    await exec('DELETE FROM periodos WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+    await exec('DELETE FROM {S}.periodos WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
   }
 }
-const periodos = await q<any>('SELECT * FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [user.id, inst!.id]);
+const periodos = await q<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]);
 const suma = periodos.reduce((s, p) => s + Number(p.ponderado), 0);
 ---
 <Base titulo="Periodos">

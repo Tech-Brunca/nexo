@@ -12,10 +12,10 @@ if (Astro.request.method === 'POST') {
   if (!v.nombre || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.correo)) error = 'Indique su nombre y un correo válido.';
   else if (!claveValida(clave)) error = 'La contraseña debe tener al menos 8 caracteres.';
   else if (clave !== str(f.get('clave2'))) error = 'Las contraseñas no coinciden.';
-  else if (await one('SELECT id FROM usuarios WHERE correo=?', [v.correo])) error = 'Ya existe una cuenta con ese correo.';
+  else if (await one('SELECT id FROM general.usuarios WHERE correo=?', [v.correo])) error = 'Ya existe una cuenta con ese correo.';
   else {
     const admin = esCorreoAdmin(v.correo);
-    await exec('INSERT INTO usuarios (correo, nombre, cedula, pass_hash, rol, estado, nota_registro) VALUES (?,?,?,?,?,?,?)',
+    await exec('INSERT INTO general.usuarios (correo, nombre, cedula, pass_hash, rol, estado, nota_registro) VALUES (?,?,?,?,?,?,?)',
       [v.correo, v.nombre, v.cedula, await hashClave(clave), admin ? 'admin' : 'docente', admin ? 'activo' : 'pendiente', v.nota]);
     return Astro.redirect(admin ? '/login' : '/login?registrado=1');
   }

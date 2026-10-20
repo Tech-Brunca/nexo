@@ -9,30 +9,30 @@ if (Astro.request.method === 'POST') {
   const accion = str(f.get('accion'));
   await getAjustes(user.id);
   if (accion === 'reglas') {
-    await exec('UPDATE ajustes SET curso_lectivo=?, nota_aprobatoria=?, tardias_por_ausencia=?, alerta_dias=?, alerta_ausencias=? WHERE usuario_id=?',
-      [num(f.get('curso_lectivo'), 2026), num(f.get('nota_aprobatoria'), 70), num(f.get('tardias_por_ausencia'), 2), num(f.get('alerta_dias'), 15), num(f.get('alerta_ausencias'), 3), user.id]);
+    await exec('UPDATE general.ajustes SET curso_lectivo=?, nota_aprobatoria=?, tardias_por_ausencia=?, alerta_dias=?, alerta_ausencias=?, ne_cuenta_cero=? WHERE usuario_id=?',
+      [num(f.get('curso_lectivo'), 2026), num(f.get('nota_aprobatoria'), 70), num(f.get('tardias_por_ausencia'), 2), num(f.get('alerta_dias'), 15), num(f.get('alerta_ausencias'), 3), str(f.get('ne_cuenta_cero')) !== 'no', user.id]);
     ok = 'Reglas guardadas.';
   } else if (accion === 'escala') {
     const desde = f.getAll('desde'), hasta = f.getAll('hasta'), pct = f.getAll('pct');
-    await exec('DELETE FROM escala_asistencia WHERE usuario_id=?', [user.id]);
+    await exec('DELETE FROM general.escala_asistencia WHERE usuario_id=?', [user.id]);
     for (let i = 0; i < desde.length; i++) {
       if (str(desde[i]) === '') continue;
-      await exec('INSERT IGNORE INTO escala_asistencia VALUES (?,?,?,?)', [user.id, num(desde[i]), num(hasta[i]), num(pct[i])]);
+      await exec('INSERT INTO general.escala_asistencia VALUES (?,?,?,?) ON CONFLICT DO NOTHING', [user.id, num(desde[i]), num(hasta[i]), num(pct[i])]);
     }
     ok = 'Escala de asistencia guardada.';
   } else if (accion === 'asignatura') {
-    if (str(f.get('nombre'))) await exec('INSERT INTO asignaturas (usuario_id, nombre) VALUES (?,?)', [user.id, str(f.get('nombre'))]);
+    if (str(f.get('nombre'))) await exec('INSERT INTO general.asignaturas (usuario_id, nombre) VALUES (?,?)', [user.id, str(f.get('nombre'))]);
   } else if (accion === 'borrar-asignatura') {
-    await exec('DELETE FROM asignaturas WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+    await exec('DELETE FROM general.asignaturas WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
   }
 }
 const c = await getAjustes(user.id);
 const escala = await getEscala(user.id);
-const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
+const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
 ---
 <Base titulo="Ajustes">
   <h1>Ajustes</h1>
-  <p class="sub">Sus asignaturas y reglas de evaluación. Aplican en todas sus instituciones.</p>
+  <p class="sub">Sus asignaturas y reglas de evaluación. Aplican en todos sus colegios.</p>
   {ok && <div class="msg ok">{ok}</div>}
 
   <div class="tarjeta">
@@ -62,6 +62,9 @@ const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? O
       <label>Tardías que equivalen a 1 ausencia<input type="number" name="tardias_por_ausencia" value={c.tardias_por_ausencia} style="width:90px" /></label>
       <label>Alerta: días hacia atrás<input type="number" name="alerta_dias" value={c.alerta_dias} style="width:90px" /></label>
       <label>Alerta: lecciones ausentes desde<input type="number" name="alerta_ausencias" value={c.alerta_ausencias} style="width:90px" /></label>
+      <label>En indicadores, «No entregó»
+        <select name="ne_cuenta_cero"><option value="si" selected={c.ne_cuenta_cero}>cuenta como 0</option><option value="no" selected={!c.ne_cuenta_cero}>no se toma en cuenta</option></select>
+      </label>
       <button>Guardar</button>
     </div>
   </form>

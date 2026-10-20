@@ -8,7 +8,7 @@ export const COOKIE_INST = 'rd_inst';
 export const DURACION_H = 12;
 
 export type Usuario = { id: number; correo: string; nombre: string; rol: 'admin' | 'docente'; estado: string };
-export type Institucion = { id: number; nombre: string; codigo: string; direccion_regional: string; circuito: string; director: string };
+export type Institucion = { id: number; nombre: string; codigo: string; direccion_regional: string; circuito: string; director: string; esquema: string };
 
 // ── Contraseñas (scrypt con sal aleatoria) ─────────────────────────────────
 export async function hashClave(clave: string) {

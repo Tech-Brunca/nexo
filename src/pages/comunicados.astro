@@ -1,0 +1,59 @@
+---
+import Base from '../layouts/Base.astro';
+import Selector from '../components/Selector.astro';
+import EnviarWa from '../components/EnviarWa.astro';
+import { q } from '../lib/db';
+import { estudiantesDe, seccion } from '../lib/calc';
+import { str, csv } from '../lib/util';
+import { TIPOS, plantillas, llenar, enlaceWa } from '../lib/whatsapp';
+const { user, inst } = Astro.locals;
+const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
+const sec = seccionId ? await seccion(user.id, seccionId) : null;
+const pl = await plantillas(user.id);
+const texto = Astro.url.searchParams.get('texto') ?? pl.libre;
+
+let destinos: any[] = [];
+if (sec) {
+  const ests = await estudiantesDe(seccionId);
+  destinos = ests.map((e) => {
+    const mensaje = llenar(texto, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: `${sec.nivel}-${sec.nombre}`,
+      asignatura: sec.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre });
+    return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje) };
+  });
+}
+const historial = await q<any>(`SELECT c.*, e.apellidos, e.nombre FROM {S}.comunicados c LEFT JOIN {S}.estudiantes e ON e.id=c.estudiante_id
+  WHERE c.usuario_id=? ORDER BY c.creado DESC LIMIT 300`, [user.id]);
+if (Astro.url.searchParams.get('csv')) {
+  return new Response(csv([['Fecha', 'Tipo', 'Estudiante', 'Teléfono', 'Mensaje'],
+    ...historial.map((h) => [h.creado, TIPOS[h.tipo]?.titulo ?? h.tipo, h.apellidos ? `${h.apellidos} ${h.nombre}` : '', h.telefono, h.mensaje])]),
+    { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="comunicados.csv"' } });
+}
+const sinTel = destinos.filter((d) => !d.enlace).length;
+---
+<Base titulo="Comunicados">
+  <h1>Comunicados por WhatsApp</h1>
+  <p class="sub">Envíe un mensaje a los encargados de un grupo. Los avisos de ausencia y de «no entregó» también aparecen en Asistencia y en cada evaluación.</p>
+  <Selector seccionId={seccionId} />
+  {sec && (
+    <>
+      <form method="get" class="tarjeta">
+        <input type="hidden" name="seccion" value={seccionId} />
+        <label>Mensaje para todo el grupo {sec.nivel}-{sec.nombre}
+          <textarea name="texto" rows="4" style="width:100%">{texto}</textarea></label>
+        <p class="fila"><button class="sec">Preparar mensajes</button> <span class="muted">Variables: {'{encargado} {estudiante} {seccion} {asignatura} {docente} {colegio}'} · <a href="/plantillas">Editar plantillas</a></span></p>
+      </form>
+      {sinTel > 0 && <div class="msg aviso">{sinTel} estudiante(s) no tienen teléfono del encargado. Agréguelo en <a href={`/secciones/${seccionId}`}>la sección</a> o en Estudiantes.</div>}
+      <EnviarWa destinos={destinos} tipo="libre" referencia={`seccion:${seccionId}`} titulo="Destinatarios" />
+    </>
+  )}
+  <h2>Historial</h2>
+  <div class="tabla"><table>
+    <tr><th>Fecha</th><th>Tipo</th><th>Estudiante</th><th>Mensaje</th></tr>
+    {historial.length === 0 && <tr><td colspan="4" class="muted">Aún no se han enviado comunicados.</td></tr>}
+    {historial.map((h) => (
+      <tr><td style="white-space:nowrap">{h.creado}</td><td>{TIPOS[h.tipo]?.titulo ?? h.tipo}</td><td>{h.apellidos ? `${h.apellidos} ${h.nombre}` : '—'}<br /><span class="muted">{h.telefono}</span></td>
+        <td class="muted" style="max-width:520px">{h.mensaje}</td></tr>
+    ))}
+  </table></div>
+  {historial.length > 0 && <p><a class="btn sec" href="?csv=1">Exportar historial (CSV)</a></p>}
+</Base>

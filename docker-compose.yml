@@ -1,19 +1,17 @@
 name: nexo
 services:
   db:
-    image: mariadb:11
+    image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: registro
-      MARIADB_USER: registro
-      MARIADB_PASSWORD: ${DB_PASSWORD:-registro123}
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root123}
+      POSTGRES_DB: nexo
+      POSTGRES_USER: nexo
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-nexo123}
       TZ: America/Costa_Rica
     volumes:
-      - datos:/var/lib/mysql
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - datos:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ["CMD-SHELL", "pg_isready -U nexo -d nexo"]
       interval: 5s
       retries: 20
 
@@ -25,9 +23,10 @@ services:
         condition: service_healthy
     environment:
       DB_HOST: db
-      DB_USER: registro
-      DB_PASSWORD: ${DB_PASSWORD:-registro123}
-      DB_NAME: registro
+      DB_PORT: 5432
+      DB_USER: nexo
+      DB_PASSWORD: ${DB_PASSWORD:-nexo123}
+      DB_NAME: nexo
       ADMIN_EMAILS: ${ADMIN_EMAILS:-hferreto@gmail.com}
       SESSION_SECRET: ${SESSION_SECRET:-cambie-esta-clave-secreta}
       TZ: America/Costa_Rica

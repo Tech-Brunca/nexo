@@ -7,7 +7,7 @@ import { calcularAnual } from '../lib/calc';
 import { numOrNull, fmt, csv } from '../lib/util';
 const { user, inst } = Astro.locals;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
-const sec = seccionId ? await seccion(user.id, seccionId, inst!.id) : null;
+const sec = seccionId ? await seccion(user.id, seccionId) : null;
 let msg = '';
 if (sec && Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
@@ -17,8 +17,8 @@ if (sec && Astro.request.method === 'POST') {
     const est = Number(k.slice(3));
     if (!validos.has(est)) continue;
     const n1 = numOrNull(f.get('c1_' + est)), n2 = numOrNull(f.get('c2_' + est));
-    if (n1 === null && n2 === null) await exec('DELETE FROM convocatorias WHERE estudiante_id=? AND seccion_id=?', [est, seccionId]);
-    else await exec('INSERT INTO convocatorias VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE nota1=VALUES(nota1), nota2=VALUES(nota2)', [est, seccionId, n1, n2]);
+    if (n1 === null && n2 === null) await exec('DELETE FROM {S}.convocatorias WHERE estudiante_id=? AND seccion_id=?', [est, seccionId]);
+    else await exec('INSERT INTO {S}.convocatorias VALUES (?,?,?,?) ON CONFLICT (estudiante_id, seccion_id) DO UPDATE SET nota1=EXCLUDED.nota1, nota2=EXCLUDED.nota2', [est, seccionId, n1, n2]);
   }
   msg = 'Convocatorias guardadas.';
 }

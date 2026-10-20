@@ -1,38 +1,53 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { exec, q, one } from '../../lib/db';
-import { estudiantesDe } from '../../lib/calc';
-import { num, numOrNull, str, fmt, r2, NIVELES_LOGRO } from '../../lib/util';
-const { user } = Astro.locals;
+import EnviarWa from '../../components/EnviarWa.astro';
+import { exec, q, one, getAjustes } from '../../lib/db';
+import { estudiantesDe, pctIndicadores } from '../../lib/calc';
+import { num, numOrNull, str, fmt, r2 } from '../../lib/util';
+import { plantillas, llenar, enlaceWa, fechaLarga } from '../../lib/whatsapp';
+const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
-const ev = await one<any>(`SELECT e.*, c.nombre AS componente, c.tipo, s.nivel, s.nombre AS seccion, p.nombre AS periodo
-  FROM evaluaciones e JOIN componentes c ON c.id=e.componente_id JOIN secciones s ON s.id=e.seccion_id JOIN periodos p ON p.id=e.periodo_id
+const ev = await one<any>(`SELECT e.*, c.nombre AS componente, c.tipo, s.nivel, s.nombre AS seccion, p.nombre AS periodo, a.nombre AS asignatura
+  FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id JOIN {S}.secciones s ON s.id=e.seccion_id
+  JOIN {S}.periodos p ON p.id=e.periodo_id LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id
   WHERE e.id=? AND s.usuario_id=?`, [id, user.id]);
 if (!ev) return Astro.redirect('/evaluaciones');
 const porInd = ev.tipo === 'indicadores';
+const aj = await getAjustes(user.id);
 let msg = '', error = '';
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
   if (accion === 'notas') {
-    // Solo se aceptan estudiantes de esta sección e indicadores de esta evaluación
-    const validos = new Set((await estudiantesDe(ev.seccion_id)).map((e) => e.id));
-    const indsEv = new Set((await q<any>('SELECT indicador_id FROM evaluacion_indicadores WHERE evaluacion_id=?', [id])).map((r) => r.indicador_id));
-    for (const [k, v] of f.entries()) {
-      if (k.startsWith('p_') && validos.has(Number(k.slice(2)))) {
-        const pts = numOrNull(v);
-        if (pts !== null && (pts < 0 || pts > ev.puntos_total)) { error = `Hay puntos fuera del rango 0–${ev.puntos_total}; no se guardaron esos.`; continue; }
-        await exec('INSERT INTO notas (evaluacion_id, estudiante_id, puntos, observacion) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE puntos=VALUES(puntos), observacion=VALUES(observacion)',
-          [id, Number(k.slice(2)), pts, str(f.get('o_' + k.slice(2)))]);
-      } else if (k.startsWith('v_')) {
-        const [, est, ind] = k.split('_');
-        if (!validos.has(Number(est)) || !indsEv.has(Number(ind))) continue;
-        await exec('INSERT INTO valoraciones VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE nivel=VALUES(nivel)', [id, Number(est), Number(ind), str(v) === '' ? null : Number(v)]);
+    // Solo estudiantes de esta sección e indicadores de esta evaluación
+    const validos = (await estudiantesDe(ev.seccion_id)).map((e) => e.id);
+    const indsEv = (await q<any>('SELECT indicador_id FROM {S}.evaluacion_indicadores WHERE evaluacion_id=?', [id])).map((r) => r.indicador_id);
+    let fuera = 0;
+    for (const est of validos) {
+      if (!f.has(`o_${est}`)) continue; // fila no enviada (filtro de subgrupo)
+      const obs = str(f.get(`o_${est}`)).slice(0, 300);
+      if (porInd) {
+        for (const ind of indsEv) {
+          const v = str(f.get(`v_${est}_${ind}`));
+          const nivel = ['0', '1', '2', '3'].includes(v) ? Number(v) : null;
+          await exec(`INSERT INTO {S}.valoraciones VALUES (?,?,?,?) ON CONFLICT (evaluacion_id, estudiante_id, indicador_id) DO UPDATE SET nivel=EXCLUDED.nivel`, [id, est, ind, nivel]);
+        }
+        await exec(`INSERT INTO {S}.notas (evaluacion_id, estudiante_id, observacion) VALUES (?,?,?)
+          ON CONFLICT (evaluacion_id, estudiante_id) DO UPDATE SET observacion=EXCLUDED.observacion`, [id, est, obs]);
+      } else {
+        const ne = f.get(`ne_${est}`) === 'on';
+        let pts = ne ? null : numOrNull(f.get(`p_${est}`));
+        if (pts !== null && (pts < 0 || pts > ev.puntos_total)) { fuera++; continue; }
+        await exec(`INSERT INTO {S}.notas (evaluacion_id, estudiante_id, puntos, no_entrego, observacion) VALUES (?,?,?,?,?)
+          ON CONFLICT (evaluacion_id, estudiante_id) DO UPDATE SET puntos=EXCLUDED.puntos, no_entrego=EXCLUDED.no_entrego, observacion=EXCLUDED.observacion`,
+          [id, est, pts, ne, obs]);
       }
     }
-    if (!error) msg = 'Calificaciones guardadas.';
+    if (fuera) error = `${fuera} nota(s) fuera del rango 0–${ev.puntos_total} no se guardaron.`;
+    else msg = 'Calificaciones guardadas.';
   } else if (accion === 'datos') {
-    await exec('UPDATE evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, fecha=? WHERE id=?', [str(f.get('nombre')), num(f.get('puntos_total')), num(f.get('porcentaje')), str(f.get('fecha')) || null, id]);
+    await exec('UPDATE {S}.evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, fecha=? WHERE id=?',
+      [str(f.get('nombre')), num(f.get('puntos_total')), num(f.get('porcentaje')), str(f.get('fecha')) || null, id]);
     return Astro.redirect(`/evaluaciones/${id}`);
   }
 }
@@ -40,13 +55,23 @@ const ests = await estudiantesDe(ev.seccion_id);
 const sub = Astro.url.searchParams.get('sub') ?? '';
 const lista = sub ? ests.filter((e) => e.subgrupo === sub) : ests;
 const subgrupos = [...new Set(ests.map((e) => e.subgrupo).filter(Boolean))].sort();
-const notas = new Map((await q<any>('SELECT * FROM notas WHERE evaluacion_id=?', [id])).map((n) => [n.estudiante_id, n]));
-const inds = porInd ? await q<any>('SELECT i.* FROM evaluacion_indicadores ei JOIN indicadores i ON i.id=ei.indicador_id WHERE ei.evaluacion_id=? ORDER BY i.id', [id]) : [];
-const vals = new Map((await q<any>('SELECT * FROM valoraciones WHERE evaluacion_id=?', [id])).map((v) => [`${v.estudiante_id}_${v.indicador_id}`, v.nivel]));
-const pctInd = (estId: number) => {
-  const ns = inds.map((i) => vals.get(`${estId}_${i.id}`)).filter((n) => n !== null && n !== undefined) as number[];
-  return ns.length ? r2((ns.reduce((s, n) => s + n, 0) / (3 * ns.length)) * ev.porcentaje) : null;
-};
+const notas = new Map((await q<any>('SELECT * FROM {S}.notas WHERE evaluacion_id=?', [id])).map((n) => [n.estudiante_id, n]));
+const inds = porInd ? await q<any>(`SELECT i.* FROM {S}.evaluacion_indicadores ei JOIN general.indicadores i ON i.id=ei.indicador_id
+  WHERE ei.evaluacion_id=? ORDER BY i.id`, [id]) : [];
+const vals = new Map((await q<any>('SELECT * FROM {S}.valoraciones WHERE evaluacion_id=?', [id])).map((v) => [`${v.estudiante_id}_${v.indicador_id}`, v.nivel]));
+const nivelesDe = (estId: number) => inds.map((i) => vals.get(`${estId}_${i.id}`) ?? null);
+
+// Avisos por WhatsApp a quienes no entregaron
+const noEntregaron = lista.filter((e) => porInd ? nivelesDe(e.id).some((n) => n === 0) : notas.get(e.id)?.no_entrego);
+const pl = await plantillas(user.id);
+const enviados = new Map((await q<any>(`SELECT estudiante_id, max(creado) AS cuando FROM {S}.comunicados
+  WHERE usuario_id=? AND tipo='no_entrego' AND referencia=? GROUP BY estudiante_id`, [user.id, `evaluacion:${id}`])).map((r) => [r.estudiante_id, r.cuando]));
+const destinos = noEntregaron.map((e) => {
+  const mensaje = llenar(pl.no_entrego, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: `${ev.nivel}-${ev.seccion}`,
+    asignatura: ev.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre, fecha: fechaLarga(ev.fecha), evaluacion: ev.nombre });
+  return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje), enviado: enviados.get(e.id) ?? null };
+});
+const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
 ---
 <Base titulo={ev.nombre}>
   <p class="no-print"><a href={`/evaluaciones?seccion=${ev.seccion_id}&periodo=${ev.periodo_id}`}>← Evaluaciones</a></p>
@@ -64,49 +89,149 @@ const pctInd = (estId: number) => {
   {subgrupos.length > 0 && (
     <form class="fila no-print" style="margin-bottom:10px"><label>Subgrupo<select name="sub" onchange="this.form.submit()"><option value="">Todos</option>{subgrupos.map((s) => <option selected={s === sub}>{s}</option>)}</select></label></form>
   )}
+  {porInd && (
+    <p class="muted">
+      Califique cada indicador con <b>1</b>, <b>2</b> o <b>3</b>. <b>—</b> = no se califica (no cuenta).
+      <b>NE</b> = no entregó ({aj.ne_cuenta_cero ? 'cuenta como 0' : 'no se toma en cuenta'}; se cambia en Ajustes).
+      El {ev.porcentaje}% se reparte en partes iguales entre los indicadores calificados de cada estudiante.
+    </p>
+  )}
   {porInd && inds.length === 0 && <div class="msg aviso">Esta evaluación no tiene indicadores asociados.</div>}
-  <form method="post">
+
+  <form method="post" id="calificar" data-tipo={porInd ? 'ind' : 'pts'} data-total={ev.puntos_total} data-valor={ev.porcentaje} data-ne0={aj.ne_cuenta_cero ? '1' : '0'}>
     <input type="hidden" name="accion" value="notas" />
-    {porInd ? (
-      <>
-        <p class="muted no-print">Sin calificar = no se toma en cuenta · Sin entregar = 0 · Inicial = 1 · Intermedio = 2 · Avanzado = 3.
-          Aplicar a todos: {inds.map((i, k) => <select class="todos" data-ind={i.id} title={i.nombre} style="margin-left:4px"><option value="x">Ind. {k + 1}</option>{Object.entries(NIVELES_LOGRO).map(([v, t]) => <option value={v}>{t}</option>)}</select>)}</p>
-        <div class="tabla"><table>
-          <tr><th>Estudiante</th>{inds.map((i, k) => <th title={i.nombre}>Ind. {k + 1}</th>)}<th class="n">Obtenido %</th></tr>
-          {lista.map((e) => (
-            <tr><td>{e.apellidos} {e.nombre}</td>
-              {inds.map((i) => {
-                const v = vals.get(`${e.id}_${i.id}`);
-                return <td><select name={`v_${e.id}_${i.id}`} data-ind={i.id}>{Object.entries(NIVELES_LOGRO).map(([val, t]) => <option value={val} selected={(v === null || v === undefined ? '' : String(v)) === val}>{t}</option>)}</select></td>;
-              })}
-              <td class="n">{fmt(pctInd(e.id))}</td></tr>
-          ))}
-        </table></div>
-        <div class="tarjeta" style="margin-top:12px">{inds.map((i, k) => <p style="margin:4px 0"><b>Ind. {k + 1}:</b> {i.nombre}</p>)}</div>
-      </>
-    ) : (
-      <div class="tabla"><table>
-        <tr><th>Estudiante</th><th class="n">Puntos (de {ev.puntos_total})</th><th class="n">Nota</th><th class="n">Obtenido %</th><th>Observación</th></tr>
-        {lista.map((e) => {
-          const n = notas.get(e.id); const p = n?.puntos;
-          return <tr><td>{e.apellidos} {e.nombre}</td>
-            <td><input name={`p_${e.id}`} value={p ?? ''} inputmode="decimal" style="max-width:100px;text-align:right" /></td>
-            <td class="n">{p !== null && p !== undefined && ev.puntos_total ? fmt((p / ev.puntos_total) * 100) : '—'}</td>
-            <td class="n">{p !== null && p !== undefined && ev.puntos_total ? fmt((p / ev.puntos_total) * ev.porcentaje) : '—'}</td>
-            <td><input name={`o_${e.id}`} value={n?.observacion ?? ''} /></td></tr>;
-        })}
-      </table></div>
-    )}
-    <p class="no-print"><button>Guardar calificaciones</button> <button type="button" class="sec" onclick="print()">Imprimir</button></p>
+    <div class="tarjeta no-print barra-masiva">
+      <b id="nsel">0 seleccionados</b>
+      <button type="button" class="mini sec" data-sel="todos">Todos</button>
+      <button type="button" class="mini sec" data-sel="ninguno">Ninguno</button>
+      <span class="muted">Clic, Shift+clic para un rango o arrastre sobre las filas.</span>
+      <span style="flex:1"></span>
+      {porInd ? (
+        <>
+          <select id="m-ind"><option value="*">Todos los indicadores</option>{inds.map((i, k) => <option value={i.id}>Indicador {k + 1}</option>)}</select>
+          <select id="m-val">{NIVELES.map(([v, t]) => <option value={v}>{t === '—' ? '— No se califica' : t === 'NE' ? 'NE No entregó' : `Nivel ${t}`}</option>)}</select>
+        </>
+      ) : (
+        <>
+          <input id="m-val" inputmode="decimal" placeholder="Puntos" style="width:90px" />
+          <label style="flex-direction:row;gap:6px;align-items:center;color:var(--tinta)"><input type="checkbox" id="m-ne" /> No entregó</label>
+        </>
+      )}
+      <button type="button" id="m-aplicar">Aplicar a seleccionados</button>
+    </div>
+    <div class="tabla"><table class="grilla">
+      {porInd ? (
+        <>
+          <tr><th class="no-print"></th><th>#</th><th>Estudiante</th>{inds.map((i, k) => <th title={i.nombre}>Ind. {k + 1}</th>)}<th class="n">Calificados</th><th class="n">Obtenido %</th><th>Observación</th></tr>
+          {lista.map((e, n) => {
+            const niv = nivelesDe(e.id); const r = pctIndicadores(niv, ev.porcentaje, aj.ne_cuenta_cero);
+            return <tr data-est={e.id}>
+              <td class="no-print"><input type="checkbox" class="sel" /></td><td class="arr">{n + 1}</td><td class="arr">{e.apellidos} {e.nombre}</td>
+              {inds.map((i, k) => (
+                <td><select name={`v_${e.id}_${i.id}`} data-ind={i.id} class="niv">{NIVELES.map(([v, t]) => <option value={v} selected={(niv[k] === null ? '' : String(niv[k])) === v}>{t}</option>)}</select></td>
+              ))}
+              <td class="n calif">{r.calificados}/{inds.length}</td><td class="n obt">{r.calificados ? fmt(r.pct) : '—'}</td>
+              <td><input name={`o_${e.id}`} value={notas.get(e.id)?.observacion ?? ''} /></td></tr>;
+          })}
+        </>
+      ) : (
+        <>
+          <tr><th class="no-print"></th><th>#</th><th>Estudiante</th><th class="n">Puntos (de {ev.puntos_total})</th><th>No entregó</th><th class="n">Nota</th><th class="n">Obtenido %</th><th>Observación</th></tr>
+          {lista.map((e, n) => {
+            const nt = notas.get(e.id); const p = nt?.no_entrego ? null : nt?.puntos;
+            const tiene = p !== null && p !== undefined && ev.puntos_total;
+            return <tr data-est={e.id}>
+              <td class="no-print"><input type="checkbox" class="sel" /></td><td class="arr">{n + 1}</td><td class="arr">{e.apellidos} {e.nombre}</td>
+              <td><input name={`p_${e.id}`} class="pts" value={p ?? ''} inputmode="decimal" style="max-width:100px;text-align:right" disabled={nt?.no_entrego} /></td>
+              <td style="text-align:center"><input type="checkbox" name={`ne_${e.id}`} class="ne" checked={!!nt?.no_entrego} /></td>
+              <td class="n nota">{nt?.no_entrego ? '0' : tiene ? fmt((p / ev.puntos_total) * 100) : '—'}</td>
+              <td class="n obt">{nt?.no_entrego ? '0' : tiene ? fmt((p / ev.puntos_total) * ev.porcentaje) : '—'}</td>
+              <td><input name={`o_${e.id}`} value={nt?.observacion ?? ''} /></td></tr>;
+          })}
+        </>
+      )}
+    </table></div>
+    {porInd && <div class="tarjeta" style="margin-top:12px">{inds.map((i, k) => <p style="margin:4px 0"><b>Ind. {k + 1}:</b> {i.nombre}</p>)}</div>}
+    <p class="no-print"><button>Guardar calificaciones</button> <button type="button" class="sec" onclick="print()">Imprimir</button>
+      <a class="btn sec" href={`/informes/indicadores?evaluacion=${id}`} style={porInd ? '' : 'display:none'}>Informe de indicadores</a></p>
   </form>
+
+  {noEntregaron.length > 0 && <div class="no-print"><EnviarWa destinos={destinos} tipo="no_entrego" referencia={`evaluacion:${id}`} titulo="Avisar a quienes no entregaron" /></div>}
+
+  <style>
+    .barra-masiva { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: sticky; top: 0; z-index: 2; }
+    .grilla tr.sel-on td { background: #e3f1ec; }
+    .grilla td.arr { cursor: cell; user-select: none; }
+    .grilla select.niv { min-width: 64px; }
+  </style>
   <script is:inline>
-    document.querySelectorAll('select.todos').forEach((t) => t.onchange = () => {
-      if (t.value === 'x') return;
-      document.querySelectorAll(`select[name^="v_"][data-ind="${t.dataset.ind}"]`).forEach((s) => s.value = t.value);
-    });
-    // Enter baja a la siguiente fila en la columna de puntos
-    document.querySelectorAll('input[name^="p_"]').forEach((el, i, all) => el.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); (all[i + 1] || el).focus(); }
-    }));
+    (() => {
+      const form = document.getElementById('calificar'); if (!form) return;
+      const filas = [...form.querySelectorAll('tr[data-est]')];
+      const esInd = form.dataset.tipo === 'ind', total = Number(form.dataset.total), valor = Number(form.dataset.valor), ne0 = form.dataset.ne0 === '1';
+      const nsel = document.getElementById('nsel');
+      const marcar = (f, on) => { f.querySelector('.sel').checked = on; f.classList.toggle('sel-on', on); };
+      const contar = () => { nsel.textContent = filas.filter((f) => f.querySelector('.sel').checked).length + ' seleccionados'; };
+      let ultimo = -1, arrastrando = false, modo = true, inicio = -1;
+      filas.forEach((f, i) => {
+        const cb = f.querySelector('.sel');
+        cb.addEventListener('click', (ev) => {
+          if (ev.shiftKey && ultimo >= 0) { const [a, b] = [Math.min(ultimo, i), Math.max(ultimo, i)]; for (let k = a; k <= b; k++) marcar(filas[k], cb.checked); }
+          else marcar(f, cb.checked);
+          ultimo = i; contar();
+        });
+        f.querySelectorAll('.arr').forEach((c) => {
+          c.addEventListener('mousedown', (ev) => { ev.preventDefault(); arrastrando = true; modo = !cb.checked; inicio = i; marcar(f, modo); ultimo = i; contar(); });
+          // Al arrastrar se marca todo el rango entre la fila inicial y la actual
+          c.addEventListener('mouseenter', () => {
+            if (!arrastrando) return;
+            const [a, b] = [Math.min(inicio, i), Math.max(inicio, i)];
+            for (let k = a; k <= b; k++) marcar(filas[k], modo);
+            ultimo = i; contar();
+          });
+        });
+      });
+      document.addEventListener('mouseup', () => { arrastrando = false; });
+      document.querySelectorAll('[data-sel]').forEach((b) => b.addEventListener('click', () => { filas.forEach((f) => marcar(f, b.dataset.sel === 'todos')); contar(); }));
+
+      // Recalcula la fila en pantalla (el cálculo oficial lo hace el servidor al guardar)
+      const recalcular = (f) => {
+        if (esInd) {
+          const niv = [...f.querySelectorAll('.niv')].map((s) => s.value);
+          const cuentan = niv.filter((v) => v !== '' && (v !== '0' || ne0)).map(Number);
+          f.querySelector('.calif').textContent = cuentan.length + '/' + niv.length;
+          f.querySelector('.obt').textContent = cuentan.length ? (Math.round(cuentan.reduce((s, n) => s + n, 0) / (3 * cuentan.length) * valor * 100) / 100).toLocaleString('es-CR') : '—';
+        } else {
+          const ne = f.querySelector('.ne').checked, inp = f.querySelector('.pts');
+          inp.disabled = ne; if (ne) inp.value = '';
+          const p = parseFloat(inp.value.replace(',', '.'));
+          const ok = !ne && !Number.isNaN(p) && total > 0;
+          f.querySelector('.nota').textContent = ne ? '0' : ok ? (Math.round(p / total * 10000) / 100).toLocaleString('es-CR') : '—';
+          f.querySelector('.obt').textContent = ne ? '0' : ok ? (Math.round(p / total * valor * 100) / 100).toLocaleString('es-CR') : '—';
+          inp.style.borderColor = ok && (p < 0 || p > total) ? 'var(--rojo)' : '';
+        }
+      };
+      filas.forEach((f) => f.querySelectorAll('select, input').forEach((el) => el.addEventListener('input', () => recalcular(f))));
+
+      document.getElementById('m-aplicar').addEventListener('click', () => {
+        const sel = filas.filter((f) => f.querySelector('.sel').checked);
+        if (!sel.length) { alert('Primero seleccione estudiantes.'); return; }
+        const val = document.getElementById('m-val').value;
+        sel.forEach((f) => {
+          if (esInd) {
+            const ind = document.getElementById('m-ind').value;
+            f.querySelectorAll('.niv').forEach((s) => { if (ind === '*' || s.dataset.ind === ind) s.value = val; });
+          } else {
+            const ne = document.getElementById('m-ne').checked;
+            f.querySelector('.ne').checked = ne;
+            if (!ne) f.querySelector('.pts').value = val;
+          }
+          recalcular(f);
+        });
+      });
+      // Enter baja a la siguiente fila en la columna de puntos
+      const pts = [...form.querySelectorAll('.pts')];
+      pts.forEach((el, i) => el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); (pts[i + 1] || el).focus(); } }));
+    })();
   </script>
 </Base>

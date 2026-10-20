@@ -1,0 +1,63 @@
+---
+// Lista de destinatarios con botón «Abrir WhatsApp» por estudiante y un modo «enviar uno tras otro».
+// Al abrir cada enlace se registra en la bitácora de comunicados (POST /api/comunicado).
+export interface Destino { estudiante_id: number; nombre: string; encargado: string; telefono: string; mensaje: string; enlace: string | null; enviado?: string | null }
+interface Props { destinos: Destino[]; tipo: string; referencia: string; titulo?: string }
+const { destinos, tipo, referencia, titulo = 'Avisar por WhatsApp' } = Astro.props;
+const conTel = destinos.filter((d) => d.enlace).length;
+---
+<div class="tarjeta wa-lista" data-tipo={tipo} data-ref={referencia}>
+  <div class="fila" style="justify-content:space-between;align-items:center">
+    <h2 style="margin:0">{titulo} <span class="muted">({destinos.length})</span></h2>
+    {conTel > 1 && <button type="button" class="sec wa-sig">Enviar uno tras otro ▶</button>}
+  </div>
+  {destinos.length === 0 ? <p class="muted">No hay estudiantes para avisar.</p> : (
+    <div class="tabla" style="margin-top:10px"><table>
+      <tr><th>Estudiante</th><th>Encargado(a)</th><th>Mensaje</th><th></th></tr>
+      {destinos.map((d) => (
+        <tr data-est={d.estudiante_id}>
+          <td><b>{d.nombre}</b></td>
+          <td>{d.encargado || '—'}<br /><span class="muted">{d.telefono || 'sin teléfono'}</span></td>
+          <td><textarea class="wa-msg" rows="3" style="width:100%;min-width:260px;font-size:13px">{d.mensaje}</textarea></td>
+          <td style="white-space:nowrap">
+            {d.enlace
+              ? <a class="btn wa-btn" href={d.enlace} target="_blank" rel="noopener" data-tel={d.telefono}>WhatsApp</a>
+              : <span class="chip aviso">Sin teléfono</span>}
+            <div class="muted wa-estado">{d.enviado ? `Enviado ${d.enviado}` : ''}</div>
+          </td>
+        </tr>
+      ))}
+    </table></div>
+  )}
+  <p class="muted">Se abre WhatsApp con el mensaje listo; revise y presione Enviar. Puede corregir el texto aquí antes de abrirlo.</p>
+</div>
+<script is:inline>
+  document.querySelectorAll('.wa-lista').forEach((caja) => {
+    const tipo = caja.dataset.tipo, ref = caja.dataset.ref;
+    const armar = (fila) => {
+      const a = fila.querySelector('.wa-btn'); if (!a) return null;
+      const n = new URL(a.href).pathname.slice(1);
+      a.href = `https://wa.me/${n}?text=${encodeURIComponent(fila.querySelector('.wa-msg').value)}`;
+      return a;
+    };
+    const registrar = (fila) => {
+      const a = fila.querySelector('.wa-btn');
+      fetch('/api/comunicado', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo, referencia: ref, estudiante_id: Number(fila.dataset.est), telefono: a.dataset.tel, mensaje: fila.querySelector('.wa-msg').value }) });
+      fila.querySelector('.wa-estado').textContent = 'Abierto ahora';
+      fila.dataset.hecho = '1'; fila.style.opacity = '.55';
+    };
+    caja.querySelectorAll('tr[data-est]').forEach((fila) => {
+      fila.querySelector('.wa-msg').addEventListener('input', () => armar(fila));
+      const a = fila.querySelector('.wa-btn'); if (a) a.addEventListener('click', () => { armar(fila); registrar(fila); });
+    });
+    const sig = caja.querySelector('.wa-sig');
+    if (sig) sig.addEventListener('click', () => {
+      const fila = [...caja.querySelectorAll('tr[data-est]')].find((f) => !f.dataset.hecho && f.querySelector('.wa-btn'));
+      if (!fila) { sig.textContent = 'Listo: todos abiertos'; return; }
+      const a = armar(fila); registrar(fila); window.open(a.href, '_blank', 'noopener');
+      const quedan = [...caja.querySelectorAll('tr[data-est]')].filter((f) => !f.dataset.hecho && f.querySelector('.wa-btn')).length;
+      sig.textContent = quedan ? `Siguiente (${quedan}) ▶` : 'Listo: todos abiertos';
+    });
+  });
+</script>

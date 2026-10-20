@@ -9,35 +9,35 @@ const EJEMPLO: [string, number, string][] = [
 let msg = '';
 const { user, inst } = Astro.locals;
 const U = user.id, I = inst!.id;
-const niveles = (await q<any>('SELECT DISTINCT nivel FROM secciones WHERE usuario_id=? AND institucion_id=? ORDER BY CAST(nivel AS UNSIGNED)', [U, I])).map((r) => r.nivel);
+const niveles = (await q<any>('SELECT DISTINCT nivel, length(nivel) FROM {S}.secciones WHERE usuario_id=? ORDER BY length(nivel), nivel', [U])).map((r) => r.nivel);
 let nivel = Astro.url.searchParams.get('nivel') ?? niveles[0] ?? '';
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   nivel = str(f.get('nivel')) || nivel;
   const accion = str(f.get('accion'));
   if (accion === 'agregar' && str(f.get('nombre'))) {
-    await exec('INSERT INTO componentes (usuario_id, institucion_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?,?)',
-      [U, I, nivel, str(f.get('nombre')), num(f.get('porcentaje')), str(f.get('tipo')) || 'puntos', num(f.get('orden'))]);
+    await exec('INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?)',
+      [U, nivel, str(f.get('nombre')), num(f.get('porcentaje')), str(f.get('tipo')) || 'puntos', num(f.get('orden'))]);
   } else if (accion === 'guardar') {
     const ids = f.getAll('id');
     for (let i = 0; i < ids.length; i++)
-      await exec('UPDATE componentes SET nombre=?, porcentaje=?, tipo=?, orden=? WHERE id=? AND usuario_id=?',
+      await exec('UPDATE {S}.componentes SET nombre=?, porcentaje=?, tipo=?, orden=? WHERE id=? AND usuario_id=?',
         [str(f.getAll('nombre')[i]), num(f.getAll('porcentaje')[i]), str(f.getAll('tipo')[i]), num(f.getAll('orden')[i]), num(ids[i]), U]);
     msg = 'Componentes guardados.';
   } else if (accion === 'borrar') {
-    await exec('DELETE FROM componentes WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
+    await exec('DELETE FROM {S}.componentes WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
   } else if (accion === 'ejemplo') {
-    for (const [i, [n, p, t]] of EJEMPLO.entries()) await exec('INSERT INTO componentes (usuario_id, institucion_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?,?)', [U, I, nivel, n, p, t, i + 1]);
+    for (const [i, [n, p, t]] of EJEMPLO.entries()) await exec('INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?)', [U, nivel, n, p, t, i + 1]);
     msg = 'Se cargó un ejemplo. Ajuste los porcentajes según el programa de su asignatura.';
   } else if (accion === 'copiar') {
     const destino = str(f.get('destino'));
     if (destino) {
-      await exec('INSERT INTO componentes (usuario_id, institucion_id, nivel, nombre, porcentaje, tipo, orden) SELECT usuario_id, institucion_id, ?, nombre, porcentaje, tipo, orden FROM componentes WHERE usuario_id=? AND institucion_id=? AND nivel=?', [destino, U, I, nivel]);
+      await exec('INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden) SELECT usuario_id, ?, nombre, porcentaje, tipo, orden FROM {S}.componentes WHERE usuario_id=? AND nivel=?', [destino, U, nivel]);
       msg = `Componentes copiados al nivel ${destino}.`;
     }
   }
 }
-const comps = nivel ? await q<any>('SELECT * FROM componentes WHERE usuario_id=? AND institucion_id=? AND nivel=? ORDER BY orden, id', [U, I, nivel]) : [];
+const comps = nivel ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? ORDER BY orden, id', [U, nivel]) : [];
 const suma = comps.reduce((s, c) => s + Number(c.porcentaje), 0);
 const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)', asistencia: 'Asistencia (automático)' };
 ---

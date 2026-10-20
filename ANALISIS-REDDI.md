@@ -39,7 +39,7 @@ Importar SEA, Respaldo/Restaurar, Configuración, Notificaciones por WhatsApp.
 
 | ReDDi | Nexo |
 |---|---|
-| parametros, docentes | instituciones, usuarios, ajustes |
+| parametros, docentes | general.colegios, general.usuarios, general.ajustes |
 | asignaturas, asn_dct | asignaturas |
 | secciones, dct_asn_scc | secciones (nota_aprobatoria) |
 | estudiantes | estudiantes |
@@ -51,13 +51,29 @@ Importar SEA, Respaldo/Restaurar, Configuración, Notificaciones por WhatsApp.
 | asistencia | asistencia |
 | convocatoria | convocatorias |
 
+## Informes de ReDDi (19 formularios QuickReport) y su equivalente en Nexo
+
+| ReDDi | Nexo |
+|---|---|
+| TQRP_LIS_ETD | Lista de estudiantes (firma, asunto, fecha) |
+| TQRP_IFM_AST_G, TQRP_IFM_AST_G_FCH | Resumen de asistencia (por periodo o rango de fechas) |
+| TQRP_AST_DET, TQRP_AST_DET_G, TQRP_AST_DET_G_FCH, TQRP_AST_DET_ALE | Detalle de asistencia (un estudiante o todo el grupo) |
+| TQRP_ALT | Alerta de ausentismo |
+| TQRP_CLF_CPN_GRP, _GRP3, _GRP4 | Calificaciones del grupo (columnas según los componentes del nivel) |
+| TQRP_CLF_CPN_IDV | Calificaciones por estudiante |
+| TQRP_CLF_IDC | Indicadores calificados |
+| TQRP_IFM_SCC, _SCC2, _SCC3 | Informe anual (cualquier cantidad de periodos) |
+| TQRP_CVC, TQRP_CVC_TOT | Acta de aplazados y convocatorias (por sección o por nivel) |
+| TQRP_IFM_GNR | No se replica: formato antiguo de 2021 (GTA/IES/PTF) |
+
 ## No implementado (posibles siguientes pasos)
 
-Exportar/importar SEA, notificaciones por WhatsApp, los ≈20 informes con formato
-oficial, importación directa desde la base de ReDDi.
+Exportar/importar SEA, envío automático de WhatsApp con la API de Meta (hoy es por botón),
+importación directa desde la base de ReDDi.
 
 ## Diferencias de Nexo frente a ReDDi
 
-ReDDi es de un solo docente y una sola PC. Nexo es multiusuario: cada docente
-tiene su cuenta (aprobada por un administrador), trabaja en una o varias instituciones
-y sus estudiantes, secciones, indicadores y notas son solo suyos.
+ReDDi es de un solo docente y una sola PC (MySQL 5.1 local). Nexo es multiusuario y
+multicolegio sobre PostgreSQL: cada colegio tiene su propio esquema, cada docente tiene su
+cuenta (aprobada por un administrador), trabaja en uno o varios colegios y sus estudiantes,
+secciones y notas son solo suyos; sus indicadores lo acompañan en todos sus colegios.

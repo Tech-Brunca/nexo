@@ -3,7 +3,7 @@ interface Props { titulo: string; sinMenu?: boolean }
 const { titulo, sinMenu = false } = Astro.props;
 const ruta = Astro.url.pathname;
 const { user, inst, instituciones } = Astro.locals;
-const menu = [
+const menu: [string, string][] = [
   ['/', 'Inicio'],
   ['/secciones', 'Secciones'],
   ['/estudiantes', 'Estudiantes'],
@@ -11,14 +11,19 @@ const menu = [
   ['/evaluaciones', 'Evaluaciones'],
   ['/notas', 'Calificaciones'],
   ['/anual', 'Nota anual'],
+  ['/informes', 'Informes'],
+  ['/comunicados', 'Comunicados'],
   ['/alertas', 'Alerta temprana'],
+];
+const config: [string, string][] = [
   ['/indicadores', 'Indicadores'],
   ['/componentes', 'Componentes'],
   ['/periodos', 'Periodos'],
+  ['/plantillas', 'Mensajes WhatsApp'],
   ['/ajustes', 'Ajustes'],
   ['/respaldo', 'Respaldo'],
 ];
-const admin = [['/admin/usuarios', 'Usuarios'], ['/admin/instituciones', 'Instituciones']];
+const admin: [string, string][] = [['/admin/usuarios', 'Usuarios'], ['/admin/colegios', 'Colegios']];
 const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 ---
 <!doctype html>
@@ -49,6 +54,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: #2c3c42; color: #fff; border-color: #45575d; font-size: 13px; }
     nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #8fa6a1; }
     nav.lateral .quien a { display: inline; padding: 0; color: #cfdcd9; text-decoration: underline; }
+    nav.lateral .colegio { margin: 0 8px 12px; padding: 10px; border-radius: 8px; background: #2c3c42; color: #fff; font-size: 13px; font-weight: 600; }
+    nav.lateral .colegio a { display: block; padding: 4px 0 0; font-weight: 400; color: #9fd3c3; font-size: 12px; }
     main { padding: 24px 28px 60px; max-width: 1400px; }
     h1 { font-size: 24px; margin: 0 0 4px; }
     .sub { color: var(--suave); margin: 0 0 20px; font-size: 14px; }
@@ -99,15 +106,10 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       <nav class="lateral">
         <div class="marca">Nexo<small>Registro docente</small></div>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
-        {instituciones?.length > 1 ? (
-          <form method="get" action="/cambiar-institucion" style="margin:0">
-            <input type="hidden" name="volver" value={ruta} />
-            <select name="id" onchange="this.form.submit()" aria-label="Institución activa">
-              {instituciones.map((i) => <option value={i.id} selected={i.id === inst?.id}>{i.nombre}</option>)}
-            </select>
-          </form>
-        ) : inst && <div class="quien" style="color:#fff">{inst.nombre}</div>}
-        {menu.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
+        {inst && <div class="colegio">{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div>}
+        {inst && menu.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
+        <div class="grupo">Configuración</div>
+        {config.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
         {user?.rol === 'admin' && <div class="grupo">Administración</div>}
         {user?.rol === 'admin' && admin.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
         <form method="post" action="/login?salir=1"><button type="submit">Salir</button></form>

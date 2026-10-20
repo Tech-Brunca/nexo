@@ -1,0 +1,26 @@
+---
+import Base from '../layouts/Base.astro';
+import { COOKIE_INST } from '../lib/auth';
+const { instituciones, inst, user } = Astro.locals;
+const id = Number(Astro.url.searchParams.get('id') ?? 0);
+if (id && instituciones.some((i) => i.id === id)) {
+  Astro.cookies.set(COOKIE_INST, String(id), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 365 * 86400 });
+  return Astro.redirect('/');
+}
+---
+<Base titulo="Elegir colegio" sinMenu>
+  <div style="min-height:100vh;display:grid;place-items:center;padding:20px">
+    <div class="tarjeta" style="width:min(460px,100%);padding:28px">
+      <h1>¿A qué colegio entra?</h1>
+      <p class="sub">{user.nombre}: cada colegio tiene sus propios grupos, estudiantes y notas.</p>
+      <div style="display:grid;gap:10px">
+        {instituciones.map((i) => (
+          <a class={`btn ${i.id === inst?.id ? '' : 'sec'}`} href={`/elegir-colegio?id=${i.id}`} style="text-align:left;padding:12px 16px">
+            <b>{i.nombre}</b>{i.codigo && <span style="opacity:.8"> · {i.codigo}</span>}
+          </a>
+        ))}
+      </div>
+      <p class="muted" style="margin-top:16px"><a href="/cuenta">Agregar otro colegio</a> · <a href="/login?salir=1" onclick="event.preventDefault();fetch('/login?salir=1',{method:'POST'}).then(()=>location='/login')">Salir</a></p>
+    </div>
+  </div>
+</Base>

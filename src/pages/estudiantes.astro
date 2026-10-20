@@ -8,23 +8,23 @@ if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
   if (accion === 'editar') {
-    await exec('UPDATE estudiantes SET cedula=?, apellidos=?, nombre=?, fecha_nac=?, genero=?, encargado=?, telefono=?, extranjero=?, activo=? WHERE id=? AND usuario_id=?',
+    await exec('UPDATE {S}.estudiantes SET cedula=?, apellidos=?, nombre=?, fecha_nac=?, genero=?, encargado=?, telefono=?, extranjero=?, activo=? WHERE id=? AND usuario_id=?',
       [str(f.get('cedula')), str(f.get('apellidos')), str(f.get('nombre')), str(f.get('fecha_nac')) || null, str(f.get('genero')) || null,
        str(f.get('encargado')), str(f.get('telefono')), f.get('extranjero') ? 1 : 0, f.get('activo') ? 1 : 0, num(f.get('id')), user.id]);
     msg = 'Datos actualizados.';
   } else if (accion === 'borrar') {
-    await exec('DELETE FROM estudiantes WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+    await exec('DELETE FROM {S}.estudiantes WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
     msg = 'Estudiante eliminado con sus notas y asistencia.';
   }
 }
 const buscar = Astro.url.searchParams.get('q') ?? '';
 const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
 const lista = await q<any>(
-  `SELECT e.*, GROUP_CONCAT(CONCAT(s.nivel,'-',s.nombre) ORDER BY s.nivel SEPARATOR ', ') AS secciones
-   FROM estudiantes e LEFT JOIN matriculas m ON m.estudiante_id=e.id LEFT JOIN secciones s ON s.id=m.seccion_id
-   WHERE e.usuario_id = ? AND e.institucion_id = ? AND (? = '' OR e.cedula LIKE ? OR CONCAT(e.apellidos,' ',e.nombre) LIKE ?)
+  `SELECT e.*, string_agg(s.nivel || '-' || s.nombre, ', ' ORDER BY s.nivel) AS secciones
+   FROM {S}.estudiantes e LEFT JOIN {S}.matriculas m ON m.estudiante_id=e.id LEFT JOIN {S}.secciones s ON s.id=m.seccion_id
+   WHERE e.usuario_id = ? AND (? = '' OR e.cedula ILIKE ? OR (e.apellidos || ' ' || e.nombre) ILIKE ?)
    GROUP BY e.id ORDER BY e.apellidos, e.nombre LIMIT 500`,
-  [user.id, inst!.id, buscar, `%${buscar}%`, `%${buscar}%`]);
+  [user.id, buscar, `%${buscar}%`, `%${buscar}%`]);
 ---
 <Base titulo="Estudiantes">
   <h1>Estudiantes</h1>

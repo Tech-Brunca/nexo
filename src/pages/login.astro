@@ -1,7 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import { COOKIE, COOKIE_INST, DURACION_H, nuevaSesion, verificarClave, esCorreoAdmin } from '../lib/auth';
-import { one, exec } from '../lib/db';
+import { one, exec, q } from '../lib/db';
 import { str } from '../lib/util';
 let error = '';
 let correo = '';
@@ -14,7 +14,7 @@ if (Astro.request.method === 'POST') {
   }
   const f = await Astro.request.formData();
   correo = str(f.get('correo')).toLowerCase();
-  const u = await one<any>('SELECT * FROM usuarios WHERE correo=?', [correo]);
+  const u = await one<any>('SELECT * FROM general.usuarios WHERE correo=?', [correo]);
   const ok = u ? await verificarClave(str(f.get('clave')), u.pass_hash) : false;
   if (!ok) {
     await new Promise((r) => setTimeout(r, 600)); // frena intentos repetidos
@@ -24,11 +24,14 @@ if (Astro.request.method === 'POST') {
   } else if (u.estado === 'bloqueado') {
     error = 'Esta cuenta está desactivada. Consulte con el administrador.';
   } else {
-    if (esCorreoAdmin(u.correo)) await exec(`UPDATE usuarios SET rol='admin', estado='activo' WHERE id=?`, [u.id]);
-    await exec('UPDATE usuarios SET ultimo_acceso=NOW() WHERE id=?', [u.id]);
+    if (esCorreoAdmin(u.correo)) await exec(`UPDATE general.usuarios SET rol='admin', estado='activo' WHERE id=?`, [u.id]);
+    await exec('UPDATE general.usuarios SET ultimo_acceso=now() WHERE id=?', [u.id]);
     Astro.cookies.set(COOKIE, nuevaSesion(u.id), { path: '/', httpOnly: true, sameSite: 'lax', secure: Astro.url.protocol === 'https:', maxAge: DURACION_H * 3600 });
-    const r = Astro.url.searchParams.get('r') || '/';
-    return Astro.redirect(r.startsWith('/') && !r.startsWith('//') ? r : '/');
+    const r = Astro.url.searchParams.get('r');
+    if (r && r.startsWith('/') && !r.startsWith('//') && r !== '/') return Astro.redirect(r);
+    // Con varios colegios, primero elige a cuál entrar
+    const n = await q('SELECT colegio_id FROM general.usuario_colegios WHERE usuario_id=?', [u.id]);
+    return Astro.redirect(n.length > 1 ? '/elegir-colegio' : '/');
   }
 }
 ---

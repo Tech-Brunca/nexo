@@ -1,6 +1,8 @@
 ---
 import Base from '../layouts/Base.astro';
 import Selector from '../components/Selector.astro';
+import EnviarWa from '../components/EnviarWa.astro';
+import { plantillas, llenar, enlaceWa, fechaLarga } from '../lib/whatsapp';
 import { exec, q, one } from '../lib/db';
 import { estudiantesDe, seccion, ausencias } from '../lib/calc';
 import { num, str, hoy, fmt, csv, TIPOS_AUSENCIA } from '../lib/util';
@@ -8,7 +10,7 @@ const { user, inst } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
 const fecha = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('fecha') ?? '') ? Astro.url.searchParams.get('fecha')! : hoy();
-const sec = seccionId ? await seccion(U, seccionId, inst!.id) : null;
+const sec = seccionId ? await seccion(U, seccionId) : null;
 let msg = '';
 if (sec && Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
@@ -19,33 +21,47 @@ if (sec && Astro.request.method === 'POST') {
       if (!k.startsWith('t_')) continue;
       const est = Number(k.slice(2)), tipo = str(v);
       if (!validos.has(est) || (tipo && !['AI', 'AJ', 'TI', 'TJ'].includes(tipo))) continue;
-      if (!tipo) await exec('DELETE FROM asistencia WHERE estudiante_id=? AND seccion_id=? AND fecha=?', [est, seccionId, fecha]);
-      else await exec(`INSERT INTO asistencia (estudiante_id, seccion_id, fecha, tipo, lecciones, observacion) VALUES (?,?,?,?,?,?)
-        ON DUPLICATE KEY UPDATE tipo=VALUES(tipo), lecciones=VALUES(lecciones), observacion=VALUES(observacion)`,
+      if (!tipo) await exec('DELETE FROM {S}.asistencia WHERE estudiante_id=? AND seccion_id=? AND fecha=?', [est, seccionId, fecha]);
+      else await exec(`INSERT INTO {S}.asistencia (estudiante_id, seccion_id, fecha, tipo, lecciones, observacion) VALUES (?,?,?,?,?,?)
+        ON CONFLICT (estudiante_id, seccion_id, fecha) DO UPDATE SET tipo=EXCLUDED.tipo, lecciones=EXCLUDED.lecciones, observacion=EXCLUDED.observacion`,
         [est, seccionId, fecha, tipo, Math.max(1, num(f.get('l_' + est), 1)), str(f.get('o_' + est))]);
     }
     msg = `Asistencia del ${fecha} guardada.`;
   } else if (accion === 'justificar') {
-    await exec(`UPDATE asistencia SET tipo = CASE tipo WHEN 'AI' THEN 'AJ' WHEN 'TI' THEN 'TJ' WHEN 'AJ' THEN 'AI' ELSE 'TI' END WHERE id=? AND seccion_id=?`, [num(f.get('id')), seccionId]);
+    await exec(`UPDATE {S}.asistencia SET tipo = CASE tipo WHEN 'AI' THEN 'AJ' WHEN 'TI' THEN 'TJ' WHEN 'AJ' THEN 'AI' ELSE 'TI' END WHERE id=? AND seccion_id=?`, [num(f.get('id')), seccionId]);
   }
 }
 const ests = sec ? await estudiantesDe(seccionId) : [];
-const delDia = new Map((sec ? await q<any>('SELECT * FROM asistencia WHERE seccion_id=? AND fecha=?', [seccionId, fecha]) : []).map((a) => [a.estudiante_id, a]));
-const per = sec ? await one<any>('SELECT * FROM periodos WHERE usuario_id=? AND institucion_id=? AND (fecha_ini IS NULL OR fecha_ini<=?) AND (fecha_fin IS NULL OR fecha_fin>=?) ORDER BY numero LIMIT 1', [U, sec.institucion_id, fecha, fecha]) : null;
-const lec = sec && per ? await one<any>('SELECT cantidad FROM lecciones WHERE seccion_id=? AND periodo_id=?', [seccionId, per.id]) : null;
+const delDia = new Map((sec ? await q<any>('SELECT * FROM {S}.asistencia WHERE seccion_id=? AND fecha=?', [seccionId, fecha]) : []).map((a) => [a.estudiante_id, a]));
+const per = sec ? await one<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? AND (fecha_ini IS NULL OR fecha_ini<=?::date) AND (fecha_fin IS NULL OR fecha_fin>=?::date) ORDER BY numero LIMIT 1', [U, fecha, fecha]) : null;
+const lec = sec && per ? await one<any>('SELECT cantidad FROM {S}.lecciones WHERE seccion_id=? AND periodo_id=?', [seccionId, per.id]) : null;
 const tot = sec ? await ausencias(U, seccionId, per?.fecha_ini ?? null, per?.fecha_fin ?? null) : new Map();
-const historial = sec ? await q<any>(`SELECT a.*, e.apellidos, e.nombre FROM asistencia a JOIN estudiantes e ON e.id=a.estudiante_id
-  WHERE a.seccion_id=? AND (? IS NULL OR a.fecha>=?) AND (? IS NULL OR a.fecha<=?) ORDER BY a.fecha DESC, e.apellidos LIMIT 200`,
+const historial = sec ? await q<any>(`SELECT a.*, e.apellidos, e.nombre FROM {S}.asistencia a JOIN {S}.estudiantes e ON e.id=a.estudiante_id
+  WHERE a.seccion_id=? AND (?::date IS NULL OR a.fecha>=?::date) AND (?::date IS NULL OR a.fecha<=?::date) ORDER BY a.fecha DESC, e.apellidos LIMIT 200`,
   [seccionId, per?.fecha_ini ?? null, per?.fecha_ini ?? null, per?.fecha_fin ?? null, per?.fecha_fin ?? null]) : [];
 
 if (sec && Astro.url.searchParams.get('csv')) {
-  const filas = await q<any>(`SELECT a.fecha, e.cedula, e.apellidos, e.nombre, a.tipo, a.lecciones, a.observacion FROM asistencia a
-    JOIN estudiantes e ON e.id=a.estudiante_id WHERE a.seccion_id=? ORDER BY a.fecha, e.apellidos`, [seccionId]);
+  const filas = await q<any>(`SELECT a.fecha, e.cedula, e.apellidos, e.nombre, a.tipo, a.lecciones, a.observacion FROM {S}.asistencia a
+    JOIN {S}.estudiantes e ON e.id=a.estudiante_id WHERE a.seccion_id=? ORDER BY a.fecha, e.apellidos`, [seccionId]);
   return new Response(csv([['Fecha', 'Cédula', 'Apellidos', 'Nombre', 'Tipo', 'Lecciones', 'Observación'],
     ...filas.map((r) => [r.fecha, r.cedula, r.apellidos, r.nombre, TIPOS_AUSENCIA[r.tipo], r.lecciones, r.observacion])]),
     { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="asistencia-${sec.nivel}-${sec.nombre}.csv"` } });
 }
 const lecciones = Number(lec?.cantidad ?? 0);
+
+// Avisos por WhatsApp de las ausencias y tardías injustificadas del día
+let destinos: any[] = [];
+if (sec) {
+  const pl = await plantillas(U);
+  const enviados = new Map((await q<any>(`SELECT estudiante_id, max(creado) AS cuando FROM {S}.comunicados
+    WHERE usuario_id=? AND referencia=? GROUP BY estudiante_id`, [U, `asistencia:${seccionId}:${fecha}`])).map((r) => [r.estudiante_id, r.cuando]));
+  destinos = ests.filter((e) => ['AI', 'TI'].includes(delDia.get(e.id)?.tipo)).map((e) => {
+    const a = delDia.get(e.id);
+    const mensaje = llenar(a.tipo === 'TI' ? pl.tardia : pl.ausencia, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`,
+      seccion: `${sec.nivel}-${sec.nombre}`, asignatura: sec.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre, fecha: fechaLarga(fecha), lecciones: a.lecciones });
+    return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje), enviado: enviados.get(e.id) ?? null };
+  });
+}
 ---
 <Base titulo="Asistencia">
   <h1>Asistencia</h1>
@@ -71,6 +87,7 @@ const lecciones = Number(lec?.cantidad ?? 0);
         </table></div>
         <p><button>Guardar asistencia</button> <a class="btn sec" href={`?seccion=${seccionId}&csv=1`}>Exportar CSV</a></p>
       </form>
+      {destinos.length > 0 && <EnviarWa destinos={destinos} tipo="ausencia" referencia={`asistencia:${seccionId}:${fecha}`} titulo={`Avisar ausencias y tardías del ${fecha}`} />}
       <p class="muted">Totales de {per?.nombre ?? 'todo el curso'} (lecciones). {lecciones === 0 ? <>Para el % de ausentismo registre las lecciones efectivas en la <a href={`/secciones/${seccionId}`}>sección</a>.</> : `Lecciones efectivas: ${lecciones}.`}</p>
       <h2>Registro del periodo</h2>
       <div class="tabla"><table>

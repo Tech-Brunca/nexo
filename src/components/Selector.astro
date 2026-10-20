@@ -3,13 +3,13 @@
 import { q } from '../lib/db';
 interface Props { seccionId?: number; periodoId?: number; conPeriodo?: boolean; fecha?: string; extra?: Record<string, string> }
 const { seccionId, periodoId, conPeriodo = false, fecha, extra = {} } = Astro.props;
-const { user, inst } = Astro.locals;
+const { user } = Astro.locals;
 const secciones = await q<any>(
-  `SELECT s.id, s.nivel, s.nombre, a.nombre AS asignatura FROM secciones s LEFT JOIN asignaturas a ON a.id = s.asignatura_id
-   WHERE s.usuario_id = ? AND s.institucion_id = ? ORDER BY CAST(s.nivel AS UNSIGNED), s.nombre`,
-  [user.id, inst!.id],
+  `SELECT s.id, s.nivel, s.nombre, a.nombre AS asignatura FROM {S}.secciones s LEFT JOIN general.asignaturas a ON a.id = s.asignatura_id
+   WHERE s.usuario_id = ? ORDER BY length(s.nivel), s.nivel, s.nombre`,
+  [user.id],
 );
-const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [user.id, inst!.id]) : [];
+const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]) : [];
 ---
 <form method="get" class="tarjeta fila no-print">
   <label>Sección

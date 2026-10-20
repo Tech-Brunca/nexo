@@ -10,21 +10,21 @@ if (Astro.request.method === 'POST') {
   const accion = str(f.get('accion'));
   const id = num(f.get('id'));
   if (id === user.id && accion !== 'clave') error = 'No puede cambiar el estado ni el rol de su propia cuenta.';
-  else if (accion === 'aprobar') { await exec(`UPDATE usuarios SET estado='activo' WHERE id=?`, [id]); msg = 'Cuenta aprobada.'; }
-  else if (accion === 'bloquear') { await exec(`UPDATE usuarios SET estado='bloqueado' WHERE id=?`, [id]); msg = 'Cuenta desactivada.'; }
-  else if (accion === 'rol') { await exec('UPDATE usuarios SET rol=? WHERE id=?', [str(f.get('rol')) === 'admin' ? 'admin' : 'docente', id]); msg = 'Rol actualizado.'; }
-  else if (accion === 'rechazar') { await exec(`DELETE FROM usuarios WHERE id=? AND estado='pendiente'`, [id]); msg = 'Solicitud rechazada.'; }
+  else if (accion === 'aprobar') { await exec(`UPDATE general.usuarios SET estado='activo' WHERE id=?`, [id]); msg = 'Cuenta aprobada.'; }
+  else if (accion === 'bloquear') { await exec(`UPDATE general.usuarios SET estado='bloqueado' WHERE id=?`, [id]); msg = 'Cuenta desactivada.'; }
+  else if (accion === 'rol') { await exec('UPDATE general.usuarios SET rol=? WHERE id=?', [str(f.get('rol')) === 'admin' ? 'admin' : 'docente', id]); msg = 'Rol actualizado.'; }
+  else if (accion === 'rechazar') { await exec(`DELETE FROM general.usuarios WHERE id=? AND estado='pendiente'`, [id]); msg = 'Solicitud rechazada.'; }
   else if (accion === 'clave') {
     const c = str(f.get('clave'));
     if (!claveValida(c)) error = 'La contraseña temporal debe tener al menos 8 caracteres.';
-    else { await exec('UPDATE usuarios SET pass_hash=? WHERE id=?', [await hashClave(c), id]); msg = 'Contraseña temporal asignada. Pida al docente cambiarla en «Mi cuenta».'; }
+    else { await exec('UPDATE general.usuarios SET pass_hash=? WHERE id=?', [await hashClave(c), id]); msg = 'Contraseña temporal asignada. Pida al docente cambiarla en «Mi cuenta».'; }
   }
 }
 const filtro = Astro.url.searchParams.get('estado') ?? '';
-const usuarios = await q<any>(`SELECT u.*, GROUP_CONCAT(i.nombre ORDER BY i.nombre SEPARATOR ', ') AS instituciones,
-  (SELECT COUNT(*) FROM secciones s WHERE s.usuario_id=u.id) AS secciones
-  FROM usuarios u LEFT JOIN usuario_instituciones ui ON ui.usuario_id=u.id LEFT JOIN instituciones i ON i.id=ui.institucion_id
-  WHERE (?='' OR u.estado=?) GROUP BY u.id ORDER BY FIELD(u.estado,'pendiente','activo','bloqueado'), u.nombre`, [filtro, filtro]);
+const usuarios = await q<any>(`SELECT u.*, string_agg(c.nombre, ', ' ORDER BY c.nombre) AS instituciones, COUNT(c.id) AS colegios
+  FROM general.usuarios u LEFT JOIN general.usuario_colegios uc ON uc.usuario_id=u.id LEFT JOIN general.colegios c ON c.id=uc.colegio_id
+  WHERE (?='' OR u.estado=?) GROUP BY u.id
+  ORDER BY CASE u.estado WHEN 'pendiente' THEN 0 WHEN 'activo' THEN 1 ELSE 2 END, u.nombre`, [filtro, filtro]);
 const pendientes = usuarios.filter((u) => u.estado === 'pendiente').length;
 const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<string, string>;
 ---
@@ -36,7 +36,7 @@ const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<st
     {[['', 'Todos'], ['pendiente', 'Pendientes'], ['activo', 'Activos'], ['bloqueado', 'Desactivados']].map(([v, t]) => <option value={v} selected={v === filtro}>{t}</option>)}
   </select></label></form>
   <div class="tabla"><table>
-    <tr><th>Docente</th><th>Instituciones / nota</th><th>Estado</th><th>Rol</th><th class="n">Secciones</th><th>Último acceso</th><th></th></tr>
+    <tr><th>Docente</th><th>Colegios / nota</th><th>Estado</th><th>Rol</th><th class="n">Colegios</th><th>Último acceso</th><th></th></tr>
     {usuarios.map((u) => (
       <tr>
         <td><b>{u.nombre}</b><br /><span class="muted">{u.correo}{u.cedula && ` · ${u.cedula}`}</span></td>
@@ -46,7 +46,7 @@ const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<st
           <form method="post"><input type="hidden" name="accion" value="rol" /><input type="hidden" name="id" value={u.id} />
             <select name="rol" onchange="this.form.submit()"><option value="docente" selected={u.rol === 'docente'}>docente</option><option value="admin" selected={u.rol === 'admin'}>admin</option></select></form>
         )}</td>
-        <td class="n">{u.secciones}</td>
+        <td class="n">{u.colegios}</td>
         <td class="muted">{u.ultimo_acceso ?? 'nunca'}</td>
         <td style="white-space:nowrap;text-align:right">
           {u.id !== user.id && u.estado !== 'activo' && <form method="post" style="display:inline"><input type="hidden" name="accion" value="aprobar" /><input type="hidden" name="id" value={u.id} /><button class="mini">{u.estado === 'pendiente' ? 'Aprobar' : 'Reactivar'}</button></form>}
@@ -62,5 +62,5 @@ const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<st
       </tr>
     ))}
   </table></div>
-  <p class="muted">Los administradores ven esta lista y las instituciones, pero no las notas ni los estudiantes de otros docentes.</p>
+  <p class="muted">Los administradores ven esta lista y los colegios, pero no las notas ni los estudiantes de otros docentes.</p>
 </Base>

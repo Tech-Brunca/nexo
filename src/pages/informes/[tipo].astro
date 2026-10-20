@@ -1,0 +1,83 @@
+---
+import Base from '../../layouts/Base.astro';
+import { generar, CATALOGO } from '../../lib/informes';
+import { csv, fmt, hoy } from '../../lib/util';
+const { user, inst } = Astro.locals;
+const tipo = Astro.params.tipo!;
+const info = CATALOGO.find((c) => c.tipo === tipo);
+const r = info ? await generar(tipo, { uid: user.id, docente: user.nombre, colegio: inst! }, Astro.url.searchParams) : 'Informe no encontrado.';
+if (typeof r !== 'string' && Astro.url.searchParams.get('csv')) {
+  const filas: any[][] = [[r.titulo], ...r.meta.map(([k, v]) => [k, v]), []];
+  for (const b of r.bloques) {
+    if (b.titulo) filas.push([b.titulo]);
+    filas.push(b.columnas, ...b.filas);
+    for (const [k, v] of b.pie ?? []) filas.push([k, v]);
+    filas.push([]);
+  }
+  return new Response(csv(filas), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${r.archivo.replace(/[^\w.-]+/g, '_')}.csv"` } });
+}
+const celda = (v: any, esNum: boolean) => (v === null || v === undefined || v === '' ? '' : esNum && typeof v === 'number' ? fmt(v) : String(v));
+const emision = hoy();
+---
+<Base titulo={info?.titulo ?? 'Informe'}>
+  <p class="no-print"><a href="/informes">← Informes</a></p>
+  {typeof r === 'string' ? <div class="msg aviso">{r} <a href="/informes">Volver</a></div> : (
+    <>
+      <div class="no-print fila" style="margin-bottom:14px">
+        <button onclick="print()">Imprimir o guardar PDF</button>
+        <a class="btn sec" href={`?${new URLSearchParams([...Astro.url.searchParams, ['csv', '1']])}`}>Excel (CSV)</a>
+      </div>
+      <article class="informe">
+        <header class="enc">
+          <div class="mep">Ministerio de Educación Pública</div>
+          <div>Dirección Regional de Educación {inst!.direccion_regional} {inst!.circuito && `· Circuito escolar ${inst!.circuito}`}</div>
+          <div><b>{inst!.nombre}</b>{inst!.codigo && ` · Código ${inst!.codigo}`}</div>
+          <h1>{r.titulo}</h1>
+          <div class="muted">Curso lectivo {emision.slice(0, 4)}</div>
+        </header>
+        <dl class="meta">{r.meta.map(([k, v]) => <div><dt>{k}:</dt><dd>{v}</dd></div>)}</dl>
+        {r.bloques.map((b) => (
+          <section class={b.nuevaPagina ? 'bloque salto' : 'bloque'}>
+            {b.titulo && <h2>{b.titulo}</h2>}
+            <table class="tabla-inf">
+              <thead><tr>{b.columnas.map((c, i) => <th class={b.num?.includes(i) ? 'n' : ''}>{c}</th>)}</tr></thead>
+              <tbody>
+                {b.filas.length === 0 && <tr><td colspan={b.columnas.length} class="muted">Sin datos.</td></tr>}
+                {b.filas.map((f) => <tr>{f.map((v, i) => <td class={b.num?.includes(i) ? 'n' : ''}>{celda(v, !!b.num?.includes(i))}</td>)}</tr>)}
+              </tbody>
+            </table>
+            {b.pie && <dl class="meta pie">{b.pie.map(([k, v]) => <div><dt>{k}:</dt><dd>{v}</dd></div>)}</dl>}
+          </section>
+        ))}
+        {r.nota && <p class="muted">{r.nota}</p>}
+        <footer class="firmas">
+          {r.firma && <div class="lineas"><span>Firma del docente: ______________________</span><span>Recibido por: ______________________</span><span>Fecha: ____/____/______</span></div>}
+          <div class="muted">Informe generado por Nexo · Fecha de emisión: {emision}</div>
+        </footer>
+      </article>
+    </>
+  )}
+  <style>
+    .informe { background: #fff; border: 1px solid var(--linea); border-radius: 10px; padding: 28px 32px; max-width: 1050px; }
+    .enc { text-align: center; line-height: 1.45; font-size: 14px; margin-bottom: 14px; }
+    .enc .mep { font-weight: 700; letter-spacing: .02em; }
+    .enc h1 { margin: 10px 0 2px; font-size: 20px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 10px 0 14px; font-size: 13px; }
+    .meta div { display: flex; gap: 6px; } .meta dt { color: var(--suave); } .meta dd { margin: 0; font-weight: 600; }
+    .meta.pie { justify-content: flex-end; border-top: 1px solid var(--linea); padding-top: 6px; }
+    .bloque h2 { font-size: 15px; margin: 18px 0 6px; }
+    .tabla-inf { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .tabla-inf th, .tabla-inf td { border: 1px solid #c9d3d1; padding: 5px 7px; }
+    .tabla-inf th { background: #eef3f2; text-transform: none; letter-spacing: 0; color: var(--tinta); font-size: 12px; position: static; }
+    .tabla-inf td.n, .tabla-inf th.n { text-align: right; }
+    .firmas { margin-top: 28px; font-size: 13px; }
+    .firmas .lineas { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+    @page { size: letter; margin: 14mm 12mm 16mm; @bottom-right { content: "Página " counter(page) " de " counter(pages); font-size: 10px; color: #555; } }
+    @media print {
+      .informe { border: none; padding: 0; max-width: none; }
+      .salto { break-before: page; }
+      .tabla-inf thead { display: table-header-group; }
+      .tabla-inf tr { break-inside: avoid; }
+    }
+  </style>
+</Base>

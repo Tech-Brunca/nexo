@@ -1,21 +1,32 @@
 # Nexo
 
-Registro digital docente multiusuario: asistencia, evaluaciones, indicadores,
-calificaciones por periodo, nota anual con convocatorias y alerta temprana de
-ausentismo. Astro + MySQL (MariaDB en Docker, TiDB Cloud en línea, Netlify para publicar).
+Registro digital docente multiusuario y multicolegio: asistencia, evaluaciones por puntos e
+indicadores, calificaciones por periodo, nota anual con convocatorias, alerta temprana, informes
+para imprimir y comunicados por WhatsApp. Astro + PostgreSQL (Supabase en línea, Docker en la PC).
 Se diseñó a partir del análisis funcional de ReDDi.exe hecho con REA (ver `ANALISIS-REDDI.md`);
 el código y el esquema son propios.
 
-## Cómo se organiza
+## Arquitectura
 
-- **Usuarios**: cada docente solicita acceso en `/registro`; un administrador lo aprueba en
-  *Administración → Usuarios*. Los correos listados en `ADMIN_EMAILS` entran como administradores
-  sin aprobación.
-- **Instituciones**: catálogo compartido. Cada docente agrega las suyas en *Mi cuenta* y cambia
-  la institución activa desde el menú.
-- **Datos de cada docente** (nadie más los ve, tampoco los administradores):
-  - por institución: secciones (grupos completos o medios grupos), estudiantes, periodos, componentes;
-  - en todas sus instituciones: asignaturas, indicadores, reglas y escala de asistencia (*Ajustes*).
+```
+Base de datos (un proyecto de Supabase o un Postgres en Docker)
+├── general   → usuarios, colegios, membresías, y lo que cada docente usa en todos sus colegios:
+│               asignaturas, indicadores, ajustes, escala de asistencia, mensajes de WhatsApp
+├── c_1       → un colegio: secciones, estudiantes, periodos, componentes, evaluaciones,
+│               notas, indicadores calificados, asistencia, convocatorias, comunicados
+├── c_2       → otro colegio, con sus propias tablas
+└── …
+```
+
+- Cada colegio es un **esquema** propio (como una base de datos aparte dentro del mismo proyecto).
+  Lo crea un administrador en *Administración → Colegios*; Nexo arma sus tablas solo.
+- El docente inicia sesión y elige el colegio; todas las consultas de esa sesión van solo al
+  esquema de ese colegio. *Cambiar de colegio* lo lleva al otro.
+- Dentro de un colegio, cada docente ve únicamente sus propios grupos, estudiantes y notas.
+- Las cuentas nuevas quedan pendientes hasta que un administrador las aprueba. Los correos de
+  `ADMIN_EMAILS` entran como administradores sin aprobación.
+- Al subir una versión que cambia las tablas, la primera visita actualiza el esquema general y el de
+  todos los colegios (también se puede correr `npm run db:migrar`).
 
 ## En la PC (WSL + Docker Desktop)
 
@@ -24,10 +35,8 @@ cd ~/proyectos/nexo
 docker compose up -d --build
 ```
 
-Abra http://localhost:8090 y cree su cuenta en *Solicitar acceso* con el correo de `ADMIN_EMAILS`
-(por defecto hferreto@gmail.com; cámbielo en un archivo `.env`).
-
-> Si venía de la versión 1 (clave única), la base cambió: `docker compose down -v` y luego `up -d --build`.
+Abra http://localhost:8090, solicite acceso con el correo de `ADMIN_EMAILS`, cree un colegio en
+*Administración → Colegios* y agréguelo en *Mi cuenta*.
 
 Archivo `.env` opcional junto a `docker-compose.yml`:
 
@@ -35,33 +44,17 @@ Archivo `.env` opcional junto a `docker-compose.yml`:
 ADMIN_EMAILS=hferreto@gmail.com,otro.admin@correo.com
 SESSION_SECRET=una-frase-larga-y-secreta
 DB_PASSWORD=otra-clave
-DB_ROOT_PASSWORD=otra-clave-mas
 ```
 
-## En línea: TiDB Cloud + Netlify
+## En línea: Supabase + Netlify
 
-### 1. Base de datos (TiDB Cloud Starter, compatible con MySQL)
+### 1. Base de datos (Supabase)
 
-1. Cree una cuenta en https://tidbcloud.com y una instancia **Starter** (elija la región más cercana, p. ej. en EE. UU.).
-2. En *Connect* anote host, puerto (4000), usuario (lleva un prefijo, p. ej. `xxxx.root`) y genere la contraseña.
-3. Cree la base `reddi` (en el *SQL Editor*: `CREATE DATABASE reddi;`).
-4. Desde el WSL, cree las tablas con un `.env` temporal:
-
-   ```
-   DB_HOST=gateway01.us-east-1.prod.aws.tidbcloud.com
-   DB_PORT=4000
-   DB_USER=xxxx.root
-   DB_PASSWORD=...
-   DB_NAME=reddi
-   DB_SSL=true
-   ```
-
-   ```
-   npm install
-   npm run db:init
-   ```
-
-   Borre ese `.env` (o deje solo lo de Docker): **nunca lo suba a GitHub**.
+1. Cree un proyecto en https://supabase.com (región cercana, p. ej. us-east-1) y anote la contraseña.
+2. *Connect* → copie la cadena del **Transaction pooler** (puerto 6543):
+   `postgresql://postgres.xxxx:CONTRASEÑA@aws-0-us-east-1.pooler.supabase.com:6543/postgres`
+3. No hace falta crear tablas: Nexo las crea en la primera visita. (Si prefiere hacerlo antes:
+   ponga `DATABASE_URL` y `DB_SSL=true` en un `.env` y ejecute `npm install && npm run db:migrar`.)
 
 ### 2. Sitio (Netlify)
 
@@ -70,37 +63,53 @@ DB_ROOT_PASSWORD=otra-clave-mas
 
    | Variable | Valor |
    |---|---|
-   | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | los de TiDB |
+   | `DATABASE_URL` | la cadena del Transaction pooler de Supabase |
    | `DB_SSL` | `true` |
    | `DB_POOL` | `2` |
-   | `ADMIN_EMAILS` | su correo |
+   | `ADMIN_EMAILS` | su correo (y el de otros administradores, separados por coma) |
    | `SESSION_SECRET` | una frase larga y aleatoria |
 
 3. *Deploy*. Cada `git push` a `main` vuelve a publicar.
 
-## Reglas de cálculo
+> El plan gratis de Supabase pausa el proyecto tras una semana sin uso; se reactiva desde el panel.
 
-- Evaluación por puntos: `puntos obtenidos / puntos totales × valor %`.
-- Evaluación por indicadores: `suma de niveles / (3 × indicadores calificados) × valor %`.
-  *Sin calificar* no cuenta; *Sin entregar* vale 0.
-- Cada componente se topa en su porcentaje.
-- Asistencia: ausencias injustificadas + (tardías injustificadas ÷ tardías por ausencia), sobre las
-  lecciones efectivas del periodo → escala editable en *Ajustes*.
-  **Revise que la escala coincida con el Reglamento de Evaluación vigente.**
-- Nota anual: suma de `nota del periodo × ponderado`. Bajo la mínima → *Aplazado*; aprueba si alguna
-  convocatoria alcanza la mínima; *Reprobado* si la 2.ª convocatoria no.
+## Calificación
+
+- **Por puntos**: `puntos / puntos totales × valor %`. «No entregó» vale 0.
+- **Por indicadores (estilo Moodle)**: cada indicador se califica 1, 2 o 3; «no se califica» no cuenta.
+  El valor de la evaluación se reparte en partes iguales entre los indicadores calificados:
+  `promedio(nivel / 3) × valor %`. «No entregó» cuenta como 0 o no se toma en cuenta (en *Ajustes*).
+- **Calificación masiva**: marque varios estudiantes (casillas, Shift+clic o arrastrando) y aplique
+  la misma nota o nivel.
+- Cada componente se topa en su porcentaje. Asistencia: ausencias injustificadas + tardías
+  convertidas, sobre las lecciones efectivas → escala editable en *Ajustes*
+  (**verifique que coincida con el Reglamento de Evaluación vigente**).
+- Nota anual: suma de `nota del periodo × ponderado`; bajo la mínima → *Aplazado*; convocatorias I y II.
+
+## Informes
+
+Lista de estudiantes · Resumen de asistencia · Detalle de asistencia · Alerta de ausentismo ·
+Calificaciones del grupo · Calificaciones por estudiante · Indicadores calificados · Informe anual ·
+Acta de aplazados y convocatorias. Con encabezado del MEP, para imprimir/guardar en PDF o Excel (CSV).
+
+## Comunicados por WhatsApp
+
+Desde *Asistencia* (ausencias y tardías del día), cada evaluación (quienes no entregaron),
+*Alerta temprana* y *Comunicados* (mensaje a todo un grupo). Nexo abre WhatsApp con el mensaje
+listo al encargado; el docente lo revisa y presiona Enviar desde su número. «Enviar uno tras otro»
+recorre la lista. Las plantillas se editan en *Mensajes WhatsApp* y queda una bitácora por colegio.
 
 ## Datos personales
 
-La app guarda datos de estudiantes menores de edad. Mantenga el repositorio privado, no suba
-respaldos ni listas reales al repositorio, use contraseñas propias por docente y consulte las
-disposiciones de su institución sobre el uso de servicios externos para estos datos.
+Nexo guarda datos de estudiantes menores de edad. Mantenga el repositorio privado, no suba respaldos
+ni listas reales al repositorio, use contraseñas propias por docente y consulte las disposiciones de
+su institución sobre el uso de servicios externos para estos datos.
 
 ## Desarrollo sin Docker
 
-Node 22+ y una MariaDB/MySQL con el esquema cargado (`npm run db:init`):
+Node 22+ y un PostgreSQL 15+:
 
 ```
 npm install
-DB_HOST=127.0.0.1 ADMIN_EMAILS=su@correo npm run dev
+DB_HOST=127.0.0.1 DB_USER=nexo DB_PASSWORD=nexo123 DB_NAME=nexo ADMIN_EMAILS=su@correo npm run dev
 ```

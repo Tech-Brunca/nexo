@@ -1,0 +1,78 @@
+---
+import Base from '../../layouts/Base.astro';
+import { exec, q, one, transaccion, crearEsquemaColegio } from '../../lib/db';
+import { num, str } from '../../lib/util';
+let msg = '', error = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  const id = num(f.get('id'));
+  if (accion === 'guardar') {
+    const datos = [str(f.get('nombre')), str(f.get('codigo')), str(f.get('direccion_regional')), str(f.get('circuito')), str(f.get('director'))];
+    if (!datos[0]) error = 'El nombre es obligatorio.';
+    else if (id) {
+      await exec('UPDATE general.colegios SET nombre=?, codigo=?, direccion_regional=?, circuito=?, director=? WHERE id=?', [...datos, id]);
+      msg = 'Colegio actualizado.';
+    } else {
+      // Un colegio nuevo = un esquema nuevo con todas sus tablas
+      const esquema = await transaccion(async (c) => {
+        const r = await one<any>('INSERT INTO general.colegios (nombre, codigo, direccion_regional, circuito, director, creado_por) VALUES (?,?,?,?,?,?) RETURNING id',
+          [...datos, Astro.locals.user.id], c);
+        return crearEsquemaColegio(r.id, c);
+      });
+      msg = `Colegio creado con su propia base (${esquema}). Los docentes ya pueden agregarlo en «Mi cuenta».`;
+    }
+  } else if (accion === 'borrar') {
+    const col = await one<any>('SELECT * FROM general.colegios WHERE id=?', [id]);
+    const miembros = (await one<any>('SELECT COUNT(*) AS n FROM general.usuario_colegios WHERE colegio_id=?', [id])).n;
+    const secciones = col?.esquema ? (await one<any>(`SELECT COUNT(*) AS n FROM ${col.esquema}.secciones`)).n : 0;
+    if (!col) error = 'No existe.';
+    else if (miembros > 0 || secciones > 0) error = 'Ese colegio tiene docentes o datos; no se puede eliminar.';
+    else if (str(f.get('confirmar')) !== col.nombre) error = 'Para eliminar escriba el nombre exacto del colegio.';
+    else {
+      await transaccion(async (c) => {
+        if (col.esquema && /^c_\d+$/.test(col.esquema)) await c.query(`DROP SCHEMA IF EXISTS ${col.esquema} CASCADE`);
+        await c.query('DELETE FROM general.colegios WHERE id=$1', [id]);
+      });
+      msg = 'Colegio eliminado.';
+    }
+  }
+}
+const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
+const lista = await q<any>(`SELECT c.*, u.nombre AS creador,
+  (SELECT COUNT(*) FROM general.usuario_colegios uc WHERE uc.colegio_id=c.id) AS docentes
+  FROM general.colegios c LEFT JOIN general.usuarios u ON u.id=c.creado_por ORDER BY c.nombre`);
+for (const c of lista) {
+  c.estudiantes = c.esquema ? (await one<any>(`SELECT COUNT(*) AS n FROM ${c.esquema}.estudiantes`)).n : 0;
+  c.tamano = c.esquema ? (await one<any>(`SELECT pg_size_pretty(COALESCE(SUM(pg_total_relation_size(quote_ident(schemaname)||'.'||quote_ident(tablename))),0)) AS t FROM pg_tables WHERE schemaname=?`, [c.esquema])).t : '—';
+}
+const ed = lista.find((i) => i.id === editar) ?? { id: 0, nombre: '', codigo: '', direccion_regional: '', circuito: '', director: '' };
+---
+<Base titulo="Colegios">
+  <h1>Colegios</h1>
+  <p class="sub">Cada colegio tiene su propia base de datos (esquema). Al crear uno, Nexo la prepara sola.</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  <form method="post" class="tarjeta fila">
+    <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="id" value={ed.id} />
+    <label style="flex:2">Nombre<input name="nombre" value={ed.nombre} required placeholder="CTP Platanares" /></label>
+    <label>Código<input name="codigo" value={ed.codigo} size="8" /></label>
+    <label style="flex:1">Dirección Regional<input name="direccion_regional" value={ed.direccion_regional} /></label>
+    <label>Circuito<input name="circuito" value={ed.circuito} size="4" /></label>
+    <label style="flex:1">Director(a)<input name="director" value={ed.director} /></label>
+    <button>{ed.id ? 'Guardar cambios' : 'Crear colegio'}</button>{ed.id ? <a class="btn sec" href="/admin/colegios">Cancelar</a> : null}
+  </form>
+  <div class="tabla"><table>
+    <tr><th>Colegio</th><th>Código</th><th>Regional</th><th>Base</th><th class="n">Docentes</th><th class="n">Estudiantes</th><th class="n">Tamaño</th><th></th></tr>
+    {lista.map((i) => (
+      <tr><td><b>{i.nombre}</b><br /><span class="muted">{i.director}</span></td><td>{i.codigo}</td><td>{i.direccion_regional}{i.circuito && ` · circ. ${i.circuito}`}</td>
+        <td><code>{i.esquema}</code></td><td class="n">{i.docentes}</td><td class="n">{i.estudiantes}</td><td class="n">{i.tamano}</td>
+        <td style="white-space:nowrap"><a href={`?editar=${i.id}`}>Editar</a>
+          {i.docentes == 0 && i.estudiantes == 0 && (
+            <details style="display:inline-block"><summary class="muted">Eliminar</summary>
+              <form method="post" class="fila" style="margin-top:6px"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={i.id} />
+                <input name="confirmar" placeholder="nombre exacto" style="width:150px" /><button class="mini peligro">Eliminar</button></form>
+            </details>
+          )}</td></tr>
+    ))}
+  </table></div>
+</Base>

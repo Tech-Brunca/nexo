@@ -5,24 +5,26 @@ import { estudiantesDe, seccion } from '../../lib/calc';
 import { num, numOrNull, str, parseCsv } from '../../lib/util';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
-const sec = await seccion(user.id, id, inst!.id);
+const sec = await seccion(user.id, id);
 if (!sec) return Astro.redirect('/secciones');
 let msg = '', error = '';
 
 async function guardarEstudiante(d: Record<string, string>, subgrupo = '') {
   const ced = (d.cedula || '').trim();
   if (!ced || !d.apellidos || !d.nombre) return false;
-  const fn = /^\d{4}-\d{2}-\d{2}$/.test(d.fecha_nac || '') ? d.fecha_nac
-    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.test(d.fecha_nac || '') ? d.fecha_nac.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, (_, a, b, c) => `${c}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`) : null;
+  const fecha = (d.fecha_nac || '').trim();
+  let fn: string | null = /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha
+    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.test(fecha) ? fecha.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, (_, a, b, c) => `${c}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`) : null;
+  if (fn && Number.isNaN(new Date(fn + 'T00:00:00').getTime())) fn = null; // fecha imposible: se ignora
   await exec(
-    `INSERT INTO estudiantes (usuario_id, institucion_id, cedula, apellidos, nombre, fecha_nac, genero, encargado, telefono, extranjero)
-     VALUES (?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE apellidos=VALUES(apellidos), nombre=VALUES(nombre),
-     fecha_nac=COALESCE(VALUES(fecha_nac), fecha_nac), genero=COALESCE(VALUES(genero), genero),
-     encargado=VALUES(encargado), telefono=VALUES(telefono), activo=1`,
-    [user.id, sec.institucion_id, ced, d.apellidos.trim(), d.nombre.trim(), fn, (d.genero || '').trim().slice(0, 1).toUpperCase() || null,
+    `INSERT INTO {S}.estudiantes (usuario_id, cedula, apellidos, nombre, fecha_nac, genero, encargado, telefono, extranjero)
+     VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (usuario_id, cedula) DO UPDATE SET apellidos=EXCLUDED.apellidos, nombre=EXCLUDED.nombre,
+     fecha_nac=COALESCE(EXCLUDED.fecha_nac, {S}.estudiantes.fecha_nac), genero=COALESCE(EXCLUDED.genero, {S}.estudiantes.genero),
+     encargado=EXCLUDED.encargado, telefono=EXCLUDED.telefono, activo=1`,
+    [user.id, ced, d.apellidos.trim(), d.nombre.trim(), fn, (d.genero || '').trim().slice(0, 1).toUpperCase() || null,
      (d.encargado || '').trim(), (d.telefono || '').trim(), /^(s|si|sí|1|x)$/i.test(d.extranjero || '') ? 1 : 0]);
-  const e = await one<any>('SELECT id FROM estudiantes WHERE usuario_id=? AND institucion_id=? AND cedula=?', [user.id, sec.institucion_id, ced]);
-  await exec('INSERT INTO matriculas (estudiante_id, seccion_id, subgrupo) VALUES (?,?,?) ON DUPLICATE KEY UPDATE subgrupo=VALUES(subgrupo)',
+  const e = await one<any>('SELECT id FROM {S}.estudiantes WHERE usuario_id=? AND cedula=?', [user.id, ced]);
+  await exec('INSERT INTO {S}.matriculas (estudiante_id, seccion_id, subgrupo) VALUES (?,?,?) ON CONFLICT (estudiante_id, seccion_id) DO UPDATE SET subgrupo=EXCLUDED.subgrupo',
     [e.id, id, subgrupo.trim().toUpperCase().slice(0, 5)]);
   return true;
 }
@@ -42,35 +44,35 @@ if (Astro.request.method === 'POST') {
       const idx = { cedula: col('cedula'), apellidos: col('apellido'), nombre: col('nombre'), fecha_nac: col('fecha'), genero: col('genero'), encargado: col('encargad'), telefono: col('telefono'), extranjero: col('extranjer'), subgrupo: col('subgrupo') };
       if (idx.cedula < 0 || idx.apellidos < 0 || idx.nombre < 0) error = 'El archivo debe tener columnas cedula, apellidos y nombre. Descargue la plantilla.';
       else {
-        let n = 0;
+        let n = 0, malas = 0;
         for (const r of filas) {
           const d: any = {}; for (const [k, i] of Object.entries(idx)) d[k] = i >= 0 ? r[i] ?? '' : '';
-          if (await guardarEstudiante(d, d.subgrupo)) n++;
+          try { if (await guardarEstudiante(d, d.subgrupo)) n++; else malas++; } catch { malas++; }
         }
-        msg = `${n} estudiantes importados o actualizados.`;
+        msg = `${n} estudiantes importados o actualizados.` + (malas ? ` ${malas} fila(s) omitidas por datos incompletos.` : '');
       }
     } else error = 'Elija un archivo CSV.';
   } else if (accion === 'quitar') {
-    await exec('DELETE FROM matriculas WHERE estudiante_id=? AND seccion_id=?', [num(f.get('estudiante_id')), id]);
+    await exec('DELETE FROM {S}.matriculas WHERE estudiante_id=? AND seccion_id=?', [num(f.get('estudiante_id')), id]);
   } else if (accion === 'subgrupo') {
-    await exec('UPDATE matriculas SET subgrupo=? WHERE estudiante_id=? AND seccion_id=?', [str(f.get('subgrupo')).toUpperCase().slice(0, 5), num(f.get('estudiante_id')), id]);
+    await exec('UPDATE {S}.matriculas SET subgrupo=? WHERE estudiante_id=? AND seccion_id=?', [str(f.get('subgrupo')).toUpperCase().slice(0, 5), num(f.get('estudiante_id')), id]);
   } else if (accion === 'datos') {
     const asg = numOrNull(f.get('asignatura_id'));
-    const propia = asg && (await q('SELECT id FROM asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
-    await exec('UPDATE secciones SET nivel=?, nombre=?, asignatura_id=?, nota_aprobatoria=? WHERE id=? AND usuario_id=?',
+    const propia = asg && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
+    await exec('UPDATE {S}.secciones SET nivel=?, nombre=?, asignatura_id=?, nota_aprobatoria=? WHERE id=? AND usuario_id=?',
       [str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), id, user.id]);
     return Astro.redirect(`/secciones/${id}`);
   } else if (accion === 'lecciones') {
-    const mios = new Set((await q<any>('SELECT id FROM periodos WHERE usuario_id=? AND institucion_id=?', [user.id, sec.institucion_id])).map((p) => p.id));
+    const mios = new Set((await q<any>('SELECT id FROM {S}.periodos WHERE usuario_id=?', [user.id])).map((p) => p.id));
     for (const [k, v] of f.entries()) if (k.startsWith('lec_') && mios.has(Number(k.slice(4))))
-      await exec('INSERT INTO lecciones VALUES (?,?,?) ON DUPLICATE KEY UPDATE cantidad=VALUES(cantidad)', [id, Number(k.slice(4)), num(v)]);
+      await exec('INSERT INTO {S}.lecciones VALUES (?,?,?) ON CONFLICT (seccion_id, periodo_id) DO UPDATE SET cantidad=EXCLUDED.cantidad', [id, Number(k.slice(4)), num(v)]);
     msg = 'Lecciones guardadas.';
   }
 }
 const ests = await estudiantesDe(id);
-const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
-const periodos = await q<any>(`SELECT p.*, l.cantidad FROM periodos p LEFT JOIN lecciones l ON l.periodo_id=p.id AND l.seccion_id=?
-  WHERE p.usuario_id=? AND p.institucion_id=? ORDER BY numero`, [id, user.id, sec.institucion_id]);
+const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
+const periodos = await q<any>(`SELECT p.*, l.cantidad FROM {S}.periodos p LEFT JOIN {S}.lecciones l ON l.periodo_id=p.id AND l.seccion_id=?
+  WHERE p.usuario_id=? ORDER BY numero`, [id, user.id]);
 const edad = (f: string | null) => f ? Math.floor((Date.now() - new Date(f).getTime()) / 31557600000) : '';
 ---
 <Base titulo={`Sección ${sec.nivel}-${sec.nombre}`}>

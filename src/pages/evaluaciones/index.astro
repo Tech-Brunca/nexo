@@ -7,39 +7,39 @@ import { num, str, hoy } from '../../lib/util';
 const { user, inst } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
-const periodos = await q<any>('SELECT id, numero FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [U, inst!.id]);
+const periodos = await q<any>('SELECT id, numero FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [U]);
 const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
 const periodoId = periodos.find((p) => p.id === pedido)?.id ?? periodos[0]?.id ?? 0;
-const sec = seccionId ? await seccion(U, seccionId, inst!.id) : null;
+const sec = seccionId ? await seccion(U, seccionId) : null;
 let error = '';
 if (sec && Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
   if (accion === 'crear') {
-    const comp = await one<any>('SELECT * FROM componentes WHERE id=? AND usuario_id=? AND institucion_id=?', [num(f.get('componente_id')), U, sec.institucion_id]);
+    const comp = await one<any>('SELECT * FROM {S}.componentes WHERE id=? AND usuario_id=?', [num(f.get('componente_id')), U]);
     if (!comp || !str(f.get('nombre')) || !periodoId) error = 'Elija componente y nombre.';
     else {
-      const r = await exec('INSERT INTO evaluaciones (componente_id, seccion_id, periodo_id, nombre, puntos_total, porcentaje, fecha) VALUES (?,?,?,?,?,?,?)',
+      const r = await one<any>('INSERT INTO {S}.evaluaciones (componente_id, seccion_id, periodo_id, nombre, puntos_total, porcentaje, fecha) VALUES (?,?,?,?,?,?,?) RETURNING id',
         [comp.id, seccionId, periodoId, str(f.get('nombre')), comp.tipo === 'indicadores' ? 0 : num(f.get('puntos_total')), num(f.get('porcentaje')), str(f.get('fecha')) || null]);
-      const misInd = new Set((await q<any>('SELECT id FROM indicadores WHERE usuario_id=?', [U])).map((i) => i.id));
-      for (const i of f.getAll('indicadores')) if (misInd.has(num(i))) await exec('INSERT IGNORE INTO evaluacion_indicadores VALUES (?,?)', [r.insertId, num(i)]);
-      return Astro.redirect(`/evaluaciones/${r.insertId}`);
+      const misInd = new Set((await q<any>('SELECT id FROM general.indicadores WHERE usuario_id=?', [U])).map((i) => i.id));
+      for (const i of f.getAll('indicadores')) if (misInd.has(num(i))) await exec('INSERT INTO {S}.evaluacion_indicadores VALUES (?,?) ON CONFLICT DO NOTHING', [r.id, num(i)]);
+      return Astro.redirect(`/evaluaciones/${r.id}`);
     }
   } else if (accion === 'borrar') {
-    await exec('DELETE FROM evaluaciones WHERE id=? AND seccion_id=?', [num(f.get('id')), seccionId]);
+    await exec('DELETE FROM {S}.evaluaciones WHERE id=? AND seccion_id=?', [num(f.get('id')), seccionId]);
   }
 }
-const comps = sec ? await q<any>(`SELECT c.*, COALESCE(SUM(e.porcentaje),0) AS usado FROM componentes c
-  LEFT JOIN evaluaciones e ON e.componente_id=c.id AND e.seccion_id=? AND e.periodo_id=?
-  WHERE c.usuario_id=? AND c.institucion_id=? AND c.nivel=? GROUP BY c.id ORDER BY c.orden, c.id`, [seccionId, periodoId, U, sec.institucion_id, sec.nivel]) : [];
+const comps = sec ? await q<any>(`SELECT c.*, COALESCE(SUM(e.porcentaje),0) AS usado FROM {S}.componentes c
+  LEFT JOIN {S}.evaluaciones e ON e.componente_id=c.id AND e.seccion_id=? AND e.periodo_id=?
+  WHERE c.usuario_id=? AND c.nivel=? GROUP BY c.id ORDER BY c.orden, c.id`, [seccionId, periodoId, U, sec.nivel]) : [];
 const evals = sec ? await q<any>(`SELECT e.*, c.nombre AS componente, c.tipo,
-  (SELECT COUNT(*) FROM notas n WHERE n.evaluacion_id=e.id AND n.puntos IS NOT NULL) +
-  (SELECT COUNT(DISTINCT v.estudiante_id) FROM valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
-  FROM evaluaciones e JOIN componentes c ON c.id=e.componente_id WHERE e.seccion_id=? AND e.periodo_id=? ORDER BY c.orden, e.fecha, e.id`, [seccionId, periodoId]) : [];
+  (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego)) +
+  (SELECT COUNT(DISTINCT v.estudiante_id) FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
+  FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id WHERE e.seccion_id=? AND e.periodo_id=? ORDER BY c.orden, e.fecha, e.id`, [seccionId, periodoId]) : [];
 const per = periodos.find((p) => p.id === periodoId);
-const indicadores = sec ? await q<any>(`SELECT * FROM indicadores WHERE usuario_id=? AND nivel=? AND (asignatura_id IS NULL OR asignatura_id <=> ?)
-  AND (periodo_numero IS NULL OR periodo_numero=?) ORDER BY id`, [U, sec.nivel, sec.asignatura_id, per?.numero ?? 0]) : [];
-const nEst = sec ? (await one<any>('SELECT COUNT(*) n FROM matriculas WHERE seccion_id=?', [seccionId])).n : 0;
+const indicadores = sec ? await q<any>(`SELECT * FROM general.indicadores WHERE usuario_id=? AND nivel=? AND (asignatura_id IS NULL OR asignatura_id IS NOT DISTINCT FROM ?::int)
+  AND (periodo_numero IS NULL OR periodo_numero=?::int) ORDER BY id`, [U, sec.nivel, sec.asignatura_id, per?.numero ?? 0]) : [];
+const nEst = sec ? (await one<any>('SELECT COUNT(*) AS n FROM {S}.matriculas WHERE seccion_id=?', [seccionId])).n : 0;
 ---
 <Base titulo="Evaluaciones">
   <h1>Evaluaciones</h1>

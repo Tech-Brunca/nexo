@@ -7,7 +7,7 @@ const { user } = Astro.locals;
 const U = user.id;
 const asgPropia = async (v: FormDataEntryValue | null) => {
   const a = numOrNull(v);
-  return a && (await q('SELECT id FROM asignaturas WHERE id=? AND usuario_id=?', [a, U])).length ? a : null;
+  return a && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [a, U])).length ? a : null;
 };
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
@@ -16,11 +16,11 @@ if (Astro.request.method === 'POST') {
     const id = num(f.get('id'));
     const datos = [await asgPropia(f.get('asignatura_id')), str(f.get('nivel')), numOrNull(f.get('periodo_numero')), str(f.get('nombre')), str(f.get('inicial')), str(f.get('intermedio')), str(f.get('avanzado'))];
     if (!datos[1] || !datos[3]) error = 'Nivel e indicador son obligatorios.';
-    else if (id) await exec('UPDATE indicadores SET asignatura_id=?, nivel=?, periodo_numero=?, nombre=?, inicial=?, intermedio=?, avanzado=? WHERE id=? AND usuario_id=?', [...datos, id, U]);
-    else await exec('INSERT INTO indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)', [U, ...datos]);
+    else if (id) await exec('UPDATE general.indicadores SET asignatura_id=?, nivel=?, periodo_numero=?, nombre=?, inicial=?, intermedio=?, avanzado=? WHERE id=? AND usuario_id=?', [...datos, id, U]);
+    else await exec('INSERT INTO general.indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)', [U, ...datos]);
     if (!error) msg = 'Indicador guardado.';
   } else if (accion === 'borrar') {
-    await exec('DELETE FROM indicadores WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
+    await exec('DELETE FROM general.indicadores WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
   } else if (accion === 'importar') {
     const a = f.get('archivo');
     if (a instanceof File && a.size) {
@@ -29,7 +29,7 @@ if (Astro.request.method === 'POST') {
       let n = 0;
       for (const r of filas) {
         if (!r[0] || !r[1]) continue;
-        await exec('INSERT INTO indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)',
+        await exec('INSERT INTO general.indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)',
           [U, asg, r[0].trim(), numOrNull(r[2] ?? null), r[1].trim(), r[3] ?? '', r[4] ?? '', r[5] ?? '']);
         n++;
       }
@@ -39,15 +39,15 @@ if (Astro.request.method === 'POST') {
 }
 const nivel = Astro.url.searchParams.get('nivel') ?? '';
 const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
-const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? ORDER BY nombre', [U]);
-const niveles = (await q<any>('SELECT DISTINCT nivel FROM secciones WHERE usuario_id=? UNION SELECT DISTINCT nivel FROM indicadores WHERE usuario_id=? ORDER BY CAST(nivel AS UNSIGNED)', [U, U])).map((r) => r.nivel);
-const lista = await q<any>(`SELECT i.*, a.nombre AS asignatura FROM indicadores i LEFT JOIN asignaturas a ON a.id=i.asignatura_id
-  WHERE i.usuario_id=? AND (?='' OR i.nivel=?) ORDER BY CAST(i.nivel AS UNSIGNED), i.periodo_numero, i.id`, [U, nivel, nivel]);
+const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuario_id=? ORDER BY nombre', [U]);
+const niveles = (await q<any>('SELECT DISTINCT nivel FROM general.indicadores WHERE usuario_id=? ORDER BY 1', [U])).map((r) => r.nivel);
+const lista = await q<any>(`SELECT i.*, a.nombre AS asignatura FROM general.indicadores i LEFT JOIN general.asignaturas a ON a.id=i.asignatura_id
+  WHERE i.usuario_id=? AND (?='' OR i.nivel=?) ORDER BY length(i.nivel), i.nivel, i.periodo_numero NULLS FIRST, i.id`, [U, nivel, nivel]);
 const ed = lista.find((x) => x.id === editar) ?? { id: 0, nivel, nombre: '', inicial: '', intermedio: '', avanzado: '', periodo_numero: '', asignatura_id: null };
 ---
 <Base titulo="Indicadores">
   <h1>Indicadores de aprendizaje</h1>
-  <p class="sub">Sus indicadores (sirven en todas sus instituciones). Se usan en los componentes «por indicadores»: Inicial = 1 punto, Intermedio = 2, Avanzado = 3; Sin entregar = 0; Sin calificar no cuenta.</p>
+  <p class="sub">Sus indicadores (sirven en todos sus colegios). Se califican con 1 (inicial), 2 (intermedio) o 3 (avanzado); «no se califica» no cuenta y el valor de la evaluación se reparte en partes iguales entre los indicadores calificados.</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
   <form method="post" class="tarjeta">
     <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="id" value={ed.id} />

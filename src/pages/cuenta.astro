@@ -1,6 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
-import { exec, q, one, prepararInstitucion } from '../lib/db';
+import { exec, q, one, prepararColegio } from '../lib/db';
 import { hashClave, verificarClave, claveValida, COOKIE_INST } from '../lib/auth';
 import { num, str } from '../lib/util';
 const { user } = Astro.locals;
@@ -10,86 +10,66 @@ if (Astro.request.method === 'POST') {
   const accion = str(f.get('accion'));
   if (accion === 'perfil') {
     if (!str(f.get('nombre'))) error = 'El nombre es obligatorio.';
-    else { await exec('UPDATE usuarios SET nombre=?, cedula=? WHERE id=?', [str(f.get('nombre')), str(f.get('cedula')), user.id]); msg = 'Datos guardados.'; }
+    else { await exec('UPDATE general.usuarios SET nombre=?, cedula=? WHERE id=?', [str(f.get('nombre')), str(f.get('cedula')), user.id]); msg = 'Datos guardados.'; }
   } else if (accion === 'clave') {
-    const u = await one<any>('SELECT pass_hash FROM usuarios WHERE id=?', [user.id]);
+    const u = await one<any>('SELECT pass_hash FROM general.usuarios WHERE id=?', [user.id]);
     const nueva = str(f.get('nueva'));
     if (!(await verificarClave(str(f.get('actual')), u.pass_hash))) error = 'La contraseña actual no es correcta.';
     else if (!claveValida(nueva)) error = 'La nueva contraseña debe tener al menos 8 caracteres.';
     else if (nueva !== str(f.get('nueva2'))) error = 'Las contraseñas nuevas no coinciden.';
-    else { await exec('UPDATE usuarios SET pass_hash=? WHERE id=?', [await hashClave(nueva), user.id]); msg = 'Contraseña cambiada.'; }
+    else { await exec('UPDATE general.usuarios SET pass_hash=? WHERE id=?', [await hashClave(nueva), user.id]); msg = 'Contraseña cambiada.'; }
   } else if (accion === 'unirse') {
-    const id = num(f.get('institucion_id'));
-    if (await one('SELECT id FROM instituciones WHERE id=?', [id])) {
-      await exec('INSERT IGNORE INTO usuario_instituciones VALUES (?,?)', [user.id, id]);
-      await prepararInstitucion(user.id, id);
-      Astro.cookies.set(COOKIE_INST, String(id), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 365 * 86400 });
+    const col = await one<any>('SELECT id, esquema FROM general.colegios WHERE id=? AND esquema IS NOT NULL', [num(f.get('colegio_id'))]);
+    if (col) {
+      await exec('INSERT INTO general.usuario_colegios VALUES (?,?) ON CONFLICT DO NOTHING', [user.id, col.id]);
+      await prepararColegio(user.id, col.esquema);
+      Astro.cookies.set(COOKIE_INST, String(col.id), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 365 * 86400 });
       return Astro.redirect('/cuenta?ok=1');
     }
-  } else if (accion === 'crear') {
-    const nombre = str(f.get('nombre_inst'));
-    if (!nombre) error = 'Indique el nombre de la institución.';
-    else {
-      const r = await exec('INSERT INTO instituciones (nombre, codigo, direccion_regional, circuito, director, creado_por) VALUES (?,?,?,?,?,?)',
-        [nombre, str(f.get('codigo')), str(f.get('direccion_regional')), str(f.get('circuito')), str(f.get('director')), user.id]);
-      await exec('INSERT INTO usuario_instituciones VALUES (?,?)', [user.id, r.insertId]);
-      await prepararInstitucion(user.id, r.insertId);
-      Astro.cookies.set(COOKIE_INST, String(r.insertId), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 365 * 86400 });
-      return Astro.redirect('/cuenta?ok=1');
+  } else if (accion === 'salir-col') {
+    const col = await one<any>(`SELECT c.esquema FROM general.colegios c JOIN general.usuario_colegios uc ON uc.colegio_id=c.id WHERE c.id=? AND uc.usuario_id=?`, [num(f.get('colegio_id')), user.id]);
+    if (col) {
+      const hay = await one<any>(`SELECT COUNT(*) AS n FROM ${col.esquema}.secciones WHERE usuario_id=?`, [user.id]);
+      if (hay.n > 0) error = 'Tiene secciones en ese colegio. Elimínelas primero (descargue antes un respaldo).';
+      else { await exec('DELETE FROM general.usuario_colegios WHERE usuario_id=? AND colegio_id=?', [user.id, num(f.get('colegio_id'))]); return Astro.redirect('/cuenta'); }
     }
-  } else if (accion === 'salir-inst') {
-    const id = num(f.get('institucion_id'));
-    const hay = await one<any>('SELECT COUNT(*) n FROM secciones WHERE usuario_id=? AND institucion_id=?', [user.id, id]);
-    if (hay.n > 0) error = 'Tiene secciones en esa institución. Elimínelas primero o descargue un respaldo.';
-    else { await exec('DELETE FROM usuario_instituciones WHERE usuario_id=? AND institucion_id=?', [user.id, id]); return Astro.redirect('/cuenta'); }
   }
 }
-if (Astro.url.searchParams.get('ok')) msg = 'Institución agregada y seleccionada.';
-const datos = (await one<any>('SELECT nombre, correo, cedula FROM usuarios WHERE id=?', [user.id]))!;
-const mias = await q<any>(`SELECT i.*, (SELECT COUNT(*) FROM secciones s WHERE s.institucion_id=i.id AND s.usuario_id=?) AS secciones
-  FROM instituciones i JOIN usuario_instituciones ui ON ui.institucion_id=i.id WHERE ui.usuario_id=? ORDER BY i.nombre`, [user.id, user.id]);
-const otras = await q<any>(`SELECT * FROM instituciones WHERE id NOT IN (SELECT institucion_id FROM usuario_instituciones WHERE usuario_id=?) ORDER BY nombre`, [user.id]);
-const bienvenida = Astro.url.searchParams.get('bienvenida') || mias.length === 0;
+if (Astro.url.searchParams.get('ok')) msg = 'Colegio agregado y seleccionado.';
+const datos = (await one<any>('SELECT nombre, correo, cedula FROM general.usuarios WHERE id=?', [user.id]))!;
+const mios = await q<any>(`SELECT c.* FROM general.colegios c JOIN general.usuario_colegios uc ON uc.colegio_id=c.id
+  WHERE uc.usuario_id=? ORDER BY c.nombre`, [user.id]);
+for (const c of mios) c.secciones = c.esquema ? (await one<any>(`SELECT COUNT(*) AS n FROM ${c.esquema}.secciones WHERE usuario_id=?`, [user.id])).n : 0;
+const otros = await q<any>(`SELECT * FROM general.colegios WHERE esquema IS NOT NULL
+  AND id NOT IN (SELECT colegio_id FROM general.usuario_colegios WHERE usuario_id=?) ORDER BY nombre`, [user.id]);
 ---
 <Base titulo="Mi cuenta">
   <h1>Mi cuenta</h1>
   <p class="sub">{datos.correo}</p>
-  {bienvenida && mias.length === 0 && <div class="msg aviso">Para empezar, agregue la institución (o instituciones) donde trabaja.</div>}
+  {mios.length === 0 && <div class="msg aviso">Para empezar, agregue el colegio (o colegios) donde trabaja.</div>}
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
 
   <div class="tarjeta">
-    <h2 style="margin-top:0">Mis instituciones</h2>
-    {mias.length === 0 ? <p class="muted">Aún no tiene instituciones.</p> : (
+    <h2 style="margin-top:0">Mis colegios</h2>
+    {mios.length === 0 ? <p class="muted">Aún no tiene colegios.</p> : (
       <div class="tabla"><table>
-        <tr><th>Institución</th><th>Código</th><th>Regional</th><th class="n">Mis secciones</th><th></th></tr>
-        {mias.map((i) => (
+        <tr><th>Colegio</th><th>Código</th><th>Regional</th><th class="n">Mis secciones</th><th></th></tr>
+        {mios.map((i) => (
           <tr><td><b>{i.nombre}</b></td><td>{i.codigo}</td><td>{i.direccion_regional}</td><td class="n">{i.secciones}</td>
-            <td style="text-align:right"><form method="post" onsubmit="return confirm('¿Quitar esta institución de su cuenta?')"><input type="hidden" name="accion" value="salir-inst" /><input type="hidden" name="institucion_id" value={i.id} /><button class="mini peligro">Quitar</button></form></td></tr>
+            <td style="text-align:right"><form method="post" onsubmit="return confirm('¿Quitar este colegio de su cuenta?')"><input type="hidden" name="accion" value="salir-col" /><input type="hidden" name="colegio_id" value={i.id} /><button class="mini peligro">Quitar</button></form></td></tr>
         ))}
       </table></div>
     )}
-    {otras.length > 0 && (
+    {otros.length > 0 ? (
       <form method="post" class="fila" style="margin-top:14px">
         <input type="hidden" name="accion" value="unirse" />
-        <label style="flex:1">Agregar una institución existente
-          <select name="institucion_id">{otras.map((i) => <option value={i.id}>{i.nombre}{i.codigo ? ` (${i.codigo})` : ''}</option>)}</select>
+        <label style="flex:1">Agregar un colegio
+          <select name="colegio_id">{otros.map((i) => <option value={i.id}>{i.nombre}{i.codigo ? ` (${i.codigo})` : ''}</option>)}</select>
         </label>
         <button>Agregar</button>
       </form>
-    )}
-    <details style="margin-top:14px" open={otras.length === 0 && mias.length === 0}>
-      <summary>¿No aparece? Registrar una institución nueva</summary>
-      <form method="post" class="fila" style="margin-top:10px">
-        <input type="hidden" name="accion" value="crear" />
-        <label style="flex:2">Nombre<input name="nombre_inst" required placeholder="CTP …" /></label>
-        <label>Código<input name="codigo" size="8" /></label>
-        <label style="flex:1">Dirección Regional<input name="direccion_regional" /></label>
-        <label>Circuito<input name="circuito" size="4" /></label>
-        <label style="flex:1">Director(a)<input name="director" /></label>
-        <button class="sec">Registrar</button>
-      </form>
-      <p class="muted">Revise antes que no exista con otro nombre, para que los compañeros compartan la misma.</p>
-    </details>
+    ) : <p class="muted" style="margin-top:12px">No hay más colegios disponibles.</p>}
+    <p class="muted">¿Su colegio no aparece? Pida a un administrador que lo registre en Nexo.</p>
   </div>
 
   <form method="post" class="tarjeta fila">

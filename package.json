@@ -5,14 +5,17 @@
     "dev": "astro dev",
     "build": "astro build",
     "start": "node dist/server/entry.mjs",
-    "db:init": "node scripts/init-db.mjs"
+    "db:migrar": "node scripts/migrar.mjs"
   },
   "dependencies": {
     "@astrojs/netlify": "^8.2.10",
     "@astrojs/node": "^11.1.9",
     "astro": "^7.4.1",
-    "mysql2": "^3.24.6"
+    "pg": "^8.23.1"
   },
   "type": "module",
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
 }

@@ -12,20 +12,20 @@ if (Astro.request.method === 'POST') {
     if (!str(f.get('nivel')) || !str(f.get('nombre'))) msg = 'Indique nivel y nombre.';
     else {
       const asg = numOrNull(f.get('asignatura_id'));
-      const propia = asg && (await q('SELECT id FROM asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
-      await exec('INSERT INTO secciones (usuario_id, institucion_id, nivel, nombre, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?,?)',
-        [user.id, inst!.id, str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), cfg.curso_lectivo]);
+      const propia = asg && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
+      await exec('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?)',
+        [user.id, str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), cfg.curso_lectivo]);
     }
   } else if (accion === 'borrar') {
-    await exec('DELETE FROM secciones WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+    await exec('DELETE FROM {S}.secciones WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
   }
 }
-const asignaturas = await q<any>('SELECT * FROM asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
+const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
 const secciones = await q<any>(
-  `SELECT s.*, a.nombre AS asignatura, COUNT(m.id) AS n FROM secciones s
-   LEFT JOIN asignaturas a ON a.id=s.asignatura_id LEFT JOIN matriculas m ON m.seccion_id=s.id
-   WHERE s.usuario_id=? AND s.institucion_id=?
-   GROUP BY s.id ORDER BY s.anio DESC, CAST(s.nivel AS UNSIGNED), s.nombre`, [user.id, inst!.id]);
+  `SELECT s.*, a.nombre AS asignatura, COUNT(m.id) AS n FROM {S}.secciones s
+   LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id LEFT JOIN {S}.matriculas m ON m.seccion_id=s.id
+   WHERE s.usuario_id=?
+   GROUP BY s.id, a.nombre ORDER BY s.anio DESC, length(s.nivel), s.nivel, s.nombre`, [user.id]);
 ---
 <Base titulo="Secciones">
   <h1>Secciones</h1>

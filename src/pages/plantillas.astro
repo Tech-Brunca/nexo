@@ -1,0 +1,36 @@
+---
+import Base from '../layouts/Base.astro';
+import { exec } from '../lib/db';
+import { str } from '../lib/util';
+import { TIPOS, VARIABLES, plantillas, llenar } from '../lib/whatsapp';
+const { user, inst } = Astro.locals;
+let msg = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const tipo = str(f.get('tipo'));
+  if (TIPOS[tipo]) {
+    if (f.get('restablecer')) await exec('DELETE FROM general.plantillas WHERE usuario_id=? AND tipo=?', [user.id, tipo]);
+    else await exec(`INSERT INTO general.plantillas VALUES (?,?,?) ON CONFLICT (usuario_id, tipo) DO UPDATE SET texto=EXCLUDED.texto`,
+      [user.id, tipo, str(f.get('texto')).slice(0, 1500)]);
+    msg = `Mensaje «${TIPOS[tipo].titulo}» guardado.`;
+  }
+}
+const pl = await plantillas(user.id);
+const ejemplo = { encargado: 'María Mora', estudiante: 'Ana Pérez', seccion: '10-3', asignatura: 'Soporte TI', docente: user.nombre,
+  colegio: inst?.nombre ?? 'su colegio', fecha: 'martes 20 de octubre', evaluacion: 'Práctica 2', lecciones: 3 };
+---
+<Base titulo="Mensajes de WhatsApp">
+  <h1>Mensajes de WhatsApp</h1>
+  <p class="sub">Plantillas para los avisos a encargados. Use las variables entre llaves; Nexo las llena con los datos de cada estudiante.</p>
+  {msg && <div class="msg ok">{msg}</div>}
+  <p class="muted">Variables: {VARIABLES.map((v) => <code style="margin-right:6px">{`{${v}}`}</code>)}</p>
+  {Object.entries(TIPOS).map(([tipo, t]) => (
+    <form method="post" class="tarjeta">
+      <input type="hidden" name="tipo" value={tipo} />
+      <h2 style="margin-top:0">{t.titulo} <span class="muted" style="font-weight:400">· {t.ayuda}</span></h2>
+      <textarea name="texto" rows="4" style="width:100%">{pl[tipo]}</textarea>
+      <p class="muted" style="margin:8px 0">Vista previa: {llenar(pl[tipo], ejemplo)}</p>
+      <div class="fila"><button>Guardar</button><button class="sec" name="restablecer" value="1">Volver al texto original</button></div>
+    </form>
+  ))}
+</Base>

@@ -6,12 +6,11 @@ import { calcularPeriodo } from '../lib/calc';
 import { fmt, csv } from '../lib/util';
 const { user, inst } = Astro.locals;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
-const periodos = await q<any>('SELECT id FROM periodos WHERE usuario_id=? AND institucion_id=? ORDER BY numero', [user.id, inst!.id]);
+const periodos = await q<any>('SELECT id FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]);
 const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
 const periodoId = periodos.find((p) => p.id === pedido)?.id ?? periodos[0]?.id ?? 0;
 const detalle = Astro.url.searchParams.get('detalle') === '1';
-const r0 = seccionId && periodoId ? await calcularPeriodo(user.id, seccionId, periodoId) : null;
-const r = r0 && r0.sec.institucion_id === inst!.id ? r0 : null;
+const r = seccionId && periodoId ? await calcularPeriodo(user.id, seccionId, periodoId) : null;
 const cfg = { institucion: inst!.nombre, docente: user.nombre };
 if (r && Astro.url.searchParams.get('csv')) {
   return new Response(csv([
