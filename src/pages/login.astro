@@ -36,10 +36,10 @@ if (Astro.request.method === 'POST') {
 }
 ---
 <Base titulo="Ingresar" sinMenu>
-  <div style="min-height:100vh;display:grid;place-items:center;padding:20px">
-    <form method="post" class="tarjeta" style="width:min(380px,100%);padding:28px">
-      <h1>Nexo</h1>
-      <p class="sub">Registro digital docente: asistencia, evaluaciones y calificaciones.</p>
+  <div class="acceso">
+    <form method="post" class="tarjeta acceso-tarjeta">
+      <div class="marca"><img src="/logo.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></div>
+      <p class="sub">Asistencia, evaluaciones y calificaciones.</p>
       {registrado && <div class="msg ok">Solicitud enviada. Podrá ingresar cuando un administrador apruebe su cuenta.</div>}
       {error && <div class="msg mal">{error}</div>}
       <label>Correo<input type="email" name="correo" value={correo} autocomplete="username" autofocus required /></label>
