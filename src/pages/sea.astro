@@ -1,0 +1,155 @@
+---
+// Importar y exportar con la plantilla del SEA: "Id";"Nombre";"Trabajo cotidiano";"Tareas";"Prueba";"Proyecto";"Asistencia"
+import Base from '../layouts/Base.astro';
+import Selector from '../components/Selector.astro';
+import { q, one, exec, transaccion, preparar, esquemaActual } from '../lib/db';
+import { seccion, calcularPeriodo } from '../lib/calc';
+import { str, fmt, parseCsv } from '../lib/util';
+import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes } from '../lib/sea';
+const { user } = Astro.locals;
+const U = user.id;
+const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
+const periodos = await q<any>('SELECT id, numero, nombre FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [U]);
+const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
+const per = periodos.find((p) => p.id === pedido) ?? periodos[0];
+const sec = seccionId ? await seccion(U, seccionId) : null;
+if (sec) await asegurarComponentes(U, sec.nivel);
+const comps = sec ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave IS NOT NULL', [U, sec.nivel]) : [];
+const compDe = (k: string) => comps.find((c) => c.clave === k);
+const ORD = ['primer', 'segundo', 'tercer', 'cuarto'];
+const nombreArchivo = () => `sea_${ORD[(per?.numero ?? 1) - 1] ?? 'periodo' + per?.numero}_periodo_${sec!.nivel}-${sec!.nombre}.csv`;
+
+// ── Exportar ───────────────────────────────────────────────────────────────
+if (sec && per && Astro.url.searchParams.get('exportar')) {
+  const r = (await calcularPeriodo(U, sec.id, per.id))!;
+  const enteros = Astro.url.searchParams.get('decimales') !== '2';
+  const v = (n: number) => numSea(enteros ? Math.round(n) : Math.round(n * 100) / 100);
+  const filas = [COLUMNAS_SEA, ...r.filas.map((f) => [f.est.cedula, `${f.est.apellidos} ${f.est.nombre}`,
+    ...SEA.map((s) => { const c = r.comps.find((x) => x.clave === s.clave); return c ? v(f.porComp[c.id] ?? 0) : '0'; })])];
+  const texto = '﻿' + filas.map((fila) => fila.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\n') + '\n';
+  return new Response(texto, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${nombreArchivo()}"` } });
+}
+
+// ── Importar ───────────────────────────────────────────────────────────────
+let msg = '', errores: string[] = [];
+if (sec && per && Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  if (accion === 'quitar') {
+    await exec('DELETE FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=?', [sec.id, per.id]);
+    msg = `Se quitaron las notas importadas de ${per.nombre}. Ahora se usan las calculadas en Nexo.`;
+  } else if (accion === 'importar') {
+    const archivo = f.get('archivo');
+    const conNotas = str(f.get('modo')) !== 'estudiantes';
+    if (!(archivo instanceof File) || !archivo.size) errores.push('Elija el archivo .csv.');
+    else if (/\.xlsx?$/i.test(archivo.name)) errores.push('El archivo es de Excel (.xlsx). En Excel use Archivo → Guardar como → «CSV UTF-8 (delimitado por comas)» y súbalo de nuevo.');
+    else {
+      const filas = parseCsv(await archivo.text());
+      const enc = (filas[0] ?? []).map((x) => x.trim());
+      // Igual que ReDDi: las columnas deben ser exactamente las de la plantilla, en el mismo orden
+      if (enc.length < COLUMNAS_SEA.length || COLUMNAS_SEA.some((c, i) => normalizar(enc[i] ?? '') !== normalizar(c))) {
+        errores.push(`Las columnas no coinciden con la plantilla del SEA. Se esperaba: ${COLUMNAS_SEA.join(' · ')}. El archivo tiene: ${enc.join(' · ') || '(vacío)'}.`);
+      } else {
+        const datos: { cedula: string; nombre: string; vals: (number | null)[] }[] = [];
+        const vistas = new Set<string>();
+        filas.slice(1).forEach((fila, i) => {
+          const n = i + 2;
+          const cedula = (fila[0] ?? '').trim().replace(/\s/g, ''), nombre = (fila[1] ?? '').trim();
+          if (!cedula && !nombre) return;
+          if (!cedula || !nombre) { errores.push(`Fila ${n}: falta el Id o el Nombre.`); return; }
+          if (vistas.has(cedula)) { errores.push(`Fila ${n}: el Id ${cedula} está repetido.`); return; }
+          vistas.add(cedula);
+          const vals = SEA.map((s, k) => {
+            const x = leerNum(fila[k + 2] ?? '');
+            const c = compDe(s.clave)!;
+            if (x !== null && Number.isNaN(x)) errores.push(`Fila ${n} (${nombre}): «${fila[k + 2]}» en ${s.nombre} no es un número.`);
+            else if (x !== null && (x < 0 || x > Number(c.porcentaje) + 0.001)) errores.push(`Fila ${n} (${nombre}): ${s.nombre} = ${x}, pero ese componente vale ${Number(c.porcentaje)}% en el nivel ${sec.nivel}. Revise los porcentajes en Componentes.`);
+            return x;
+          });
+          datos.push({ cedula, nombre, vals });
+        });
+        if (!datos.length && !errores.length) errores.push('El archivo no tiene estudiantes.');
+        if (!errores.length) {
+          const esquema = esquemaActual();
+          let nuevos = 0, matriculados = 0, notas = 0;
+          await transaccion(async (c) => {
+            const x = (sql: string, p: unknown[]) => c.query(preparar(sql, esquema), p);
+            for (const d of datos) {
+              let est = (await x('SELECT id FROM {S}.estudiantes WHERE usuario_id=? AND cedula=?', [U, d.cedula])).rows[0];
+              if (!est) {
+                const { apellidos, nombre } = separarNombre(d.nombre);
+                est = (await x('INSERT INTO {S}.estudiantes (usuario_id, cedula, apellidos, nombre) VALUES (?,?,?,?) RETURNING id', [U, d.cedula, apellidos, nombre])).rows[0];
+                nuevos++;
+              }
+              const m = await x('INSERT INTO {S}.matriculas (estudiante_id, seccion_id) VALUES (?,?) ON CONFLICT DO NOTHING', [est.id, sec.id]);
+              matriculados += m.rowCount ?? 0;
+              if (conNotas) for (const [k, s] of SEA.entries()) {
+                if (d.vals[k] === null) continue;
+                await x(`INSERT INTO {S}.notas_importadas (estudiante_id, seccion_id, periodo_id, clave, valor) VALUES (?,?,?,?,?)
+                  ON CONFLICT (estudiante_id, seccion_id, periodo_id, clave) DO UPDATE SET valor=EXCLUDED.valor, creado=now()`, [est.id, sec.id, per.id, s.clave, d.vals[k]]);
+                notas++;
+              }
+            }
+          });
+          msg = `Archivo importado: ${datos.length} estudiantes (${nuevos} nuevos, ${matriculados} agregados a ${sec.nivel}-${sec.nombre})` +
+            (conNotas ? `, ${notas} calificaciones de ${per.nombre}.` : '. No se importaron calificaciones.');
+        }
+      }
+    }
+  }
+}
+const r = sec && per ? await calcularPeriodo(U, sec.id, per.id) : null;
+const nImp = sec && per ? Number((await one<any>('SELECT COUNT(*) AS n FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=?', [sec.id, per.id])).n) : 0;
+const sumaPct = comps.reduce((s, c) => s + Number(c.porcentaje), 0);
+const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
+---
+<Base titulo="SEA">
+  <h1>Importar y exportar SEA</h1>
+  <p class="sub">Con la plantilla del SEA: Id, Nombre, Trabajo cotidiano, Tareas, Prueba, Proyecto y Asistencia. Los valores son los puntos obtenidos de cada porcentaje.</p>
+  <Selector seccionId={seccionId} periodoId={per?.id} conPeriodo />
+  {msg && <div class="msg ok">{msg}</div>}
+  {errores.length > 0 && <div class="msg mal"><b>No se importó nada.</b> Corrija el archivo e inténtelo de nuevo:<ul style="margin:6px 0 0;padding-left:20px">{errores.slice(0, 15).map((e) => <li>{e}</li>)}</ul>{errores.length > 15 && <p style="margin:6px 0 0">… y {errores.length - 15} más.</p>}</div>}
+  {sec && per && r && (
+    <>
+      {sumaPct !== 100 && <div class="msg aviso">Los componentes del nivel {sec.nivel} suman {sumaPct}%. Ajústelos en <a href={`/componentes?nivel=${sec.nivel}`}>Componentes</a> antes de importar o exportar.</div>}
+      <div class="grid-sea">
+        <div class="tarjeta">
+          <h2 style="margin-top:0">Exportar al SEA</h2>
+          <p class="muted">Descarga {per.nombre} de {sec.nivel}-{sec.nombre} con las columnas de la plantilla, listo para subir al SEA.</p>
+          <form method="get" class="fila">
+            <input type="hidden" name="seccion" value={sec.id} /><input type="hidden" name="periodo" value={per.id} /><input type="hidden" name="exportar" value="1" />
+            <label>Valores<select name="decimales"><option value="0">Enteros (como ReDDi)</option><option value="2">Con 2 decimales</option></select></label>
+            <button>Exportar CSV</button>
+          </form>
+        </div>
+        <form method="post" enctype="multipart/form-data" class="tarjeta" action={`/sea?${qs}`}>
+          <h2 style="margin-top:0">Importar</h2>
+          <p class="muted">Desde ReDDi o desde el SEA. Se revisa que las columnas sean exactamente las de la plantilla; si algo no calza, no se importa nada.</p>
+          <input type="hidden" name="accion" value="importar" />
+          <div class="fila">
+            <label style="flex:2">Archivo .csv<input type="file" name="archivo" accept=".csv,text/csv" required /></label>
+            <label style="flex:1">Qué importar<select name="modo"><option value="notas">Estudiantes y calificaciones de {per.nombre}</option><option value="estudiantes">Solo estudiantes</option></select></label>
+            <button>Importar</button>
+          </div>
+        </form>
+      </div>
+      <h2>{per.nombre} · {sec.nivel}-{sec.nombre} <span class="muted" style="font-weight:400">({r.filas.length} estudiantes)</span></h2>
+      {nImp > 0 && (
+        <div class="msg aviso fila" style="justify-content:space-between;align-items:center">
+          <span>Hay calificaciones importadas en este periodo (marcadas con <b>•</b>). Reemplazan lo calculado en Nexo para ese componente.</span>
+          <form method="post" action={`/sea?${qs}`} onsubmit="return confirm('¿Quitar las calificaciones importadas de este periodo?')"><input type="hidden" name="accion" value="quitar" /><button class="mini peligro">Quitar importadas</button></form>
+        </div>
+      )}
+      <div class="tabla"><table>
+        <tr><th>Id</th><th>Nombre</th>{SEA.map((s) => <th class="n">{s.nombre}<br /><span style="font-weight:400">{Number(compDe(s.clave)?.porcentaje ?? 0)}%</span></th>)}<th class="n">Total</th></tr>
+        {r.filas.map((f) => (
+          <tr><td>{f.est.cedula}</td><td class="nom">{f.est.apellidos} {f.est.nombre}</td>
+            {SEA.map((s) => { const c = r.comps.find((x) => x.clave === s.clave); return <td class="n">{c ? fmt(f.porComp[c.id]) : '—'}{c && f.importado[c.id] && <b title="Importado" style="color:var(--teal)"> •</b>}</td>; })}
+            <td class="n"><b>{fmt(f.total)}</b></td></tr>
+        ))}
+        {r.filas.length === 0 && <tr><td colspan="8" class="muted">Sin estudiantes. Importe el archivo para agregarlos.</td></tr>}
+      </table></div>
+    </>
+  )}
+  <style>.grid-sea { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 14px; } .grid-sea .tarjeta { margin: 0; }</style>
+</Base>

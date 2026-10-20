@@ -1,8 +1,9 @@
 import { q, one, getAjustes, getEscala } from './db';
 import { r2 } from './util';
+import { asegurarComponentes } from './sea';
 
 export type Est = { id: number; cedula: string; apellidos: string; nombre: string; subgrupo: string; encargado: string; telefono: string; fecha_nac: string | null };
-export type Comp = { id: number; nombre: string; porcentaje: number; tipo: 'puntos' | 'indicadores' | 'asistencia' };
+export type Comp = { id: number; nombre: string; porcentaje: number; tipo: 'puntos' | 'indicadores' | 'asistencia'; clave: string | null };
 
 // {S} = esquema del colegio activo. Todas las funciones reciben el id del docente (uid):
 // una sección ajena no existe para él.
@@ -71,8 +72,12 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
   if (!per) return null;
   const aj = await getAjustes(uid);
   const notaApb = Number(sec.nota_aprobatoria ?? aj.nota_aprobatoria);
+  await asegurarComponentes(uid, sec.nivel);
   const comps = await q<Comp>(
-    'SELECT id, nombre, porcentaje, tipo FROM {S}.componentes WHERE usuario_id = ? AND nivel = ? ORDER BY orden, id', [uid, sec.nivel]);
+    'SELECT id, nombre, porcentaje, tipo, clave FROM {S}.componentes WHERE usuario_id = ? AND nivel = ? ORDER BY orden, id', [uid, sec.nivel]);
+  // Valores importados (ReDDi / SEA): reemplazan lo calculado para ese componente
+  const imp = await q<any>('SELECT estudiante_id, clave, valor FROM {S}.notas_importadas WHERE seccion_id = ? AND periodo_id = ?', [seccionId, periodoId]);
+  const impMap = new Map(imp.map((x) => [`${x.estudiante_id}:${x.clave}`, Number(x.valor)]));
   const ests = await estudiantesDe(seccionId);
   const evals = await q<any>('SELECT * FROM {S}.evaluaciones WHERE seccion_id = ? AND periodo_id = ? ORDER BY fecha, id', [seccionId, periodoId]);
   const ids = evals.map((e) => e.id);
@@ -94,10 +99,17 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
     const porComp: Record<number, number> = {};
     const detalle: Record<number, number> = {};
     const noEntrego: number[] = [];
+    const importado: Record<number, boolean> = {};
+    const calificada: Record<number, boolean> = {};
+    const nota100: Record<number, number> = {}; // nota de cada evaluación en escala de 100, sin redondear
     let pctAus = 0;
     for (const c of comps) {
       let v = 0;
-      if (c.tipo === 'asistencia') {
+      const vi = c.clave ? impMap.get(`${e.id}:${c.clave}`) : undefined;
+      if (vi !== undefined) {
+        v = vi;
+        importado[c.id] = true;
+      } else if (c.tipo === 'asistencia') {
         const a = aus.get(e.id);
         pctAus = lecciones > 0 && a ? (a.equivalentes / lecciones) * 100 : 0;
         v = (porcentajeAsistencia(pctAus, esc) / 100) * c.porcentaje;
@@ -108,12 +120,17 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
           if (c.tipo === 'indicadores') {
             const niveles = valMap.get(`${ev.id}:${e.id}`) ?? [];
             p = pctIndicadores(niveles, ev.porcentaje, aj.ne_cuenta_cero).pct;
+            calificada[ev.id] = niveles.some((x) => x !== null && x !== undefined) || !!n?.no_entrego;
             if (niveles.some((x) => x === 0) || n?.no_entrego) noEntrego.push(ev.id);
           } else {
             if (n?.no_entrego) noEntrego.push(ev.id);
+            calificada[ev.id] = !!n && (n.puntos !== null || !!n.no_entrego);
             p = ev.puntos_total > 0 && n && n.puntos !== null && !n.no_entrego ? (Number(n.puntos) / ev.puntos_total) * ev.porcentaje : 0;
           }
           detalle[ev.id] = r2(p);
+          nota100[ev.id] = c.tipo === 'indicadores'
+            ? (ev.porcentaje > 0 ? (p / ev.porcentaje) * 100 : 0)
+            : (ev.puntos_total > 0 && n && n.puntos !== null && !n.no_entrego ? (Number(n.puntos) / ev.puntos_total) * 100 : 0);
           v += p;
         }
         v = Math.min(v, c.porcentaje);
@@ -121,7 +138,7 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
       porComp[c.id] = r2(v);
     }
     const total = r2(Object.values(porComp).reduce((s, n) => s + n, 0));
-    return { est: e, porComp, detalle, noEntrego, total, pctAus: r2(pctAus), condicion: total >= notaApb ? 'Aprobado' : 'Aplazado' };
+    return { est: e, porComp, detalle, noEntrego, importado, calificada, nota100, total, pctAus: r2(pctAus), condicion: total >= notaApb ? 'Aprobado' : 'Aplazado' };
   });
   return { sec, per, comps, evals, filas, notaApb, lecciones };
 }

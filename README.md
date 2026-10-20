@@ -86,11 +86,20 @@ DB_PASSWORD=otra-clave
   (**verifique que coincida con el Reglamento de Evaluación vigente**).
 - Nota anual: suma de `nota del periodo × ponderado`; bajo la mínima → *Aplazado*; convocatorias I y II.
 
+## SEA
+
+- Los componentes son fijos y coinciden con las columnas de la plantilla del SEA: Trabajo cotidiano, Tareas,
+  Prueba, Proyecto y Asistencia. Cada docente ajusta solo el porcentaje (y si se califica por puntos o indicadores).
+- *Importar / exportar SEA*: por sección y periodo. Exporta el CSV con las columnas de la plantilla
+  (`"Id";"Nombre";…`, separado por punto y coma, UTF-8). Importa el mismo formato (desde ReDDi o el SEA):
+  verifica que las columnas sean exactamente esas, crea los estudiantes que falten, los matricula y guarda las
+  calificaciones como *importadas* (reemplazan lo calculado en ese componente; se pueden quitar).
+
 ## Informes
 
 Lista de estudiantes · Resumen de asistencia · Detalle de asistencia · Alerta de ausentismo ·
 Calificaciones del grupo · Calificaciones por estudiante · Indicadores calificados · Informe anual ·
-Acta de aplazados y convocatorias. Con encabezado del MEP, para imprimir/guardar en PDF o Excel (CSV).
+Acta de aplazados y convocatorias · Eximidos del II periodo (I periodo > 90 y todas las notas del II > 90). Con encabezado del MEP, para imprimir/guardar en PDF o Excel (CSV).
 
 ## Comunicados por WhatsApp
 

@@ -43,7 +43,7 @@ const aprob = r ? r.filas.filter((f) => f.condicion === 'Aprobado').length : 0;
           <tr><td>{i + 1}</td><td class="nom">{f.est.apellidos} {f.est.nombre}</td>
             {r.comps.map((c) => detalle && c.tipo !== 'asistencia'
               ? r.evals.filter((e) => e.componente_id === c.id).map((e) => <td class="n muted">{fmt(f.detalle[e.id])}</td>).concat(<td class="n"><b>{fmt(f.porComp[c.id])}</b></td>)
-              : <td class="n">{fmt(f.porComp[c.id])}{c.tipo === 'asistencia' && <span class="muted"> ({fmt(f.pctAus)}% aus.)</span>}</td>)}
+              : <td class="n">{fmt(f.porComp[c.id])}{f.importado[c.id] ? <b title="Importado (ReDDi / SEA)" style="color:var(--teal)"> •</b> : c.tipo === 'asistencia' && <span class="muted"> ({fmt(f.pctAus)}% aus.)</span>}</td>)}
             <td class="n"><b>{fmt(f.total)}</b></td>
             <td><span class={`chip ${f.condicion === 'Aprobado' ? 'ok' : 'mal'}`}>{f.condicion}</span></td></tr>
         ))}

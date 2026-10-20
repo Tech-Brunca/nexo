@@ -1,4 +1,5 @@
 ---
+import { asegurarComponentes } from '../../lib/sea';
 import Base from '../../layouts/Base.astro';
 import { exec, q, getAjustes } from '../../lib/db';
 import { num, numOrNull, str } from '../../lib/util';
@@ -15,6 +16,7 @@ if (Astro.request.method === 'POST') {
       const propia = asg && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
       await exec('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?)',
         [user.id, str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), cfg.curso_lectivo]);
+      await asegurarComponentes(user.id, str(f.get('nivel')));
     }
   } else if (accion === 'borrar') {
     await exec('DELETE FROM {S}.secciones WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);

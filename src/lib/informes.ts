@@ -1,6 +1,6 @@
 import { q, one, getAjustes, getEscala } from './db';
 import { seccion, estudiantesDe, ausencias, calcularPeriodo, calcularAnual, porcentajeAsistencia, periodosDe } from './calc';
-import { r2, TIPOS_AUSENCIA, hoy } from './util';
+import { r2, fmt, TIPOS_AUSENCIA, hoy } from './util';
 
 export type Celda = string | number | null;
 export type Bloque = { titulo?: string; meta?: [string, string][]; columnas: string[]; num?: number[]; filas: Celda[][]; pie?: [string, string][]; nuevaPagina?: boolean };
@@ -15,6 +15,7 @@ export const CATALOGO: { tipo: string; titulo: string; descripcion: string; pide
   { tipo: 'calificaciones-individual', titulo: 'Calificaciones por estudiante', descripcion: 'Una hoja por estudiante con sus componentes (para entregar al hogar).', pide: ['seccion', 'estudiante', 'periodo'] },
   { tipo: 'indicadores', titulo: 'Indicadores calificados', descripcion: 'Nivel obtenido en cada indicador de una evaluación, por estudiante.', pide: ['evaluacion'] },
   { tipo: 'anual', titulo: 'Informe anual de calificaciones', descripcion: 'Nota y ponderado de cada periodo, promedio y condición.', pide: ['seccion', 'subgrupo'] },
+  { tipo: 'eximidos', titulo: 'Eximidos del II periodo', descripcion: 'Quienes no hacen la segunda prueba: I periodo mayor a 90 y todas las notas del II periodo mayores a 90.', pide: ['seccion', 'subgrupo', 'umbral'] },
   { tipo: 'convocatorias', titulo: 'Acta de aplazados y convocatorias', descripcion: 'Estudiantes aplazados, convocatorias I y II y condición final; por sección o por nivel.', pide: ['seccion_o_nivel'] },
 ];
 
@@ -31,6 +32,7 @@ async function rangoFechas(uid: number, p: P) {
   const per = p.get('periodo') ? await one<any>('SELECT * FROM {S}.periodos WHERE id=? AND usuario_id=?', [Number(p.get('periodo')), uid]) : null;
   return { per, desde: per?.fecha_ini ?? null, hasta: per?.fecha_fin ?? null, etiqueta: per?.nombre ?? 'Todo el curso' };
 }
+const r2r = (n: number) => Math.round(n * 100) / 100;
 const filtroSub = (ests: any[], p: P) => (p.get('subgrupo') ? ests.filter((e) => e.subgrupo === p.get('subgrupo')) : ests);
 
 export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | string> {
@@ -154,6 +156,52 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
       bloques: [{ columnas: ['#', 'Estudiante', ...r.periodos.flatMap((x: any) => [`${x.nombre} nota`, `Ponderado (${x.ponderado}%)`]), 'Promedio', 'Condición'],
         num: r.periodos.flatMap((_: any, i: number) => [2 + 2 * i, 3 + 2 * i]).concat([2 + 2 * r.periodos.length]),
         filas: filas.map((f, i) => [i + 1, `${f.est.apellidos} ${f.est.nombre}`, ...f.porPer.flatMap((n: number, k: number) => [n, f.ponderados[k]]), f.anual, f.condicion]) }] };
+  }
+
+  if (tipo === 'eximidos') {
+    if (!sec) return 'Elija una sección.';
+    const pers = await periodosDe(c.uid);
+    const p1 = pers.find((x) => x.numero === 1), p2 = pers.find((x) => x.numero === 2);
+    if (!p1 || !p2) return 'Se necesitan el I y el II periodo (configúrelos en Periodos).';
+    const umbral = Number(p.get('umbral') || 90);
+    const r1 = (await calcularPeriodo(c.uid, sec.id, p1.id))!, r2 = (await calcularPeriodo(c.uid, sec.id, p2.id))!;
+    // Solo cuentan las evaluaciones del II periodo ya aplicadas (con al menos una nota en el grupo):
+    // así la segunda prueba, que aún no se hace, no deja a nadie por fuera.
+    const aplicadas = r2.evals.filter((ev) => r2.filas.some((f) => f.calificada[ev.id]));
+    const n100 = (v: number, de: number) => (de > 0 ? r2r((v / de) * 100) : 0);
+    const permitidos = new Set(filtroSub(r2.filas.map((f) => ({ ...f.est, fila: f })), p).map((e: any) => e.id));
+    const filas = r2.filas.filter((f) => permitidos.has(f.est.id)).map((f) => {
+      const motivos: string[] = [];
+      const t1 = r1.filas.find((x) => x.est.id === f.est.id)?.total ?? 0;
+      if (!(t1 > umbral)) motivos.push(`${p1.nombre}: ${fmt(t1)}`);
+      let minima: number | null = null, revisadas = 0;
+      const anotar = (nombre: string, nota: number) => {
+        revisadas++;
+        minima = minima === null ? nota : Math.min(minima, nota);
+        if (!(nota > umbral)) motivos.push(`${nombre}: ${fmt(nota)}`);
+      };
+      for (const comp of r2.comps) {
+        if (f.importado[comp.id] || comp.tipo === 'asistencia') {
+          if (comp.tipo === 'asistencia' && !f.importado[comp.id] && r2.lecciones === 0) continue;
+          anotar(comp.nombre, n100(f.porComp[comp.id], comp.porcentaje));
+          continue;
+        }
+        for (const ev of aplicadas.filter((x) => x.componente_id === comp.id)) {
+          if (!f.calificada[ev.id]) { motivos.push(`${ev.nombre}: sin nota`); continue; }
+          anotar(`${ev.nombre} (${comp.nombre})`, r2r(f.nota100[ev.id] ?? 0));
+        }
+      }
+      const sinNotas = revisadas === 0 && !motivos.some((m) => m.includes('sin nota'));
+      const exime = motivos.length === 0 && !sinNotas;
+      return { f, t1, minima, exime, obs: sinNotas ? `Aún no hay notas del ${p2.nombre}` : motivos.join('; ') };
+    });
+    const lista = p.get('solo') ? filas.filter((x) => x.exime) : filas;
+    const n = filas.filter((x) => x.exime).length;
+    return { titulo: 'Estudiantes eximidos', archivo: `eximidos-${sec.nivel}-${sec.nombre}`, firma: true,
+      meta: [...metaSeccion(sec, c.docente, subMeta), ['Requisito', `${p1.nombre} > ${umbral} y todas las notas del ${p2.nombre} > ${umbral}`], ['Eximidos', `${n} de ${filas.length}`]],
+      nota: `Se revisan las evaluaciones del ${p2.nombre} ya aplicadas (${aplicadas.length}) y la asistencia, cada una en escala de 100. Del ${p1.nombre} cuenta solo la nota final.`,
+      bloques: [{ columnas: ['#', 'Estudiante', 'Cédula', `Nota ${p1.nombre}`, `Nota más baja ${p2.nombre}`, 'Condición', 'No cumple en'], num: [3, 4],
+        filas: lista.map((x, i) => [i + 1, `${x.f.est.apellidos} ${x.f.est.nombre}`, x.f.est.cedula, x.t1, x.minima, x.exime ? 'Eximido' : 'No eximido', x.exime ? '' : x.obs]) }] };
   }
 
   if (tipo === 'convocatorias') {

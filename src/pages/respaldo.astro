@@ -19,6 +19,7 @@ const TABLAS: { t: string; sql: string; fk: Record<string, string>; auto?: boole
   { t: 'notas', sql: 'SELECT n.* FROM {S}.notas n JOIN {S}.evaluaciones e ON e.id=n.evaluacion_id JOIN {S}.secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', estudiante_id: 'estudiantes' } },
   { t: 'valoraciones', sql: 'SELECT v.* FROM {S}.valoraciones v JOIN {S}.evaluaciones e ON e.id=v.evaluacion_id JOIN {S}.secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', estudiante_id: 'estudiantes', indicador_id: 'indicadores' } },
   { t: 'asistencia', sql: 'SELECT a.* FROM {S}.asistencia a JOIN {S}.secciones s ON s.id=a.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true },
+  { t: 'notas_importadas', sql: 'SELECT n.* FROM {S}.notas_importadas n JOIN {S}.secciones s ON s.id=n.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones', periodo_id: 'periodos' } },
   { t: 'convocatorias', sql: 'SELECT c.* FROM {S}.convocatorias c JOIN {S}.secciones s ON s.id=c.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' } },
 ];
 const GENERALES = {

@@ -134,3 +134,20 @@ CREATE TABLE IF NOT EXISTS __ESQUEMA__.comunicados (
   creado timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS comunicados_usuario ON __ESQUEMA__.comunicados (usuario_id, creado);
+
+-- v3.1: componentes fijos del SEA (clave) y calificaciones importadas
+ALTER TABLE __ESQUEMA__.componentes ADD COLUMN IF NOT EXISTS clave text
+  CHECK (clave IN ('tc', 'tareas', 'prueba', 'proyecto', 'asistencia'));
+CREATE UNIQUE INDEX IF NOT EXISTS componentes_clave ON __ESQUEMA__.componentes (usuario_id, nivel, clave) WHERE clave IS NOT NULL;
+
+-- Valor obtenido (en puntos del porcentaje) que reemplaza lo calculado para un componente,
+-- p. ej. al traer el I periodo desde ReDDi o desde el SEA.
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.notas_importadas (
+  estudiante_id int NOT NULL REFERENCES __ESQUEMA__.estudiantes(id) ON DELETE CASCADE,
+  seccion_id int NOT NULL REFERENCES __ESQUEMA__.secciones(id) ON DELETE CASCADE,
+  periodo_id int NOT NULL REFERENCES __ESQUEMA__.periodos(id) ON DELETE CASCADE,
+  clave text NOT NULL,
+  valor numeric(6,2) NOT NULL,
+  creado timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (estudiante_id, seccion_id, periodo_id, clave)
+);

@@ -1,50 +1,68 @@
 ---
 import Base from '../layouts/Base.astro';
-import { exec, q } from '../lib/db';
+import { exec, q, one, transaccion, preparar, esquemaActual } from '../lib/db';
 import { num, str } from '../lib/util';
-const EJEMPLO: [string, number, string][] = [
-  ['Trabajo cotidiano', 40, 'indicadores'], ['Tareas', 10, 'puntos'], ['Pruebas', 35, 'puntos'],
-  ['Proyecto', 10, 'puntos'], ['Asistencia', 5, 'asistencia'],
-];
-let msg = '';
+import { SEA, asegurarComponentes } from '../lib/sea';
+let msg = '', error = '';
 const { user, inst } = Astro.locals;
-const U = user.id, I = inst!.id;
+const U = user.id;
 const niveles = (await q<any>('SELECT DISTINCT nivel, length(nivel) FROM {S}.secciones WHERE usuario_id=? ORDER BY length(nivel), nivel', [U])).map((r) => r.nivel);
 let nivel = Astro.url.searchParams.get('nivel') ?? niveles[0] ?? '';
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   nivel = str(f.get('nivel')) || nivel;
   const accion = str(f.get('accion'));
-  if (accion === 'agregar' && str(f.get('nombre'))) {
-    await exec('INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?)',
-      [U, nivel, str(f.get('nombre')), num(f.get('porcentaje')), str(f.get('tipo')) || 'puntos', num(f.get('orden'))]);
-  } else if (accion === 'guardar') {
+  if (accion === 'guardar') {
     const ids = f.getAll('id');
-    for (let i = 0; i < ids.length; i++)
-      await exec('UPDATE {S}.componentes SET nombre=?, porcentaje=?, tipo=?, orden=? WHERE id=? AND usuario_id=?',
-        [str(f.getAll('nombre')[i]), num(f.getAll('porcentaje')[i]), str(f.getAll('tipo')[i]), num(f.getAll('orden')[i]), num(ids[i]), U]);
-    msg = 'Componentes guardados.';
-  } else if (accion === 'borrar') {
-    await exec('DELETE FROM {S}.componentes WHERE id=? AND usuario_id=?', [num(f.get('id')), U]);
-  } else if (accion === 'ejemplo') {
-    for (const [i, [n, p, t]] of EJEMPLO.entries()) await exec('INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden) VALUES (?,?,?,?,?,?)', [U, nivel, n, p, t, i + 1]);
-    msg = 'Se cargó un ejemplo. Ajuste los porcentajes según el programa de su asignatura.';
+    for (let i = 0; i < ids.length; i++) {
+      const pct = Number(str(f.getAll('porcentaje')[i]).replace(',', '.'));
+      if (!(pct >= 0 && pct <= 100)) { error = 'Cada porcentaje debe estar entre 0 y 100.'; break; }
+    }
+    if (!error) {
+      for (let i = 0; i < ids.length; i++) {
+        const tipo = str(f.getAll('tipo')[i]);
+        // El nombre no se toca: es la columna del SEA. Asistencia siempre se calcula sola.
+        await exec(`UPDATE {S}.componentes SET porcentaje=?, tipo=CASE WHEN clave='asistencia' THEN 'asistencia' WHEN ? IN ('puntos','indicadores') THEN ? ELSE tipo END
+          WHERE id=? AND usuario_id=?`, [Number(str(f.getAll('porcentaje')[i]).replace(',', '.')), tipo, tipo, num(ids[i]), U]);
+      }
+      msg = 'Porcentajes guardados.';
+    }
   } else if (accion === 'copiar') {
     const destino = str(f.get('destino'));
-    if (destino) {
-      await exec('INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden) SELECT usuario_id, ?, nombre, porcentaje, tipo, orden FROM {S}.componentes WHERE usuario_id=? AND nivel=?', [destino, U, nivel]);
-      msg = `Componentes copiados al nivel ${destino}.`;
+    if (destino && niveles.includes(destino)) {
+      await asegurarComponentes(U, destino);
+      await exec(`UPDATE {S}.componentes d SET porcentaje=o.porcentaje, tipo=o.tipo FROM {S}.componentes o
+        WHERE o.usuario_id=? AND o.nivel=? AND d.usuario_id=o.usuario_id AND d.nivel=? AND d.clave=o.clave`, [U, nivel, destino]);
+      msg = `Porcentajes copiados al nivel ${destino}.`;
     }
+  } else if (accion === 'unir') {
+    // Pasa las evaluaciones de un componente anterior (sin columna SEA) a uno de los fijos y lo elimina
+    const viejo = await one<any>('SELECT * FROM {S}.componentes WHERE id=? AND usuario_id=? AND clave IS NULL', [num(f.get('id')), U]);
+    const destino = await one<any>('SELECT * FROM {S}.componentes WHERE id=? AND usuario_id=? AND nivel=? AND clave IS NOT NULL', [num(f.get('destino')), U, viejo?.nivel ?? '']);
+    if (viejo && destino) {
+      const esquema = esquemaActual();
+      await transaccion(async (c) => {
+        await c.query(preparar('UPDATE {S}.evaluaciones SET componente_id=? WHERE componente_id=?', esquema), [destino.id, viejo.id]);
+        await c.query(preparar('DELETE FROM {S}.componentes WHERE id=?', esquema), [viejo.id]);
+      });
+      msg = `Las evaluaciones de «${viejo.nombre}» ahora están en ${destino.nombre}.`;
+    }
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM {S}.componentes WHERE id=? AND usuario_id=? AND clave IS NULL', [num(f.get('id')), U]);
   }
 }
-const comps = nivel ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? ORDER BY orden, id', [U, nivel]) : [];
-const suma = comps.reduce((s, c) => s + Number(c.porcentaje), 0);
-const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)', asistencia: 'Asistencia (automático)' };
+if (nivel) await asegurarComponentes(U, nivel);
+const comps = nivel ? await q<any>(`SELECT c.*, (SELECT COUNT(*) FROM {S}.evaluaciones e WHERE e.componente_id=c.id) AS evals
+  FROM {S}.componentes c WHERE usuario_id=? AND nivel=? ORDER BY clave IS NULL, orden, id`, [U, nivel]) : [];
+const fijos = comps.filter((c) => c.clave);
+const viejos = comps.filter((c) => !c.clave);
+const suma = fijos.reduce((s, c) => s + Number(c.porcentaje), 0);
+const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)' };
 ---
 <Base titulo="Componentes">
   <h1>Componentes de evaluación</h1>
-  <p class="sub">Valor de cada componente por nivel en {inst!.nombre} (académico y técnico pueden diferir entre colegios). Las evaluaciones se reparten ese porcentaje.</p>
-  {msg && <div class="msg ok">{msg}</div>}
+  <p class="sub">Son las columnas de la plantilla del SEA, por eso el nombre es fijo. Ajuste el porcentaje de cada uno para cada nivel en {inst!.nombre}; las evaluaciones se reparten ese porcentaje.</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
   <form method="get" class="tarjeta fila">
     <label>Nivel
       <select name="nivel" onchange="this.form.submit()">
@@ -55,37 +73,42 @@ const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)', asis
   </form>
   {nivel && (
     <>
-      {comps.length > 0 && suma !== 100 && <div class="msg aviso">Los componentes del nivel {nivel} suman {suma}%. Deberían sumar 100%.</div>}
+      {suma !== 100 && <div class="msg aviso">Los componentes del nivel {nivel} suman {suma}%. Deben sumar 100%.</div>}
       <form method="post" class="tabla">
         <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="nivel" value={nivel} />
         <table>
-          <tr><th>Orden</th><th>Componente</th><th class="n">Porcentaje</th><th>Se califica</th><th></th></tr>
-          {comps.map((c) => (
-            <tr><td><input type="hidden" name="id" value={c.id} /><input name="orden" value={c.orden} style="width:60px" /></td>
-              <td><input name="nombre" value={c.nombre} /></td><td><input name="porcentaje" value={c.porcentaje} style="width:80px" /></td>
-              <td><select name="tipo">{Object.entries(TIPOS).map(([k, v]) => <option value={k} selected={c.tipo === k}>{v}</option>)}</select></td>
-              <td><button class="mini peligro" form={`b${c.id}`}>Eliminar</button></td></tr>
+          <tr><th>Componente (columna del SEA)</th><th class="n">Porcentaje</th><th>Se califica</th><th class="n">Evaluaciones</th></tr>
+          {fijos.map((c) => (
+            <tr><td><input type="hidden" name="id" value={c.id} /><b>{c.nombre}</b></td>
+              <td class="n"><input name="porcentaje" value={Number(c.porcentaje)} inputmode="decimal" style="width:80px;text-align:right" /></td>
+              <td>{c.clave === 'asistencia'
+                ? <><input type="hidden" name="tipo" value="asistencia" /><span class="muted">Automático, según la asistencia</span></>
+                : <select name="tipo">{Object.entries(TIPOS).map(([k, v]) => <option value={k} selected={c.tipo === k}>{v}</option>)}</select>}</td>
+              <td class="n">{c.evals}</td></tr>
           ))}
-          <tr><th colspan="2">Total</th><th class="n">{suma}%</th><th colspan="2"></th></tr>
+          <tr><th>Total</th><th class="n">{suma}%</th><th colspan="2"></th></tr>
         </table>
-        {comps.length > 0 && <p style="padding:0 10px"><button>Guardar cambios</button></p>}
+        <p style="padding:0 10px"><button>Guardar porcentajes</button></p>
       </form>
-      {comps.map((c) => <form id={`b${c.id}`} method="post" onsubmit="return confirm('¿Eliminar componente y sus evaluaciones?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="id" value={c.id} /></form>)}
-      <form method="post" class="tarjeta fila" style="margin-top:16px">
-        <input type="hidden" name="accion" value="agregar" /><input type="hidden" name="nivel" value={nivel} />
-        <label>Orden<input name="orden" value={comps.length + 1} style="width:60px" /></label>
-        <label style="flex:1">Nuevo componente<input name="nombre" required /></label>
-        <label>Porcentaje<input name="porcentaje" style="width:80px" required /></label>
-        <label>Se califica<select name="tipo">{Object.entries(TIPOS).map(([k, v]) => <option value={k}>{v}</option>)}</select></label>
-        <button>Agregar</button>
-      </form>
-      <div class="fila">
-        {comps.length === 0 && <form method="post"><input type="hidden" name="accion" value="ejemplo" /><input type="hidden" name="nivel" value={nivel} /><button class="sec">Cargar ejemplo para empezar</button></form>}
-        {comps.length > 0 && niveles.length > 1 && (
-          <form method="post" class="fila"><input type="hidden" name="accion" value="copiar" /><input type="hidden" name="nivel" value={nivel} />
-            <label>Copiar a nivel<select name="destino">{niveles.filter((n) => n !== nivel).map((n) => <option>{n}</option>)}</select></label><button class="sec">Copiar</button></form>
-        )}
-      </div>
+      {niveles.length > 1 && (
+        <form method="post" class="fila" style="margin-top:12px"><input type="hidden" name="accion" value="copiar" /><input type="hidden" name="nivel" value={nivel} />
+          <label>Copiar estos porcentajes al nivel<select name="destino">{niveles.filter((n) => n !== nivel).map((n) => <option>{n}</option>)}</select></label><button class="sec">Copiar</button></form>
+      )}
+      {viejos.length > 0 && (
+        <div class="tarjeta" style="margin-top:20px">
+          <h2 style="margin-top:0">Componentes anteriores</h2>
+          <p class="muted">Se crearon antes de usar la plantilla del SEA y no se exportan. Pase sus evaluaciones a uno de los componentes fijos, o elimínelos si están vacíos.</p>
+          <div class="tabla"><table>
+            <tr><th>Componente</th><th class="n">Evaluaciones</th><th>Pasar evaluaciones a</th><th></th></tr>
+            {viejos.map((c) => (
+              <tr><td>{c.nombre}</td><td class="n">{c.evals}</td>
+                <td><form method="post" class="fila"><input type="hidden" name="accion" value="unir" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="id" value={c.id} />
+                  <select name="destino">{fijos.filter((x) => x.clave !== 'asistencia').map((x) => <option value={x.id}>{x.nombre}</option>)}</select><button class="mini sec">Pasar</button></form></td>
+                <td><form method="post" onsubmit="return confirm('¿Eliminar este componente y sus evaluaciones?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="id" value={c.id} /><button class="mini peligro">Eliminar</button></form></td></tr>
+            ))}
+          </table></div>
+        </div>
+      )}
     </>
   )}
 </Base>
