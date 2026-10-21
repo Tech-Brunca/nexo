@@ -1,8 +1,8 @@
 ---
 import Base from '../../layouts/Base.astro';
 import { exec, q, one } from '../../lib/db';
-import { estudiantesDe, seccion } from '../../lib/calc';
-import { num, numOrNull, str, parseCsv } from '../../lib/util';
+import { estudiantesDe, seccion, seccionDuplicada, leccionesEfectivas } from '../../lib/calc';
+import { num, numOrNull, str, parseCsv, etiquetaSeccion, validarSubgrupo } from '../../lib/util';
 import { leerExcel, CEDULA_EJEMPLO } from '../../lib/excel';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
@@ -52,13 +52,14 @@ if (Astro.request.method === 'POST') {
       if (idx.cedula < 0 || (idx.apellidos < 0 && idx.apellido1 < 0) || idx.nombre < 0) error = 'El archivo debe tener columnas Cédula, Primer apellido, Segundo apellido y Nombre. Descargue la plantilla.';
       else {
         const clave = (v: string) => v.replace(/\s/g, '').split(/[-–]/).map((p) => p.replace(/^0+(?=.)/, '').toUpperCase()).join('-');
-        const esta = clave(`${sec.nivel}-${sec.nombre}`);
+        // Un medio grupo (7-1A) recibe las filas de su sección completa (7-1)
+        const estas = [clave(etiquetaSeccion({ ...sec, subgrupo: null })), clave(etiquetaSeccion(sec))];
         let n = 0, malas = 0, otras = 0;
         for (const r of filas.slice(h + 1)) {
           const d: any = {}; for (const [k, i] of Object.entries(idx)) d[k] = i >= 0 ? r[i] ?? '' : '';
           if (idx.apellidos < 0) d.apellidos = `${d.apellido1.trim()} ${d.apellido2.trim()}`.trim();
           if (d.cedula.replace(/[-–\s]/g, '') === CEDULA_EJEMPLO) continue; // fila de ejemplo de la plantilla
-          if (d.seccion.trim() && clave(d.seccion) !== esta) { otras++; continue; }
+          if (d.seccion.trim() && !estas.includes(clave(d.seccion))) { otras++; continue; }
           try { if (await guardarEstudiante(d, d.subgrupo)) n++; else malas++; } catch { malas++; }
         }
         msg = `${n} estudiantes importados o actualizados.` + (malas ? ` ${malas} fila(s) omitidas por datos incompletos.` : '')
@@ -70,44 +71,70 @@ if (Astro.request.method === 'POST') {
   } else if (accion === 'subgrupo') {
     await exec('UPDATE {S}.matriculas SET subgrupo=? WHERE estudiante_id=? AND seccion_id=?', [str(f.get('subgrupo')).toUpperCase().slice(0, 5), num(f.get('estudiante_id')), id]);
   } else if (accion === 'datos') {
+    const nivel = str(f.get('nivel')), nombre = str(f.get('nombre'));
+    const sg = validarSubgrupo(nivel, str(f.get('subgrupo')));
     const asg = numOrNull(f.get('asignatura_id'));
     const propia = asg && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
-    await exec('UPDATE {S}.secciones SET nivel=?, nombre=?, asignatura_id=?, nota_aprobatoria=? WHERE id=? AND usuario_id=?',
-      [str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), id, user.id]);
-    return Astro.redirect(`/secciones/${id}`);
+    const datos = { nivel, nombre, subgrupo: sg.subgrupo, asignatura_id: propia, anio: sec.anio };
+    if (!nivel || !nombre) error = 'Indique nivel y nombre.';
+    else if (sg.error) error = sg.error;
+    else if (await seccionDuplicada(user.id, datos, id)) error = `Ya existe la sección ${etiquetaSeccion(datos)} con esa asignatura en el curso ${sec.anio}.`;
+    else {
+      await exec('UPDATE {S}.secciones SET nivel=?, nombre=?, subgrupo=?, asignatura_id=?, nota_aprobatoria=? WHERE id=? AND usuario_id=?',
+        [nivel, nombre, sg.subgrupo, propia, numOrNull(f.get('nota_aprobatoria')), id, user.id]);
+      return Astro.redirect(`/secciones/${id}`);
+    }
   } else if (accion === 'lecciones') {
-    const mios = new Set((await q<any>('SELECT id FROM {S}.periodos WHERE usuario_id=?', [user.id])).map((p) => p.id));
-    for (const [k, v] of f.entries()) if (k.startsWith('lec_') && mios.has(Number(k.slice(4))))
-      await exec('INSERT INTO {S}.lecciones VALUES (?,?,?) ON CONFLICT (seccion_id, periodo_id) DO UPDATE SET cantidad=EXCLUDED.cantidad', [id, Number(k.slice(4)), num(v)]);
-    msg = 'Lecciones guardadas.';
+    // Total de lecciones impartidas por periodo: se guarda como corrección sobre la suma de los días
+    // registrados en Asistencia; vacío = sin corrección
+    const mios = await q<any>('SELECT * FROM {S}.periodos WHERE usuario_id=?', [user.id]);
+    const valores = mios.filter((p) => f.has(`lec_${p.id}`)).map((p) => [p, str(f.get(`lec_${p.id}`))] as const);
+    if (valores.some(([, v]) => v !== '' && !/^\d{1,4}$/.test(v))) error = 'Las lecciones impartidas deben ser números enteros mayores o iguales a 0.';
+    else {
+      for (const [per, v] of valores)
+        if (v === '') await exec('DELETE FROM {S}.lecciones WHERE seccion_id=? AND periodo_id=?', [id, per.id]);
+        else await exec('INSERT INTO {S}.lecciones (seccion_id, periodo_id, ajuste) VALUES (?,?,?) ON CONFLICT (seccion_id, periodo_id) DO UPDATE SET ajuste=EXCLUDED.ajuste',
+          [id, per.id, Number(v) - (await leccionesEfectivas(id, per)).calculado]);
+      msg = 'Lecciones guardadas.';
+    }
   }
 }
 const ests = await estudiantesDe(id);
 const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuario_id=? ORDER BY nombre', [user.id]);
 const periodos = await q<any>(`SELECT p.*, l.cantidad FROM {S}.periodos p LEFT JOIN {S}.lecciones l ON l.periodo_id=p.id AND l.seccion_id=?
   WHERE p.usuario_id=? ORDER BY numero`, [id, user.id]);
+for (const p of periodos) p.total = (await leccionesEfectivas(id, p)).efectivas;
 const edad = (f: string | null) => f ? Math.floor((Date.now() - new Date(f).getTime()) / 31557600000) : '';
 ---
-<Base titulo={`Sección ${sec.nivel}-${sec.nombre}`}>
+<Base titulo={`Sección ${etiquetaSeccion(sec)}`}>
   <p class="no-print"><a href="/secciones">← Secciones</a></p>
-  <h1>Sección {sec.nivel}-{sec.nombre}</h1>
+  <h1>Sección {etiquetaSeccion(sec)}</h1>
   <p class="sub">{sec.asignatura ?? 'Sin asignatura'} · {ests.length} estudiantes · Curso {sec.anio}</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
 
   <details class="tarjeta no-print"><summary><b>Datos de la sección y lecciones efectivas</b></summary>
     <form method="post" class="fila" style="margin-top:12px">
       <input type="hidden" name="accion" value="datos" />
-      <label>Nivel<input name="nivel" value={sec.nivel} size="4" /></label>
+      <label>Nivel<input name="nivel" id="nivel" value={sec.nivel} size="4" /></label>
       <label>Sección<input name="nombre" value={sec.nombre} size="6" /></label>
+      <label>Subgrupo
+        <select name="subgrupo" id="subgrupo"><option value="">Sin subgrupo</option>{['A', 'B'].map((g) => <option selected={sec.subgrupo === g}>{g}</option>)}</select>
+      </label>
       <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id} selected={a.id === sec.asignatura_id}>{a.nombre}</option>)}</select></label>
       <label>Nota aprobatoria<input name="nota_aprobatoria" value={sec.nota_aprobatoria ?? ''} size="5" /></label>
       <button class="sec">Guardar</button>
     </form>
+    <script is:inline>
+      // El subgrupo (medio grupo de taller) solo aplica en 7.°, 8.° y 9.°
+      const nv = document.getElementById('nivel'), sg = document.getElementById('subgrupo');
+      const upd = () => { const ok = ['7', '8', '9'].includes(nv.value.trim()); sg.disabled = !ok; if (!ok) sg.value = ''; };
+      nv.oninput = upd; upd();
+    </script>
     <form method="post" class="fila" style="margin-top:12px">
       <input type="hidden" name="accion" value="lecciones" />
-      {periodos.map((p) => <label>Lecciones {p.nombre}<input type="number" name={`lec_${p.id}`} value={p.cantidad ?? 0} style="width:100px" /></label>)}
+      {periodos.map((p) => <label>Lecciones impartidas {p.nombre}<input type="number" name={`lec_${p.id}`} value={p.total} min="0" max="9999" step="1" style="width:130px" /></label>)}
       <button class="sec">Guardar lecciones</button>
-      <span class="muted">Base para calcular el % de ausentismo.</span>
+      <span class="muted">Base del % de ausentismo. Se suman solas con las «Lecciones de hoy» de Asistencia; aquí puede corregir el total.</span>
     </form>
   </details>
 

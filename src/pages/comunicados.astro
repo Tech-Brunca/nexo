@@ -4,7 +4,7 @@ import Selector from '../components/Selector.astro';
 import EnviarWa from '../components/EnviarWa.astro';
 import { q } from '../lib/db';
 import { estudiantesDe, seccion } from '../lib/calc';
-import { str, csv } from '../lib/util';
+import { str, csv, etiquetaSeccion } from '../lib/util';
 import { TIPOS, plantillas, llenar, enlaceWa } from '../lib/whatsapp';
 const { user, inst } = Astro.locals;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
@@ -16,7 +16,7 @@ let destinos: any[] = [];
 if (sec) {
   const ests = await estudiantesDe(seccionId);
   destinos = ests.map((e) => {
-    const mensaje = llenar(texto, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: `${sec.nivel}-${sec.nombre}`,
+    const mensaje = llenar(texto, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: `${etiquetaSeccion(sec)}`,
       asignatura: sec.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre });
     return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje) };
   });
@@ -38,7 +38,7 @@ const sinTel = destinos.filter((d) => !d.enlace).length;
     <>
       <form method="get" class="tarjeta">
         <input type="hidden" name="seccion" value={seccionId} />
-        <label>Mensaje para todo el grupo {sec.nivel}-{sec.nombre}
+        <label>Mensaje para todo el grupo {etiquetaSeccion(sec)}
           <textarea name="texto" rows="4" style="width:100%">{texto}</textarea></label>
         <p class="fila"><button class="sec">Preparar mensajes</button> <span class="muted">Variables: {'{encargado} {estudiante} {seccion} {asignatura} {docente} {colegio}'} · <a href="/plantillas">Editar plantillas</a></span></p>
       </form>

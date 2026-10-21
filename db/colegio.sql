@@ -151,3 +151,41 @@ CREATE TABLE IF NOT EXISTS __ESQUEMA__.notas_importadas (
   creado timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (estudiante_id, seccion_id, periodo_id, clave)
 );
+
+-- v3.2: subgrupo de la sección (medio grupo de taller en 7.° a 9.°); NULL = sin subgrupo
+ALTER TABLE __ESQUEMA__.secciones ADD COLUMN IF NOT EXISTS subgrupo text CHECK (subgrupo IN ('A', 'B'));
+-- Sin duplicados exactos (misma sección, asignatura, año y subgrupo). Si un colegio ya tiene
+-- duplicados, el índice no se crea ahí y la app sigue validando al crear o editar.
+DO $$ BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS secciones_unica ON __ESQUEMA__.secciones
+    (usuario_id, nivel, nombre, COALESCE(asignatura_id, 0), anio, COALESCE(subgrupo, ''));
+EXCEPTION WHEN unique_violation THEN NULL;
+END $$;
+
+-- v3.3: lecciones impartidas cada día (se registran al guardar la asistencia). Su suma da las
+-- lecciones efectivas; una fila en {S}.lecciones (por sección y periodo) es el ajuste manual del docente.
+-- Antes cantidad = 0 en {S}.lecciones significaba "sin registrar": se limpia una sola vez, al crear la tabla nueva.
+DO $$ BEGIN
+  IF to_regclass('__ESQUEMA__.lecciones_dia') IS NULL THEN
+    CREATE TABLE __ESQUEMA__.lecciones_dia (
+      seccion_id int NOT NULL REFERENCES __ESQUEMA__.secciones(id) ON DELETE CASCADE,
+      fecha date NOT NULL,
+      cantidad smallint NOT NULL CHECK (cantidad >= 0),
+      PRIMARY KEY (seccion_id, fecha)
+    );
+    DELETE FROM __ESQUEMA__.lecciones WHERE cantidad = 0;
+  END IF;
+END $$;
+
+-- v3.4: el ajuste manual pasa a ser una corrección (ajuste) que se suma a las lecciones de cada día,
+-- así el total sigue creciendo al registrar días nuevos. Se convierte una sola vez el total fijo anterior
+-- (cantidad) en corrección; la columna cantidad queda sin uso.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = '__ESQUEMA__' AND table_name = 'lecciones' AND column_name = 'ajuste') THEN
+    ALTER TABLE __ESQUEMA__.lecciones ADD COLUMN ajuste int NOT NULL DEFAULT 0;
+    UPDATE __ESQUEMA__.lecciones l SET ajuste = l.cantidad - COALESCE((
+      SELECT SUM(d.cantidad) FROM __ESQUEMA__.lecciones_dia d JOIN __ESQUEMA__.periodos p ON p.id = l.periodo_id
+      WHERE d.seccion_id = l.seccion_id AND (p.fecha_ini IS NULL OR d.fecha >= p.fecha_ini) AND (p.fecha_fin IS NULL OR d.fecha <= p.fecha_fin)), 0);
+  END IF;
+END $$;

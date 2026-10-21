@@ -4,7 +4,7 @@ import Base from '../layouts/Base.astro';
 import Selector from '../components/Selector.astro';
 import { q, one, exec, transaccion, preparar, esquemaActual } from '../lib/db';
 import { seccion, calcularPeriodo } from '../lib/calc';
-import { str, fmt, parseCsv } from '../lib/util';
+import { str, fmt, parseCsv, etiquetaSeccion } from '../lib/util';
 import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes } from '../lib/sea';
 const { user } = Astro.locals;
 const U = user.id;
@@ -17,7 +17,7 @@ if (sec) await asegurarComponentes(U, sec.nivel);
 const comps = sec ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave IS NOT NULL', [U, sec.nivel]) : [];
 const compDe = (k: string) => comps.find((c) => c.clave === k);
 const ORD = ['primer', 'segundo', 'tercer', 'cuarto'];
-const nombreArchivo = () => `sea_${ORD[(per?.numero ?? 1) - 1] ?? 'periodo' + per?.numero}_periodo_${sec!.nivel}-${sec!.nombre}.csv`;
+const nombreArchivo = () => `sea_${ORD[(per?.numero ?? 1) - 1] ?? 'periodo' + per?.numero}_periodo_${etiquetaSeccion(sec)}.csv`;
 
 // ── Exportar ───────────────────────────────────────────────────────────────
 if (sec && per && Astro.url.searchParams.get('exportar')) {
@@ -91,7 +91,7 @@ if (sec && per && Astro.request.method === 'POST') {
               }
             }
           });
-          msg = `Archivo importado: ${datos.length} estudiantes (${nuevos} nuevos, ${matriculados} agregados a ${sec.nivel}-${sec.nombre})` +
+          msg = `Archivo importado: ${datos.length} estudiantes (${nuevos} nuevos, ${matriculados} agregados a ${etiquetaSeccion(sec)})` +
             (conNotas ? `, ${notas} calificaciones de ${per.nombre}.` : '. No se importaron calificaciones.');
         }
       }
@@ -115,7 +115,7 @@ const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
       <div class="grid-sea">
         <div class="tarjeta">
           <h2 style="margin-top:0">Exportar al SEA</h2>
-          <p class="muted">Descarga {per.nombre} de {sec.nivel}-{sec.nombre} con las columnas de la plantilla, listo para subir al SEA.</p>
+          <p class="muted">Descarga {per.nombre} de {etiquetaSeccion(sec)} con las columnas de la plantilla, listo para subir al SEA.</p>
           <form method="get" class="fila">
             <input type="hidden" name="seccion" value={sec.id} /><input type="hidden" name="periodo" value={per.id} /><input type="hidden" name="exportar" value="1" />
             <label>Valores<select name="decimales"><option value="0">Enteros (como ReDDi)</option><option value="2">Con 2 decimales</option></select></label>
@@ -133,7 +133,7 @@ const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
           </div>
         </form>
       </div>
-      <h2>{per.nombre} · {sec.nivel}-{sec.nombre} <span class="muted" style="font-weight:400">({r.filas.length} estudiantes)</span></h2>
+      <h2>{per.nombre} · {etiquetaSeccion(sec)} <span class="muted" style="font-weight:400">({r.filas.length} estudiantes)</span></h2>
       {nImp > 0 && (
         <div class="msg aviso fila" style="justify-content:space-between;align-items:center">
           <span>Hay calificaciones importadas en este periodo (marcadas con <b>•</b>). Reemplazan lo calculado en Nexo para ese componente.</span>

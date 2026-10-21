@@ -1,5 +1,5 @@
 import { q, one, getAjustes, getEscala } from './db';
-import { r2 } from './util';
+import { r2, etiquetaSeccion } from './util';
 import { asegurarComponentes } from './sea';
 
 export type Est = { id: number; cedula: string; apellidos: string; nombre: string; subgrupo: string; encargado: string; telefono: string; fecha_nac: string | null };
@@ -23,6 +23,27 @@ export async function seccion(uid: number, id: number) {
      WHERE s.id = ? AND s.usuario_id = ?`,
     [id, uid],
   );
+}
+
+/** ¿Ya existe otra sección con la misma sección, asignatura, año y subgrupo? (compara el nombre visible: "7-1" = nivel 7 + "1") */
+export async function seccionDuplicada(uid: number, d: { nivel: string; nombre: string; subgrupo: string | null; asignatura_id: number | null; anio: number }, excluirId = 0) {
+  const otras = await q<any>('SELECT nivel, nombre, subgrupo FROM {S}.secciones WHERE usuario_id=? AND anio=? AND asignatura_id IS NOT DISTINCT FROM ? AND id<>?',
+    [uid, d.anio, d.asignatura_id, excluirId]);
+  return otras.some((s) => etiquetaSeccion(s) === etiquetaSeccion(d));
+}
+
+/**
+ * Lecciones impartidas (efectivas) de una sección en un periodo hasta la fecha indicada, inclusive:
+ * la suma de las lecciones registradas cada día más la corrección manual del docente, si la hizo.
+ */
+export async function leccionesEfectivas(seccionId: number, per: { id: number; fecha_ini: string | null; fecha_fin: string | null } | null, hasta: string | null = null) {
+  const fin = hasta && per?.fecha_fin && per.fecha_fin < hasta ? per.fecha_fin : (hasta ?? per?.fecha_fin ?? null);
+  const desde = per?.fecha_ini ?? null;
+  const suma = await one<any>(`SELECT COALESCE(SUM(cantidad), 0) AS n FROM {S}.lecciones_dia
+    WHERE seccion_id = ? AND (?::date IS NULL OR fecha >= ?::date) AND (?::date IS NULL OR fecha <= ?::date)`, [seccionId, desde, desde, fin, fin]);
+  const fila = per ? await one<any>('SELECT ajuste FROM {S}.lecciones WHERE seccion_id = ? AND periodo_id = ?', [seccionId, per.id]) : undefined;
+  const calculado = Number(suma?.n ?? 0), ajuste = Number(fila?.ajuste ?? 0);
+  return { calculado, ajuste, efectivas: Math.max(0, calculado + ajuste), hasta: fin };
 }
 
 export const periodosDe = (uid: number) =>
@@ -83,8 +104,7 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
   const ids = evals.map((e) => e.id);
   const notas = ids.length ? await q<any>('SELECT * FROM {S}.notas WHERE evaluacion_id = ANY(?)', [ids]) : [];
   const vals = ids.length ? await q<any>('SELECT * FROM {S}.valoraciones WHERE evaluacion_id = ANY(?)', [ids]) : [];
-  const lec = await one<any>('SELECT cantidad FROM {S}.lecciones WHERE seccion_id = ? AND periodo_id = ?', [seccionId, periodoId]);
-  const lecciones = Number(lec?.cantidad ?? 0);
+  const lecciones = (await leccionesEfectivas(seccionId, per)).efectivas;
   const aus = await ausencias(uid, seccionId, per.fecha_ini, per.fecha_fin);
   const esc = await getEscala(uid);
 

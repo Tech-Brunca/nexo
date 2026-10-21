@@ -4,7 +4,7 @@ import Selector from '../components/Selector.astro';
 import { exec } from '../lib/db';
 import { estudiantesDe, seccion } from '../lib/calc';
 import { calcularAnual } from '../lib/calc';
-import { numOrNull, fmt, csv } from '../lib/util';
+import { numOrNull, fmt, csv, etiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
 const sec = seccionId ? await seccion(user.id, seccionId) : null;
@@ -28,7 +28,7 @@ if (r && Astro.url.searchParams.get('csv')) {
   return new Response(csv([
     ['Cédula', 'Estudiante', ...r.periodos.map((p: any) => `${p.nombre} (${p.ponderado}%)`), 'Nota anual', 'Conv. 1', 'Conv. 2', 'Condición'],
     ...r.filas.map((f) => [f.est.cedula, `${f.est.apellidos} ${f.est.nombre}`, ...f.porPer, f.anual, f.conv?.nota1 ?? '', f.conv?.nota2 ?? '', f.condicion]),
-  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="nota-anual-${r.sec.nivel}-${r.sec.nombre}.csv"` } });
+  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="nota-anual-${etiquetaSeccion(r.sec)}.csv"` } });
 }
 const chip = (c: string) => (c.startsWith('Aprobado') ? 'ok' : c === 'Aplazado' ? 'aviso' : 'mal');
 ---
@@ -39,7 +39,7 @@ const chip = (c: string) => (c.startsWith('Aprobado') ? 'ok' : c === 'Aplazado' 
   {msg && <div class="msg ok">{msg}</div>}
   {r && (
     <form method="post">
-      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {r.sec.nivel}-{r.sec.nombre} · Curso {r.sec.anio} · Docente: {cfg.docente}</p></div>
+      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {etiquetaSeccion(r.sec)} · Curso {r.sec.anio} · Docente: {cfg.docente}</p></div>
       <div class="tabla"><table>
         <tr><th>#</th><th>Estudiante</th>{r.periodos.map((p: any) => <th class="n">{p.nombre}<br />{p.ponderado}%</th>)}<th class="n">Anual</th><th class="n">Conv. 1</th><th class="n">Conv. 2</th><th>Condición</th></tr>
         {r.filas.map((f, i) => (

@@ -18,6 +18,23 @@ export const hoy = () => {
 };
 export const nombreCompleto = (e: { apellidos: string; nombre: string }) => `${e.apellidos} ${e.nombre}`;
 
+/** Nombre visible de una sección: "7-1", "11-2" o con subgrupo "7-1A". No repite el nivel si el nombre ya lo trae. */
+export const etiquetaSeccion = (s: { nivel: string; nombre: string; subgrupo?: string | null }) =>
+  (String(s.nombre).startsWith(`${s.nivel}-`) ? s.nombre : `${s.nivel}-${s.nombre}`) + (s.subgrupo ?? '');
+/** Lo mismo en SQL, para consultas que no traen la fila completa (a = alias de la tabla de secciones) */
+export const sqlEtiquetaSeccion = (a = 's', conSubgrupo = true) =>
+  `(CASE WHEN ${a}.nombre LIKE ${a}.nivel || '-%' THEN ${a}.nombre ELSE ${a}.nivel || '-' || ${a}.nombre END${conSubgrupo ? ` || COALESCE(${a}.subgrupo, '')` : ''})`;
+
+/** Subgrupo de sección (medio grupo de taller): solo A o B, y solo en 7.°, 8.° y 9.° */
+export const nivelConSubgrupo = (nivel: string) => ['7', '8', '9'].includes(nivel.trim());
+export function validarSubgrupo(nivel: string, valor: string): { subgrupo: string | null; error?: string } {
+  const v = valor.trim().toUpperCase();
+  if (!v) return { subgrupo: null };
+  if (v !== 'A' && v !== 'B') return { subgrupo: null, error: 'El subgrupo solo puede ser A o B.' };
+  if (!nivelConSubgrupo(nivel)) return { subgrupo: null, error: `El subgrupo solo se usa en 7.°, 8.° y 9.°; una sección de nivel ${nivel} va sin subgrupo.` };
+  return { subgrupo: v };
+}
+
 export function csv(rows: (string | number | null | undefined)[][]) {
   const esc = (v: any) => {
     const s = v === null || v === undefined ? '' : String(v);

@@ -1,12 +1,13 @@
 ---
 // Selector de sección (y opcionalmente periodo / fecha) que recarga la página por GET
-import { q } from '../lib/db';
+import { q } from '../lib/db';
+import { etiquetaSeccion } from '../lib/util';
 interface Props { seccionId?: number; periodoId?: number; conPeriodo?: boolean; fecha?: string; extra?: Record<string, string> }
 const { seccionId, periodoId, conPeriodo = false, fecha, extra = {} } = Astro.props;
 const { user } = Astro.locals;
 const secciones = await q<any>(
-  `SELECT s.id, s.nivel, s.nombre, a.nombre AS asignatura FROM {S}.secciones s LEFT JOIN general.asignaturas a ON a.id = s.asignatura_id
-   WHERE s.usuario_id = ? ORDER BY length(s.nivel), s.nivel, s.nombre`,
+  `SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura FROM {S}.secciones s LEFT JOIN general.asignaturas a ON a.id = s.asignatura_id
+   WHERE s.usuario_id = ? ORDER BY length(s.nivel), s.nivel, s.nombre, s.subgrupo NULLS FIRST`,
   [user.id],
 );
 const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]) : [];
@@ -15,7 +16,7 @@ const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM {S}.periodos 
   <label>Sección
     <select name="seccion" onchange="this.form.submit()">
       <option value="">— Elegir —</option>
-      {secciones.map((s) => <option value={s.id} selected={s.id === seccionId}>{s.nivel}-{s.nombre}{s.asignatura ? ` · ${s.asignatura}` : ''}</option>)}
+      {secciones.map((s) => <option value={s.id} selected={s.id === seccionId}>{etiquetaSeccion(s)}{s.asignatura ? ` · ${s.asignatura}` : ''}</option>)}
     </select>
   </label>
   {conPeriodo && (
@@ -27,6 +28,7 @@ const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM {S}.periodos 
   )}
   {fecha !== undefined && <label>Fecha<input type="date" name="fecha" value={fecha} onchange="this.form.submit()" /></label>}
   {Object.entries(extra).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+  <slot />
   <noscript><button>Ver</button></noscript>
   {secciones.length === 0 && <span class="muted">Primero cree una sección en <a href="/secciones">Secciones</a>.</span>}
 </form>

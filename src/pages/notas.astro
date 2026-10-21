@@ -3,7 +3,7 @@ import Base from '../layouts/Base.astro';
 import Selector from '../components/Selector.astro';
 import { q } from '../lib/db';
 import { calcularPeriodo } from '../lib/calc';
-import { fmt, csv } from '../lib/util';
+import { fmt, csv, etiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
 const periodos = await q<any>('SELECT id FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]);
@@ -16,7 +16,7 @@ if (r && Astro.url.searchParams.get('csv')) {
   return new Response(csv([
     ['Cédula', 'Estudiante', ...r.comps.map((c) => `${c.nombre} (${c.porcentaje}%)`), 'Nota', 'Condición'],
     ...r.filas.map((f) => [f.est.cedula, `${f.est.apellidos} ${f.est.nombre}`, ...r.comps.map((c) => f.porComp[c.id]), f.total, f.condicion]),
-  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="notas-${r.sec.nivel}-${r.sec.nombre}-p${r.per.numero}.csv"` } });
+  ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="notas-${etiquetaSeccion(r.sec)}-p${r.per.numero}.csv"` } });
 }
 const prom = r && r.filas.length ? r.filas.reduce((s, f) => s + f.total, 0) / r.filas.length : null;
 const aprob = r ? r.filas.filter((f) => f.condicion === 'Aprobado').length : 0;
@@ -27,7 +27,7 @@ const aprob = r ? r.filas.filter((f) => f.condicion === 'Aprobado').length : 0;
   <Selector seccionId={seccionId} periodoId={periodoId} conPeriodo />
   {r && (
     <>
-      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {r.sec.nivel}-{r.sec.nombre} · {r.per.nombre} · Docente: {cfg.docente}</p></div>
+      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {etiquetaSeccion(r.sec)} · {r.per.nombre} · Docente: {cfg.docente}</p></div>
       <div class="grid-kpi no-print" style="margin-bottom:14px">
         <div class="kpi"><b>{fmt(prom)}</b><span>Promedio del grupo</span></div>
         <div class="kpi"><b style="color:var(--verde)">{aprob}</b><span>Aprobados (≥ {r.notaApb})</span></div>

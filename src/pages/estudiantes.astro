@@ -1,7 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import { exec, q } from '../lib/db';
-import { num, str } from '../lib/util';
+import { num, str, etiquetaSeccion, sqlEtiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 let msg = '';
 if (Astro.request.method === 'POST') {
@@ -19,20 +19,51 @@ if (Astro.request.method === 'POST') {
 }
 const buscar = Astro.url.searchParams.get('q') ?? '';
 const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
+
+// Filtros: secciones sin subgrupo ("7-1", "8-1", "11-2"), ordenadas por nivel y sección,
+// cada una con los subgrupos que tenga registrados (8-1 → A, B)
+const orden = new Intl.Collator('es', { numeric: true });
+const secciones = new Map<string, { nivel: number; subgrupos: string[] }>();
+for (const s of await q<any>('SELECT DISTINCT nivel, nombre, subgrupo FROM {S}.secciones WHERE usuario_id=?', [user.id])) {
+  const base = etiquetaSeccion({ ...s, subgrupo: null });
+  const g = secciones.get(base) ?? secciones.set(base, { nivel: Number(s.nivel) || 0, subgrupos: [] }).get(base)!;
+  if (s.subgrupo && !g.subgrupos.includes(s.subgrupo)) g.subgrupos.push(s.subgrupo);
+}
+const opciones = [...secciones].sort(([a, x], [b, y]) => x.nivel - y.nivel || orden.compare(a, b)).map(([base]) => base);
+const pedida = Astro.url.searchParams.get('seccion') ?? '';
+const seccion = secciones.has(pedida) ? pedida : '';
+const subgrupos = seccion ? secciones.get(seccion)!.subgrupos.sort() : [];
+const subgrupo = subgrupos.includes(Astro.url.searchParams.get('subgrupo') ?? '') ? Astro.url.searchParams.get('subgrupo')! : '';
+
 const lista = await q<any>(
-  `SELECT e.*, string_agg(s.nivel || '-' || s.nombre, ', ' ORDER BY s.nivel) AS secciones
+  `SELECT e.*, string_agg(${sqlEtiquetaSeccion()}, ', ' ORDER BY s.nivel) AS secciones
    FROM {S}.estudiantes e LEFT JOIN {S}.matriculas m ON m.estudiante_id=e.id LEFT JOIN {S}.secciones s ON s.id=m.seccion_id
    WHERE e.usuario_id = ? AND (? = '' OR e.cedula ILIKE ? OR (e.apellidos || ' ' || e.nombre) ILIKE ?)
+     AND (? = '' OR EXISTS (SELECT 1 FROM {S}.matriculas m2 JOIN {S}.secciones s2 ON s2.id=m2.seccion_id
+       WHERE m2.estudiante_id=e.id AND s2.usuario_id=e.usuario_id
+         AND ${sqlEtiquetaSeccion('s2', false)} = ? AND (? = '' OR s2.subgrupo = ?)))
    GROUP BY e.id ORDER BY e.apellidos, e.nombre LIMIT 500`,
-  [user.id, buscar, `%${buscar}%`, `%${buscar}%`]);
+  [user.id, buscar, `%${buscar}%`, `%${buscar}%`, seccion, seccion, subgrupo, subgrupo]);
+const filtros = `q=${encodeURIComponent(buscar)}${seccion ? `&seccion=${encodeURIComponent(seccion)}` : ''}${subgrupo ? `&subgrupo=${subgrupo}` : ''}`;
 ---
 <Base titulo="Estudiantes">
   <h1>Estudiantes</h1>
   <p class="sub">Su lista de estudiantes en {inst!.nombre}. Para agregarlos a un grupo, entre a la <a href="/secciones">sección</a>.</p>
   {msg && <div class="msg ok">{msg}</div>}
-  <form class="tarjeta fila"><label style="flex:1">Buscar por nombre o cédula<input name="q" value={buscar} /></label><button class="sec">Buscar</button></form>
+  <form class="tarjeta fila"><label style="flex:1">Buscar por nombre o cédula<input name="q" value={buscar} /></label>
+    <label>Sección
+      <select name="seccion" onchange="this.form.subgrupo.value = ''; this.form.subgrupo.disabled = true; this.form.submit()"><option value="">Todas las secciones</option>
+        {opciones.map((o) => <option value={o} selected={o === seccion}>{o}</option>)}</select>
+    </label>
+    <label>Subgrupo
+      <select name="subgrupo" disabled={subgrupos.length === 0} onchange="this.form.submit()"><option value="">Todos</option>
+        {subgrupos.map((g) => <option selected={g === subgrupo}>{g}</option>)}</select>
+    </label>
+    <button class="sec">Buscar</button></form>
+  <p class="muted">{lista.length} {lista.length === 1 ? 'estudiante' : 'estudiantes'}{lista.length === 500 && ' (se muestran los primeros 500; afine la búsqueda)'}</p>
   <div class="tabla"><table>
     <tr><th>Cédula</th><th>Estudiante</th><th>Secciones</th><th>Encargado(a)</th><th>Teléfono</th><th>Estado</th><th></th></tr>
+    {lista.length === 0 && <tr><td colspan="7" class="muted">{buscar || seccion ? 'No hay estudiantes en esta sección con ese criterio de búsqueda.' : 'Aún no hay estudiantes. Agréguelos desde una sección.'}</td></tr>}
     {lista.map((e) => editar === e.id ? (
       <tr><td colspan="7">
         <form method="post" class="fila">
@@ -46,7 +77,7 @@ const lista = await q<any>(
           <label>Teléfono<input name="telefono" value={e.telefono} size="10" /></label>
           <label><span><input type="checkbox" name="extranjero" checked={!!e.extranjero} /> Extranjero</span></label>
           <label><span><input type="checkbox" name="activo" checked={!!e.activo} /> Activo</span></label>
-          <button>Guardar</button><a class="btn sec" href={`?q=${encodeURIComponent(buscar)}`}>Cancelar</a>
+          <button>Guardar</button><a class="btn sec" href={`?${filtros}`}>Cancelar</a>
         </form>
         <form method="post" style="margin-top:8px" onsubmit="return confirm('¿Eliminar definitivamente? Se borran sus notas y asistencia.')">
           <input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={e.id} /><button class="mini peligro">Eliminar estudiante</button>
@@ -55,7 +86,7 @@ const lista = await q<any>(
     ) : (
       <tr><td>{e.cedula}</td><td class="nom">{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
         <td>{e.activo ? <span class="chip ok">Activo</span> : <span class="chip mal">Inactivo</span>}</td>
-        <td><a href={`?q=${encodeURIComponent(buscar)}&editar=${e.id}`}>Editar</a></td></tr>
+        <td><a href={`?${filtros}&editar=${e.id}`}>Editar</a></td></tr>
     ))}
   </table></div>
 </Base>

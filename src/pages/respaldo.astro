@@ -14,6 +14,7 @@ const TABLAS: { t: string; sql: string; fk: Record<string, string>; auto?: boole
   { t: 'estudiantes', sql: 'SELECT * FROM {S}.estudiantes WHERE usuario_id=?', fk: {}, auto: true },
   { t: 'matriculas', sql: 'SELECT m.* FROM {S}.matriculas m JOIN {S}.secciones s ON s.id=m.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true },
   { t: 'lecciones', sql: 'SELECT l.* FROM {S}.lecciones l JOIN {S}.secciones s ON s.id=l.seccion_id WHERE s.usuario_id=?', fk: { seccion_id: 'secciones', periodo_id: 'periodos' } },
+  { t: 'lecciones_dia', sql: 'SELECT l.* FROM {S}.lecciones_dia l JOIN {S}.secciones s ON s.id=l.seccion_id WHERE s.usuario_id=?', fk: { seccion_id: 'secciones' } },
   { t: 'evaluaciones', sql: 'SELECT e.* FROM {S}.evaluaciones e JOIN {S}.secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { componente_id: 'componentes', seccion_id: 'secciones', periodo_id: 'periodos' }, auto: true },
   { t: 'evaluacion_indicadores', sql: 'SELECT ei.* FROM {S}.evaluacion_indicadores ei JOIN {S}.evaluaciones e ON e.id=ei.evaluacion_id JOIN {S}.secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', indicador_id: 'indicadores' } },
   { t: 'notas', sql: 'SELECT n.* FROM {S}.notas n JOIN {S}.evaluaciones e ON e.id=n.evaluacion_id JOIN {S}.secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?', fk: { evaluacion_id: 'evaluaciones', estudiante_id: 'estudiantes' } },
@@ -82,7 +83,11 @@ if (Astro.request.method === 'POST') {
           for (const x of TABLAS) {
             mapa[x.t] = new Map();
             for (const fila of json.data[x.t] ?? []) {
+              // Respaldos anteriores a lecciones_dia: 0 lecciones significaba "sin registrar", no un ajuste manual
+              if (x.t === 'lecciones' && !json.data.lecciones_dia && Number(fila.cantidad) === 0) continue;
               const r: Record<string, any> = { ...fila };
+              // ...y el total fijo de entonces pasa a ser la corrección (no hay días registrados que sumar)
+              if (x.t === 'lecciones' && !('ajuste' in r) && !json.data.lecciones_dia) r.ajuste = Number(r.cantidad);
               if ('usuario_id' in r) r.usuario_id = U;
               let valida = true;
               for (const [col, tabla] of Object.entries(x.fk)) {

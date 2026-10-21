@@ -4,38 +4,65 @@ import Selector from '../components/Selector.astro';
 import EnviarWa from '../components/EnviarWa.astro';
 import { plantillas, llenar, enlaceWa, fechaLarga } from '../lib/whatsapp';
 import { exec, q, one } from '../lib/db';
-import { estudiantesDe, seccion, ausencias } from '../lib/calc';
-import { num, str, hoy, fmt, csv, TIPOS_AUSENCIA } from '../lib/util';
+import { estudiantesDe, seccion, ausencias, leccionesEfectivas } from '../lib/calc';
+import { num, str, hoy, fmt, csv, TIPOS_AUSENCIA, etiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
 const fecha = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('fecha') ?? '') ? Astro.url.searchParams.get('fecha')! : hoy();
 const sec = seccionId ? await seccion(U, seccionId) : null;
-let msg = '';
+let msg = '', error = '';
+const per = sec ? await one<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? AND (fecha_ini IS NULL OR fecha_ini<=?::date) AND (fecha_fin IS NULL OR fecha_fin>=?::date) ORDER BY numero LIMIT 1', [U, fecha, fecha]) : null;
+const fechaCorta = fecha.split('-').reverse().join('/');
+const entero = (v: string, max = 9999) => /^\d{1,4}$/.test(v) && Number(v) <= max;
 if (sec && Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
   if (accion === 'lista') {
-    const validos = new Set((await estudiantesDe(seccionId)).map((e) => e.id));
-    for (const [k, v] of f.entries()) {
-      if (!k.startsWith('t_')) continue;
-      const est = Number(k.slice(2)), tipo = str(v);
-      if (!validos.has(est) || (tipo && !['AI', 'AJ', 'TI', 'TJ'].includes(tipo))) continue;
-      if (!tipo) await exec('DELETE FROM {S}.asistencia WHERE estudiante_id=? AND seccion_id=? AND fecha=?', [est, seccionId, fecha]);
-      else await exec(`INSERT INTO {S}.asistencia (estudiante_id, seccion_id, fecha, tipo, lecciones, observacion) VALUES (?,?,?,?,?,?)
-        ON CONFLICT (estudiante_id, seccion_id, fecha) DO UPDATE SET tipo=EXCLUDED.tipo, lecciones=EXCLUDED.lecciones, observacion=EXCLUDED.observacion`,
-        [est, seccionId, fecha, tipo, Math.max(1, num(f.get('l_' + est), 1)), str(f.get('o_' + est))]);
+    // Lecciones de hoy + ausencias y tardías; las lecciones de cada estudiante van de 1 a las lecciones de hoy
+    const dia = str(f.get('lecciones_dia'));
+    const validos = new Map((await estudiantesDe(seccionId)).map((e) => [e.id, e]));
+    const marcas = [...f.entries()].filter(([k]) => k.startsWith('t_')).map(([k, v]) => ({ est: Number(k.slice(2)), tipo: str(v), lec: str(f.get('l_' + k.slice(2))) }))
+      .filter((m) => validos.has(m.est) && (!m.tipo || ['AI', 'AJ', 'TI', 'TJ'].includes(m.tipo)));
+    const malas = entero(dia, 99) ? marcas.filter((m) => m.tipo && !(entero(m.lec) && Number(m.lec) >= 1 && Number(m.lec) <= Number(dia))) : [];
+    if (!entero(dia, 99)) error = 'Indique las lecciones de hoy: un número entero de 0 a 99.';
+    else if (malas.length) error = (Number(dia) === 0 ? 'Con 0 lecciones hoy no se pueden marcar ausencias ni tardías. Revise: '
+      : `Las lecciones de ausencia o tardía deben ser de 1 a ${dia} (las lecciones de hoy). Revise: `)
+      + malas.map((m) => `${validos.get(m.est)!.apellidos} ${validos.get(m.est)!.nombre}`).join(', ') + '. No se guardó la asistencia.';
+    else {
+      await exec('INSERT INTO {S}.lecciones_dia VALUES (?,?,?) ON CONFLICT (seccion_id, fecha) DO UPDATE SET cantidad=EXCLUDED.cantidad', [seccionId, fecha, Number(dia)]);
+      for (const m of marcas) {
+        if (!m.tipo) await exec('DELETE FROM {S}.asistencia WHERE estudiante_id=? AND seccion_id=? AND fecha=?', [m.est, seccionId, fecha]);
+        else await exec(`INSERT INTO {S}.asistencia (estudiante_id, seccion_id, fecha, tipo, lecciones, observacion) VALUES (?,?,?,?,?,?)
+          ON CONFLICT (estudiante_id, seccion_id, fecha) DO UPDATE SET tipo=EXCLUDED.tipo, lecciones=EXCLUDED.lecciones, observacion=EXCLUDED.observacion`,
+          [m.est, seccionId, fecha, m.tipo, Number(m.lec), str(f.get('o_' + m.est))]);
+      }
+      msg = `Asistencia del ${fechaCorta} guardada.`;
     }
-    msg = `Asistencia del ${fecha} guardada.`;
+  } else if (accion === 'efectivas') {
+    // El total que escribe el docente se guarda como corrección sobre la suma de los días (que no se tocan)
+    const v = str(f.get('cantidad'));
+    if (!per) error = 'Configure los periodos para poder corregir las lecciones impartidas.';
+    else if (!entero(v)) error = 'Las lecciones impartidas deben ser un número entero mayor o igual a 0.';
+    else {
+      const { calculado } = await leccionesEfectivas(seccionId, per, fecha);
+      await exec('INSERT INTO {S}.lecciones (seccion_id, periodo_id, ajuste) VALUES (?,?,?) ON CONFLICT (seccion_id, periodo_id) DO UPDATE SET ajuste=EXCLUDED.ajuste',
+        [seccionId, per.id, Number(v) - calculado]);
+      msg = `Lecciones impartidas al ${fechaCorta}: ${v}.`;
+    }
   } else if (accion === 'justificar') {
     await exec(`UPDATE {S}.asistencia SET tipo = CASE tipo WHEN 'AI' THEN 'AJ' WHEN 'TI' THEN 'TJ' WHEN 'AJ' THEN 'AI' ELSE 'TI' END WHERE id=? AND seccion_id=?`, [num(f.get('id')), seccionId]);
   }
 }
 const ests = sec ? await estudiantesDe(seccionId) : [];
 const delDia = new Map((sec ? await q<any>('SELECT * FROM {S}.asistencia WHERE seccion_id=? AND fecha=?', [seccionId, fecha]) : []).map((a) => [a.estudiante_id, a]));
-const per = sec ? await one<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? AND (fecha_ini IS NULL OR fecha_ini<=?::date) AND (fecha_fin IS NULL OR fecha_fin>=?::date) ORDER BY numero LIMIT 1', [U, fecha, fecha]) : null;
-const lec = sec && per ? await one<any>('SELECT cantidad FROM {S}.lecciones WHERE seccion_id=? AND periodo_id=?', [seccionId, per.id]) : null;
-const tot = sec ? await ausencias(U, seccionId, per?.fecha_ini ?? null, per?.fecha_fin ?? null) : new Map();
+// Lecciones efectivas y ausencias del periodo hasta la fecha elegida (inclusive)
+const ef = sec ? await leccionesEfectivas(seccionId, per, fecha) : { calculado: 0, ajuste: 0, efectivas: 0, hasta: fecha };
+const tot = sec ? await ausencias(U, seccionId, per?.fecha_ini ?? null, ef.hasta) : new Map();
+// Lecciones de hoy: lo ya registrado ese día, o lo del último día registrado (el horario suele repetirse)
+const delDiaLec = sec ? await one<any>('SELECT cantidad FROM {S}.lecciones_dia WHERE seccion_id=? AND fecha=?', [seccionId, fecha]) : null;
+const leccionesDia = delDiaLec?.cantidad ?? (sec ? (await one<any>('SELECT cantidad FROM {S}.lecciones_dia WHERE seccion_id=? AND fecha<?::date ORDER BY fecha DESC LIMIT 1', [seccionId, fecha]))?.cantidad ?? '' : '');
+const sinHoy = ef.efectivas - Number(delDiaLec?.cantidad ?? 0); // total sin las lecciones de este día
 const historial = sec ? await q<any>(`SELECT a.*, e.apellidos, e.nombre FROM {S}.asistencia a JOIN {S}.estudiantes e ON e.id=a.estudiante_id
   WHERE a.seccion_id=? AND (?::date IS NULL OR a.fecha>=?::date) AND (?::date IS NULL OR a.fecha<=?::date) ORDER BY a.fecha DESC, e.apellidos LIMIT 200`,
   [seccionId, per?.fecha_ini ?? null, per?.fecha_ini ?? null, per?.fecha_fin ?? null, per?.fecha_fin ?? null]) : [];
@@ -45,9 +72,9 @@ if (sec && Astro.url.searchParams.get('csv')) {
     JOIN {S}.estudiantes e ON e.id=a.estudiante_id WHERE a.seccion_id=? ORDER BY a.fecha, e.apellidos`, [seccionId]);
   return new Response(csv([['Fecha', 'Cédula', 'Apellidos', 'Nombre', 'Tipo', 'Lecciones', 'Observación'],
     ...filas.map((r) => [r.fecha, r.cedula, r.apellidos, r.nombre, TIPOS_AUSENCIA[r.tipo], r.lecciones, r.observacion])]),
-    { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="asistencia-${sec.nivel}-${sec.nombre}.csv"` } });
+    { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="asistencia-${etiquetaSeccion(sec)}.csv"` } });
 }
-const lecciones = Number(lec?.cantidad ?? 0);
+const lecciones = ef.efectivas;
 
 // Avisos por WhatsApp de las ausencias y tardías injustificadas del día
 let destinos: any[] = [];
@@ -58,7 +85,7 @@ if (sec) {
   destinos = ests.filter((e) => ['AI', 'TI'].includes(delDia.get(e.id)?.tipo)).map((e) => {
     const a = delDia.get(e.id);
     const mensaje = llenar(a.tipo === 'TI' ? pl.tardia : pl.ausencia, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`,
-      seccion: `${sec.nivel}-${sec.nombre}`, asignatura: sec.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre, fecha: fechaLarga(fecha), lecciones: a.lecciones });
+      seccion: `${etiquetaSeccion(sec)}`, asignatura: sec.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre, fecha: fechaLarga(fecha), lecciones: a.lecciones });
     return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje), enviado: enviados.get(e.id) ?? null };
   });
 }
@@ -66,11 +93,28 @@ if (sec) {
 <Base titulo="Asistencia">
   <h1>Asistencia</h1>
   <p class="sub">Marque solo a quien falta o llega tarde; el resto queda presente.</p>
-  <Selector seccionId={seccionId} fecha={fecha} />
-  {msg && <div class="msg ok">{msg}</div>}
+  <Selector seccionId={seccionId} fecha={fecha}>
+    {sec && (
+      <div class="efectivas">
+        <span class="etq">Lecciones impartidas al {fechaCorta}{per ? ` · ${per.nombre}` : ''}</span>
+        <span id="ef-ver"><b id="ef-valor" data-sin-hoy={sinHoy}>{ef.efectivas}</b> <button type="button" class="mini sec" onclick="efEditar(true)">Editar</button></span>
+        <span id="ef-editar" hidden>
+          <input type="number" id="ef-campo" name="cantidad" form="f-efectivas" value={ef.efectivas} min="0" max="9999" step="1" required style="width:90px" />
+          <button form="f-efectivas" class="mini">Guardar</button> <button type="button" class="mini sec" onclick="efEditar(false)">Cancelar</button>
+        </span>
+        <label class="hoy">{fecha === hoy() ? 'Lecciones de hoy' : `Lecciones del ${fechaCorta}`}
+          <input type="number" id="lec-hoy" name="lecciones_dia" form="f-lista" value={leccionesDia} min="0" max="99" step="1" required style="width:80px" />
+        </label>
+      </div>
+    )}
+  </Selector>
+  {sec && <>
+    <form method="post" id="f-efectivas"><input type="hidden" name="accion" value="efectivas" /></form>
+  </>}
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
   {sec && (
     <>
-      <form method="post">
+      <form method="post" id="f-lista">
         <input type="hidden" name="accion" value="lista" />
         <div class="tabla"><table>
           <tr><th>#</th><th>Estudiante</th><th>{fecha}</th><th class="n">Lecciones</th><th>Observación</th><th class="n">AI</th><th class="n">AJ</th><th class="n">TI</th><th class="n">% Ausentismo</th></tr>
@@ -78,17 +122,43 @@ if (sec) {
             const a = delDia.get(e.id); const t = tot.get(e.id);
             const pct = lecciones > 0 && t ? (t.equivalentes / lecciones) * 100 : null;
             return <tr><td>{i + 1}</td><td class="nom">{e.apellidos} {e.nombre}</td>
-              <td><select name={`t_${e.id}`} style={a ? 'border-color:var(--rojo)' : ''}><option value="">Presente</option>{Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option value={k} selected={a?.tipo === k}>{v}</option>)}</select></td>
-              <td><input name={`l_${e.id}`} value={a?.lecciones ?? 1} style="width:60px;text-align:right" /></td>
+              <td><select name={`t_${e.id}`} class="estado" style={a ? 'border-color:var(--rojo)' : ''}><option value="">Presente</option>{Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option value={k} selected={a?.tipo === k}>{v}</option>)}</select></td>
+              <td><input type="number" name={`l_${e.id}`} class="lec" value={a?.lecciones ?? ''} disabled={!a} required min="1" max={leccionesDia || undefined} step="1" title="Lecciones que faltó o llegó tarde ese día" style="width:70px;text-align:right" /></td>
               <td><input name={`o_${e.id}`} value={a?.observacion ?? ''} /></td>
               <td class="n">{t?.AI ?? 0}</td><td class="n">{t?.AJ ?? 0}</td><td class="n">{t?.TI ?? 0}</td>
-              <td class="n">{pct === null ? '—' : <span class={`chip ${pct >= 10 ? 'mal' : pct >= 5 ? 'aviso' : 'ok'}`}>{fmt(pct)}%</span>}</td></tr>;
+              <td class="n pct" data-eq={t ? t.equivalentes : ''}>{pct === null ? '—' : <span class={`chip ${pct >= 10 ? 'mal' : pct >= 5 ? 'aviso' : 'ok'}`}>{fmt(pct)}%</span>}</td></tr>;
           })}
         </table></div>
         <p><button>Guardar asistencia</button> <a class="btn sec" href={`?seccion=${seccionId}&csv=1`}>Exportar CSV</a></p>
       </form>
+      <script is:inline>
+        // Total de lecciones impartidas, lecciones de hoy y % de ausentismo de la tabla, recalculados mientras se escribe
+        const valor = document.getElementById('ef-valor'), campo = document.getElementById('ef-campo'), hoy = document.getElementById('lec-hoy');
+        const original = campo.value, sinHoy = Number(valor.dataset.sinHoy);
+        const pintar = (n) => document.querySelectorAll('td.pct').forEach((td) => {
+          if (!(n > 0) || td.dataset.eq === '') { td.textContent = '—'; return; }
+          const p = (Number(td.dataset.eq) / n) * 100;
+          td.innerHTML = `<span class="chip ${p >= 10 ? 'mal' : p >= 5 ? 'aviso' : 'ok'}">${p.toLocaleString('es-CR', { maximumFractionDigits: 2 })}%</span>`;
+        });
+        window.efEditar = (si) => {
+          document.getElementById('ef-ver').hidden = si; document.getElementById('ef-editar').hidden = !si;
+          if (si) campo.focus(); else { campo.value = original; pintar(Number(valor.textContent)); }
+        };
+        campo.oninput = () => { if (/^\d+$/.test(campo.value)) pintar(Number(campo.value)); };
+        // Lecciones de cada estudiante: solo con ausencia o tardía, de 1 a las lecciones de hoy
+        const lecs = [...document.querySelectorAll('input.lec')];
+        hoy.oninput = () => {
+          lecs.forEach((i) => { i.max = hoy.value; });
+          if (/^\d+$/.test(hoy.value)) { const n = sinHoy + Number(hoy.value); valor.textContent = n; campo.value = n; pintar(n); }
+        };
+        document.querySelectorAll('select.estado').forEach((s) => s.addEventListener('change', () => {
+          const i = s.closest('tr').querySelector('input.lec');
+          i.disabled = !s.value;
+          if (!s.value) i.value = ''; else if (!i.value) i.value = hoy.value;
+        }));
+      </script>
       {destinos.length > 0 && <EnviarWa destinos={destinos} tipo="ausencia" referencia={`asistencia:${seccionId}:${fecha}`} titulo={`Avisar ausencias y tardías del ${fecha}`} />}
-      <p class="muted">Totales de {per?.nombre ?? 'todo el curso'} (lecciones). {lecciones === 0 ? <>Para el % de ausentismo registre las lecciones efectivas en la <a href={`/secciones/${seccionId}`}>sección</a>.</> : `Lecciones efectivas: ${lecciones}.`}</p>
+      <p class="muted">Totales de {per?.nombre ?? 'todo el curso'} al {fechaCorta} (lecciones).{lecciones === 0 && ' El % de ausentismo aparece cuando haya lecciones impartidas.'}</p>
       <h2>Registro del periodo</h2>
       <div class="tabla"><table>
         <tr><th>Fecha</th><th>Estudiante</th><th>Tipo</th><th class="n">Lecciones</th><th>Observación</th><th></th></tr>
@@ -101,3 +171,12 @@ if (sec) {
     </>
   )}
 </Base>
+
+<style>
+  /* Mismo aspecto que los campos de la barra (etiqueta pequeña arriba) */
+  .efectivas { display: flex; flex-direction: column; gap: 4px; flex: 0 1 auto; }
+  .efectivas .etq { font-size: 12px; color: var(--suave); }
+  .efectivas b { font-size: 18px; margin-right: 4px; }
+  .efectivas .hoy { margin-top: 2px; }
+  @media (max-width: 800px) { .efectivas { flex: 1 1 100%; } }
+</style>

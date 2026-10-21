@@ -3,11 +3,11 @@ import Base from '../../layouts/Base.astro';
 import EnviarWa from '../../components/EnviarWa.astro';
 import { exec, q, one, getAjustes } from '../../lib/db';
 import { estudiantesDe, pctIndicadores } from '../../lib/calc';
-import { num, numOrNull, str, fmt, r2 } from '../../lib/util';
+import { num, numOrNull, str, fmt, r2, sqlEtiquetaSeccion } from '../../lib/util';
 import { plantillas, llenar, enlaceWa, fechaLarga } from '../../lib/whatsapp';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
-const ev = await one<any>(`SELECT e.*, c.nombre AS componente, c.tipo, s.nivel, s.nombre AS seccion, p.nombre AS periodo, a.nombre AS asignatura
+const ev = await one<any>(`SELECT e.*, c.nombre AS componente, c.tipo, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, p.nombre AS periodo, a.nombre AS asignatura
   FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id JOIN {S}.secciones s ON s.id=e.seccion_id
   JOIN {S}.periodos p ON p.id=e.periodo_id LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id
   WHERE e.id=? AND s.usuario_id=?`, [id, user.id]);
@@ -67,7 +67,7 @@ const pl = await plantillas(user.id);
 const enviados = new Map((await q<any>(`SELECT estudiante_id, max(creado) AS cuando FROM {S}.comunicados
   WHERE usuario_id=? AND tipo='no_entrego' AND referencia=? GROUP BY estudiante_id`, [user.id, `evaluacion:${id}`])).map((r) => [r.estudiante_id, r.cuando]));
 const destinos = noEntregaron.map((e) => {
-  const mensaje = llenar(pl.no_entrego, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: `${ev.nivel}-${ev.seccion}`,
+  const mensaje = llenar(pl.no_entrego, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: ev.seccion,
     asignatura: ev.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre, fecha: fechaLarga(ev.fecha), evaluacion: ev.nombre });
   return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje), enviado: enviados.get(e.id) ?? null };
 });
@@ -76,7 +76,7 @@ const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
 <Base titulo={ev.nombre}>
   <p class="no-print"><a href={`/evaluaciones?seccion=${ev.seccion_id}&periodo=${ev.periodo_id}`}>← Evaluaciones</a></p>
   <h1>{ev.nombre}</h1>
-  <p class="sub">{ev.componente} · Sección {ev.nivel}-{ev.seccion} · {ev.periodo} · Valor {ev.porcentaje}%{!porInd && ` · ${ev.puntos_total} puntos`}</p>
+  <p class="sub">{ev.componente} · Sección {ev.seccion} · {ev.periodo} · Valor {ev.porcentaje}%{!porInd && ` · ${ev.puntos_total} puntos`}</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
   <details class="tarjeta no-print"><summary>Editar datos de la evaluación</summary>
     <form method="post" class="fila" style="margin-top:10px"><input type="hidden" name="accion" value="datos" />

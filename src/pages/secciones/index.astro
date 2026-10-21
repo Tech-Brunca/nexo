@@ -2,7 +2,8 @@
 import { asegurarComponentes } from '../../lib/sea';
 import Base from '../../layouts/Base.astro';
 import { exec, q, getAjustes } from '../../lib/db';
-import { num, numOrNull, str } from '../../lib/util';
+import { seccionDuplicada } from '../../lib/calc';
+import { num, numOrNull, str, etiquetaSeccion, validarSubgrupo } from '../../lib/util';
 const { user, inst } = Astro.locals;
 const cfg = await getAjustes(user.id);
 let msg = '';
@@ -10,13 +11,20 @@ if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
   if (accion === 'crear') {
-    if (!str(f.get('nivel')) || !str(f.get('nombre'))) msg = 'Indique nivel y nombre.';
+    const nivel = str(f.get('nivel')), nombre = str(f.get('nombre'));
+    const { subgrupo, error } = validarSubgrupo(nivel, str(f.get('subgrupo')));
+    if (!nivel || !nombre) msg = 'Indique nivel y nombre.';
+    else if (error) msg = error;
     else {
       const asg = numOrNull(f.get('asignatura_id'));
       const propia = asg && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
-      await exec('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?)',
-        [user.id, str(f.get('nivel')), str(f.get('nombre')), propia, numOrNull(f.get('nota_aprobatoria')), cfg.curso_lectivo]);
-      await asegurarComponentes(user.id, str(f.get('nivel')));
+      const nueva = { nivel, nombre, subgrupo, asignatura_id: propia, anio: cfg.curso_lectivo };
+      if (await seccionDuplicada(user.id, nueva)) msg = `Ya existe la sección ${etiquetaSeccion(nueva)} con esa asignatura en el curso ${cfg.curso_lectivo}.`;
+      else {
+        await exec('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, subgrupo, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?,?)',
+          [user.id, nivel, nombre, subgrupo, propia, numOrNull(f.get('nota_aprobatoria')), cfg.curso_lectivo]);
+        await asegurarComponentes(user.id, nivel);
+      }
     }
   } else if (accion === 'borrar') {
     await exec('DELETE FROM {S}.secciones WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
@@ -27,7 +35,7 @@ const secciones = await q<any>(
   `SELECT s.*, a.nombre AS asignatura, COUNT(m.id) AS n FROM {S}.secciones s
    LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id LEFT JOIN {S}.matriculas m ON m.seccion_id=s.id
    WHERE s.usuario_id=?
-   GROUP BY s.id, a.nombre ORDER BY s.anio DESC, length(s.nivel), s.nivel, s.nombre`, [user.id]);
+   GROUP BY s.id, a.nombre ORDER BY s.anio DESC, length(s.nivel), s.nivel, s.nombre, s.subgrupo NULLS FIRST`, [user.id]);
 ---
 <Base titulo="Secciones">
   <h1>Secciones</h1>
@@ -35,8 +43,11 @@ const secciones = await q<any>(
   {msg && <div class="msg mal">{msg}</div>}
   <form method="post" class="tarjeta fila">
     <input type="hidden" name="accion" value="crear" />
-    <label>Nivel<input name="nivel" placeholder="10" size="4" required /></label>
-    <label>Sección<input name="nombre" placeholder="3" size="6" required /></label>
+    <label>Nivel<input name="nivel" id="nivel" placeholder="10" size="4" required /></label>
+    <label>Sección<input name="nombre" placeholder="10-3" size="6" required /></label>
+    <label>Subgrupo
+      <select name="subgrupo" id="subgrupo"><option value="">Sin subgrupo</option><option>A</option><option>B</option></select>
+    </label>
     <label>Asignatura
       <select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id}>{a.nombre}</option>)}</select>
     </label>
@@ -44,11 +55,17 @@ const secciones = await q<any>(
     <button>Crear sección</button>
     {asignaturas.length === 0 && <span class="muted">Agregue sus asignaturas en <a href="/ajustes">Ajustes</a>.</span>}
   </form>
+  <script is:inline>
+    // El subgrupo (medio grupo de taller) solo aplica en 7.°, 8.° y 9.°
+    const nv = document.getElementById('nivel'), sg = document.getElementById('subgrupo');
+    const upd = () => { const ok = ['7', '8', '9'].includes(nv.value.trim()); sg.disabled = !ok; if (!ok) sg.value = ''; };
+    nv.oninput = upd; upd();
+  </script>
   <div class="tabla"><table>
     <tr><th>Sección</th><th>Asignatura</th><th>Año</th><th class="n">Nota apr.</th><th class="n">Estudiantes</th><th></th></tr>
     {secciones.map((s) => (
       <tr>
-        <td><a href={`/secciones/${s.id}`}><b>{s.nivel}-{s.nombre}</b></a></td><td>{s.asignatura ?? '—'}</td><td>{s.anio}</td>
+        <td><a href={`/secciones/${s.id}`}><b>{etiquetaSeccion(s)}</b></a></td><td>{s.asignatura ?? '—'}</td><td>{s.anio}</td>
         <td class="n">{s.nota_aprobatoria ?? cfg.nota_aprobatoria}</td><td class="n">{s.n}</td>
         <td style="text-align:right">
           <form method="post" style="display:inline" onsubmit="return confirm('¿Eliminar la sección y TODAS sus notas y asistencia?')">

@@ -1,6 +1,6 @@
 import { q, one, getAjustes, getEscala } from './db';
-import { seccion, estudiantesDe, ausencias, calcularPeriodo, calcularAnual, porcentajeAsistencia, periodosDe } from './calc';
-import { r2, fmt, TIPOS_AUSENCIA, hoy } from './util';
+import { seccion, estudiantesDe, ausencias, calcularPeriodo, calcularAnual, porcentajeAsistencia, periodosDe, leccionesEfectivas } from './calc';
+import { r2, fmt, TIPOS_AUSENCIA, hoy, etiquetaSeccion, sqlEtiquetaSeccion } from './util';
 
 export type Celda = string | number | null;
 export type Bloque = { titulo?: string; meta?: [string, string][]; columnas: string[]; num?: number[]; filas: Celda[][]; pie?: [string, string][]; nuevaPagina?: boolean };
@@ -24,7 +24,7 @@ type P = URLSearchParams;
 const NIVEL_TXT: Record<string, string> = { '0': 'No entregó', '1': 'Inicial (1)', '2': 'Intermedio (2)', '3': 'Avanzado (3)' };
 
 function metaSeccion(sec: any, docente: string, extra: [string, string][] = []): [string, string][] {
-  return [['Docente', docente], ['Asignatura', sec.asignatura ?? '—'], ['Sección', `${sec.nivel}-${sec.nombre}`], ...extra];
+  return [['Docente', docente], ['Asignatura', sec.asignatura ?? '—'], ['Sección', `${etiquetaSeccion(sec)}`], ...extra];
 }
 async function rangoFechas(uid: number, p: P) {
   const desde = p.get('desde') || null, hasta = p.get('hasta') || null;
@@ -43,7 +43,7 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
   if (tipo === 'lista') {
     if (!sec) return 'Elija una sección.';
     const ests = filtroSub(await estudiantesDe(sec.id), p);
-    return { titulo: 'Lista de Estudiantes', archivo: `lista-${sec.nivel}-${sec.nombre}`, firma: false,
+    return { titulo: 'Lista de Estudiantes', archivo: `lista-${etiquetaSeccion(sec)}`, firma: false,
       meta: [...metaSeccion(sec, c.docente, subMeta), ['Asunto', p.get('asunto') || '________________________'], ['Fecha', p.get('fecha') || '____/____/______']],
       bloques: [{ columnas: ['#', 'Estudiante', 'Cédula', 'Firma'], filas: ests.map((e, i) => [i + 1, `${e.apellidos} ${e.nombre}`, e.cedula, '']) }] };
   }
@@ -53,10 +53,10 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     const r = await rangoFechas(c.uid, p);
     const ests = filtroSub(await estudiantesDe(sec.id), p);
     const aus = await ausencias(c.uid, sec.id, r.desde, r.hasta);
-    const lec = r.per ? Number((await one<any>('SELECT cantidad FROM {S}.lecciones WHERE seccion_id=? AND periodo_id=?', [sec.id, r.per.id]))?.cantidad ?? 0) : 0;
+    const lec = r.per ? (await leccionesEfectivas(sec.id, r.per)).efectivas : 0;
     const esc = await getEscala(c.uid);
     const conPct = lec > 0;
-    return { titulo: 'Resumen de Asistencia', archivo: `asistencia-resumen-${sec.nivel}-${sec.nombre}`, firma: false,
+    return { titulo: 'Resumen de Asistencia', archivo: `asistencia-resumen-${etiquetaSeccion(sec)}`, firma: false,
       meta: [...metaSeccion(sec, c.docente, subMeta), ['Periodo', r.etiqueta], ...(lec ? [['Lecciones efectivas', String(lec)] as [string, string]] : [])],
       nota: conPct ? '% Asistencia = porcentaje del valor del componente de asistencia según la escala configurada.' : 'Para calcular porcentajes elija un periodo con lecciones efectivas registradas.',
       bloques: [{ columnas: ['#', 'Estudiante', 'A.J', 'A.I', 'T.J', 'T.I', ...(conPct ? ['% Ausentismo', '% Asistencia'] : [])], num: [2, 3, 4, 5, 6, 7],
@@ -74,7 +74,7 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     if (p.get('estudiante')) ests = ests.filter((e) => e.id === Number(p.get('estudiante')));
     const regs = await q<any>(`SELECT * FROM {S}.asistencia WHERE seccion_id=? AND (?::date IS NULL OR fecha>=?::date) AND (?::date IS NULL OR fecha<=?::date) ORDER BY fecha`,
       [sec.id, r.desde, r.desde, r.hasta, r.hasta]);
-    const lec = r.per ? Number((await one<any>('SELECT cantidad FROM {S}.lecciones WHERE seccion_id=? AND periodo_id=?', [sec.id, r.per.id]))?.cantidad ?? 0) : 0;
+    const lec = r.per ? (await leccionesEfectivas(sec.id, r.per)).efectivas : 0;
     const aj = await getAjustes(c.uid);
     const bloques: Bloque[] = ests.map((e, i) => {
       const mios = regs.filter((x) => x.estudiante_id === e.id);
@@ -87,21 +87,21 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
         pie: [['Ausencias injustificadas', String(t.AI)], ['Ausencias justificadas', String(t.AJ)], ['Tardías injustificadas', String(t.TI)], ['Tardías justificadas', String(t.TJ)],
           ...(lec ? [['Ausentismo', `${r2((eq / lec) * 100)}%`] as [string, string]] : [])] };
     });
-    return { titulo: 'Informe Detalle de Asistencia', archivo: `asistencia-detalle-${sec.nivel}-${sec.nombre}`, firma: true,
+    return { titulo: 'Informe Detalle de Asistencia', archivo: `asistencia-detalle-${etiquetaSeccion(sec)}`, firma: true,
       meta: [...metaSeccion(sec, c.docente), ['Periodo', r.etiqueta]], bloques };
   }
 
   if (tipo === 'alerta') {
     const aj = await getAjustes(c.uid);
     const dias = Number(p.get('dias') || aj.alerta_dias), min = Number(p.get('min') || aj.alerta_ausencias);
-    const filas = await q<any>(`SELECT e.apellidos, e.nombre, e.encargado, e.telefono, s.nivel, s.nombre AS seccion, SUM(a.lecciones) AS lecciones, COUNT(*) AS dias
+    const filas = await q<any>(`SELECT e.apellidos, e.nombre, e.encargado, e.telefono, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, SUM(a.lecciones) AS lecciones, COUNT(*) AS dias
       FROM {S}.asistencia a JOIN {S}.estudiantes e ON e.id=a.estudiante_id JOIN {S}.secciones s ON s.id=a.seccion_id
       WHERE s.usuario_id=? AND a.tipo='AI' AND a.fecha BETWEEN ?::date - ?::int AND ?::date
       GROUP BY e.id, s.id HAVING SUM(a.lecciones) >= ? ORDER BY lecciones DESC, e.apellidos`, [c.uid, hoy(), dias, hoy(), min]);
     return { titulo: 'Informe Alerta Ausentismo', archivo: 'alerta-ausentismo', firma: true,
       meta: [['Docente', c.docente], ['Criterio', `${min} o más lecciones ausente (injustificadas) en los últimos ${dias} días`]],
       bloques: [{ columnas: ['#', 'Estudiante', 'Sección', 'Días', 'Lecciones ausente', 'Encargado(a)', 'Teléfono'], num: [3, 4],
-        filas: filas.map((f, i) => [i + 1, `${f.apellidos} ${f.nombre}`, `${f.nivel}-${f.seccion}`, f.dias, f.lecciones, f.encargado, f.telefono]) }] };
+        filas: filas.map((f, i) => [i + 1, `${f.apellidos} ${f.nombre}`, f.seccion, f.dias, f.lecciones, f.encargado, f.telefono]) }] };
   }
 
   if (tipo === 'calificaciones' || tipo === 'calificaciones-individual') {
@@ -112,7 +112,7 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     if (!r) return 'Elija un periodo.';
     let filas = filtroSub(r.filas.map((f) => ({ ...f, subgrupo: f.est.subgrupo })), p);
     if (tipo === 'calificaciones') {
-      return { titulo: 'Informe Detalle de Calificaciones', archivo: `calificaciones-${sec.nivel}-${sec.nombre}-p${r.per.numero}`, firma: true,
+      return { titulo: 'Informe Detalle de Calificaciones', archivo: `calificaciones-${etiquetaSeccion(sec)}-p${r.per.numero}`, firma: true,
         meta: [...metaSeccion(sec, c.docente, subMeta), ['Periodo', r.per.nombre], ['Ponderado del periodo', `${r.per.ponderado}%`]],
         bloques: [{ columnas: ['#', 'Nombre del estudiante', 'Cédula', ...r.comps.map((x) => `${x.nombre} (${x.porcentaje}%)`), 'Nota final', 'Ponderado', 'Condición'],
           num: r.comps.map((_, i) => i + 3).concat([r.comps.length + 3, r.comps.length + 4]),
@@ -120,7 +120,7 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
             r2(f.total * Number(r.per.ponderado) / 100), f.condicion]) }] };
     }
     if (p.get('estudiante')) filas = filas.filter((f) => f.est.id === Number(p.get('estudiante')));
-    return { titulo: 'Informe de Calificaciones por Componentes', archivo: `calificaciones-individual-${sec.nivel}-${sec.nombre}-p${r.per.numero}`, firma: true,
+    return { titulo: 'Informe de Calificaciones por Componentes', archivo: `calificaciones-individual-${etiquetaSeccion(sec)}-p${r.per.numero}`, firma: true,
       meta: [...metaSeccion(sec, c.docente), ['Periodo', r.per.nombre]],
       bloques: filas.map((f, i) => ({ titulo: `${f.est.apellidos} ${f.est.nombre} · ${f.est.cedula}`, nuevaPagina: i > 0,
         columnas: ['Componente', 'Porcentaje', 'Obtenido'], num: [1, 2],
@@ -151,7 +151,7 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     if (!sec) return 'Elija una sección.';
     const r = (await calcularAnual(c.uid, sec.id))!;
     const filas = filtroSub(r.filas.map((f) => ({ ...f, subgrupo: f.est.subgrupo })), p);
-    return { titulo: 'Informe Anual de Calificaciones', archivo: `anual-${sec.nivel}-${sec.nombre}`, firma: true,
+    return { titulo: 'Informe Anual de Calificaciones', archivo: `anual-${etiquetaSeccion(sec)}`, firma: true,
       meta: [...metaSeccion(sec, c.docente, subMeta), ['Nota mínima', String(r.notaApb)]],
       bloques: [{ columnas: ['#', 'Estudiante', ...r.periodos.flatMap((x: any) => [`${x.nombre} nota`, `Ponderado (${x.ponderado}%)`]), 'Promedio', 'Condición'],
         num: r.periodos.flatMap((_: any, i: number) => [2 + 2 * i, 3 + 2 * i]).concat([2 + 2 * r.periodos.length]),
@@ -197,7 +197,7 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     });
     const lista = p.get('solo') ? filas.filter((x) => x.exime) : filas;
     const n = filas.filter((x) => x.exime).length;
-    return { titulo: 'Estudiantes eximidos', archivo: `eximidos-${sec.nivel}-${sec.nombre}`, firma: true,
+    return { titulo: 'Estudiantes eximidos', archivo: `eximidos-${etiquetaSeccion(sec)}`, firma: true,
       meta: [...metaSeccion(sec, c.docente, subMeta), ['Requisito', `${p1.nombre} > ${umbral} y todas las notas del ${p2.nombre} > ${umbral}`], ['Eximidos', `${n} de ${filas.length}`]],
       nota: `Se revisan las evaluaciones del ${p2.nombre} ya aplicadas (${aplicadas.length}) y la asistencia, cada una en escala de 100. Del ${p1.nombre} cuenta solo la nota final.`,
       bloques: [{ columnas: ['#', 'Estudiante', 'Cédula', `Nota ${p1.nombre}`, `Nota más baja ${p2.nombre}`, 'Condición', 'No cumple en'], num: [3, 4],
@@ -216,10 +216,10 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
       const r = (await calcularAnual(c.uid, s.id))!;
       primera ??= r.sec;
       for (const f of r.filas.filter((x) => x.anual < r.notaApb))
-        filas.push([`${f.est.apellidos} ${f.est.nombre}`, f.est.cedula, ...(nivel ? [`${r.sec.nivel}-${r.sec.nombre}`] : []), f.anual, 'Aplazado',
+        filas.push([`${f.est.apellidos} ${f.est.nombre}`, f.est.cedula, ...(nivel ? [`${etiquetaSeccion(r.sec)}`] : []), f.anual, 'Aplazado',
           f.conv?.nota1 ?? '', f.conv?.nota2 ?? '', f.condicion]);
     }
-    return { titulo: 'Lista de Estudiantes Aplazados', archivo: nivel ? `aplazados-nivel-${nivel}` : `aplazados-${primera.nivel}-${primera.nombre}`, firma: true,
+    return { titulo: 'Lista de Estudiantes Aplazados', archivo: nivel ? `aplazados-nivel-${nivel}` : `aplazados-${etiquetaSeccion(primera)}`, firma: true,
       meta: nivel ? [['Docente', c.docente], ['Asignatura', primera?.asignatura ?? '—'], ['Nivel', nivel]] : metaSeccion(primera, c.docente),
       nota: 'Un valor de -1 en convocatorias indica que el estudiante no se presentó.',
       bloques: [{ columnas: ['Estudiante', 'Cédula', ...(nivel ? ['Grupo'] : []), 'Prom.', 'Condición', 'Conv. I', 'Conv. II', 'Condición final'],

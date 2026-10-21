@@ -1,7 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import { q, getAjustes } from '../lib/db';
-import { hoy, csv } from '../lib/util';
+import { hoy, csv, sqlEtiquetaSeccion } from '../lib/util';
 import EnviarWa from '../components/EnviarWa.astro';
 import { plantillas, llenar, enlaceWa } from '../lib/whatsapp';
 const { user, inst } = Astro.locals;
@@ -10,7 +10,7 @@ const cfg = { institucion: inst!.nombre, docente: user.nombre, alerta_dias: aj.a
 const dias = Number(Astro.url.searchParams.get('dias') ?? cfg.alerta_dias);
 const minimo = Number(Astro.url.searchParams.get('min') ?? cfg.alerta_ausencias);
 const filas = await q<any>(
-  `SELECT e.id, e.cedula, e.apellidos, e.nombre, e.encargado, e.telefono, e.fecha_nac, s.id AS seccion_id, s.nivel, s.nombre AS seccion,
+  `SELECT e.id, e.cedula, e.apellidos, e.nombre, e.encargado, e.telefono, e.fecha_nac, s.id AS seccion_id, s.nivel, ${sqlEtiquetaSeccion()} AS seccion,
      SUM(a.lecciones) AS lecciones, COUNT(*) AS dias, MAX(a.fecha) AS ultima, g.nombre AS asignatura
    FROM {S}.asistencia a JOIN {S}.estudiantes e ON e.id=a.estudiante_id JOIN {S}.secciones s ON s.id=a.seccion_id
    LEFT JOIN general.asignaturas g ON g.id=s.asignatura_id
@@ -21,12 +21,12 @@ const edad = (f: string | null) => (f ? Math.floor((Date.now() - new Date(f).get
 if (Astro.url.searchParams.get('csv')) {
   return new Response(csv([
     ['Cédula', 'Estudiante', 'Edad', 'Sección', 'Lecciones ausente', 'Días', 'Última ausencia', 'Encargado', 'Teléfono'],
-    ...filas.map((f) => [f.cedula, `${f.apellidos} ${f.nombre}`, edad(f.fecha_nac), `${f.nivel}-${f.seccion}`, f.lecciones, f.dias, f.ultima, f.encargado, f.telefono]),
+    ...filas.map((f) => [f.cedula, `${f.apellidos} ${f.nombre}`, edad(f.fecha_nac), f.seccion, f.lecciones, f.dias, f.ultima, f.encargado, f.telefono]),
   ]), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="alerta-temprana.csv"' } });
 }
 const pl = await plantillas(user.id);
 const destinos = filas.map((f) => {
-  const mensaje = llenar(pl.alerta, { encargado: f.encargado, estudiante: `${f.nombre} ${f.apellidos}`, seccion: `${f.nivel}-${f.seccion}`,
+  const mensaje = llenar(pl.alerta, { encargado: f.encargado, estudiante: `${f.nombre} ${f.apellidos}`, seccion: f.seccion,
     asignatura: f.asignatura ?? '', docente: user.nombre, colegio: inst!.nombre, lecciones: f.lecciones });
   return { estudiante_id: f.id, nombre: `${f.apellidos} ${f.nombre}`, encargado: f.encargado, telefono: f.telefono, mensaje, enlace: enlaceWa(f.telefono, mensaje) };
 });
@@ -48,7 +48,7 @@ const wa = (t: string) => { const d = t.replace(/\D/g, ''); return d.length === 
       <tr><th>Estudiante</th><th class="n">Edad</th><th>Sección</th><th class="n">Lecciones</th><th class="n">Días</th><th>Última</th><th>Encargado(a)</th><th>Teléfono</th></tr>
       {filas.map((f) => (
         <tr><td><b>{f.apellidos} {f.nombre}</b><br /><span class="muted">{f.cedula}</span></td><td class="n">{edad(f.fecha_nac)}</td>
-          <td><a href={`/asistencia?seccion=${f.seccion_id}`}>{f.nivel}-{f.seccion}</a></td>
+          <td><a href={`/asistencia?seccion=${f.seccion_id}`}>{f.seccion}</a></td>
           <td class="n"><span class="chip mal">{f.lecciones}</span></td><td class="n">{f.dias}</td><td>{f.ultima}</td><td>{f.encargado || '—'}</td>
           <td>{f.telefono ? (wa(f.telefono) ? <a href={wa(f.telefono)!} target="_blank" rel="noopener">{f.telefono}</a> : f.telefono) : '—'}</td></tr>
       ))}
