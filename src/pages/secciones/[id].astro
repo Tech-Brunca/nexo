@@ -3,6 +3,7 @@ import Base from '../../layouts/Base.astro';
 import { exec, q, one } from '../../lib/db';
 import { estudiantesDe, seccion } from '../../lib/calc';
 import { num, numOrNull, str, parseCsv } from '../../lib/util';
+import { leerExcel, CEDULA_EJEMPLO } from '../../lib/excel';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
 const sec = await seccion(user.id, id);
@@ -10,7 +11,7 @@ if (!sec) return Astro.redirect('/secciones');
 let msg = '', error = '';
 
 async function guardarEstudiante(d: Record<string, string>, subgrupo = '') {
-  const ced = (d.cedula || '').trim();
+  const ced = (d.cedula || '').replace(/[-–\s]/g, '');
   if (!ced || !d.apellidos || !d.nombre) return false;
   const fecha = (d.fecha_nac || '').trim();
   let fn: string | null = /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha
@@ -37,21 +38,33 @@ if (Astro.request.method === 'POST') {
     (await guardarEstudiante(d, str(f.get('subgrupo')))) ? (msg = 'Estudiante agregado.') : (error = 'Cédula, apellidos y nombre son obligatorios.');
   } else if (accion === 'importar') {
     const archivo = f.get('archivo');
-    if (archivo instanceof File && archivo.size) {
-      const filas = parseCsv(await archivo.text());
-      const cab = filas.shift()!.map((c) => c.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+    const ext = archivo instanceof File ? (archivo.name.split('.').pop() ?? '').toLowerCase() : '';
+    if (ext === 'xls') error = 'El formato .xls (Excel 97-2003) no se puede leer. En Excel use «Guardar como» → «Libro de Excel (.xlsx)».';
+    else if (archivo instanceof File && archivo.size) {
+      const filas = ext === 'xlsx' ? await leerExcel(await archivo.arrayBuffer()) : parseCsv(await archivo.text());
+      const norm = (c: string) => c.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      // La cabecera puede venir debajo de filas de título (nombre del colegio, fecha…)
+      const h = filas.findIndex((r) => r.some((c) => norm(c).startsWith('cedula')));
+      const cab = h >= 0 ? filas[h].map(norm) : [];
       const col = (n: string) => cab.findIndex((c) => c.startsWith(n));
-      const idx = { cedula: col('cedula'), apellidos: col('apellido'), nombre: col('nombre'), fecha_nac: col('fecha'), genero: col('genero'), encargado: col('encargad'), telefono: col('telefono'), extranjero: col('extranjer'), subgrupo: col('subgrupo') };
-      if (idx.cedula < 0 || idx.apellidos < 0 || idx.nombre < 0) error = 'El archivo debe tener columnas cedula, apellidos y nombre. Descargue la plantilla.';
+      const idx = { cedula: col('cedula'), apellidos: col('apellido'), apellido1: col('primer apellido'), apellido2: col('segundo apellido'), nombre: col('nombre'),
+        seccion: col('seccion'), fecha_nac: col('fecha'), genero: col('genero'), encargado: col('encargad'), telefono: col('telefono'), extranjero: col('extranjer'), subgrupo: col('subgrupo') };
+      if (idx.cedula < 0 || (idx.apellidos < 0 && idx.apellido1 < 0) || idx.nombre < 0) error = 'El archivo debe tener columnas Cédula, Primer apellido, Segundo apellido y Nombre. Descargue la plantilla.';
       else {
-        let n = 0, malas = 0;
-        for (const r of filas) {
+        const clave = (v: string) => v.replace(/\s/g, '').split(/[-–]/).map((p) => p.replace(/^0+(?=.)/, '').toUpperCase()).join('-');
+        const esta = clave(`${sec.nivel}-${sec.nombre}`);
+        let n = 0, malas = 0, otras = 0;
+        for (const r of filas.slice(h + 1)) {
           const d: any = {}; for (const [k, i] of Object.entries(idx)) d[k] = i >= 0 ? r[i] ?? '' : '';
+          if (idx.apellidos < 0) d.apellidos = `${d.apellido1.trim()} ${d.apellido2.trim()}`.trim();
+          if (d.cedula.replace(/[-–\s]/g, '') === CEDULA_EJEMPLO) continue; // fila de ejemplo de la plantilla
+          if (d.seccion.trim() && clave(d.seccion) !== esta) { otras++; continue; }
           try { if (await guardarEstudiante(d, d.subgrupo)) n++; else malas++; } catch { malas++; }
         }
-        msg = `${n} estudiantes importados o actualizados.` + (malas ? ` ${malas} fila(s) omitidas por datos incompletos.` : '');
+        msg = `${n} estudiantes importados o actualizados.` + (malas ? ` ${malas} fila(s) omitidas por datos incompletos.` : '')
+          + (otras ? ` ${otras} fila(s) de otras secciones no se importaron aquí.` : '');
       }
-    } else error = 'Elija un archivo CSV.';
+    } else error = 'Elija un archivo de Excel (.xlsx) o CSV.';
   } else if (accion === 'quitar') {
     await exec('DELETE FROM {S}.matriculas WHERE estudiante_id=? AND seccion_id=?', [num(f.get('estudiante_id')), id]);
   } else if (accion === 'subgrupo') {
@@ -113,10 +126,10 @@ const edad = (f: string | null) => f ? Math.floor((Date.now() - new Date(f).getT
     </form>
     <form method="post" enctype="multipart/form-data" class="fila" style="margin-top:12px">
       <input type="hidden" name="accion" value="importar" />
-      <label>Importar lista (CSV)<input type="file" name="archivo" accept=".csv,text/csv" /></label>
+      <label>Importar lista (Excel o CSV)<input type="file" name="archivo" accept=".xlsx,.csv,text/csv" /></label>
       <button class="sec">Importar</button>
-      <a href="/plantilla-estudiantes.csv">Descargar plantilla</a>
-      <span class="muted">Guarde la lista de Excel como «CSV (delimitado por comas)». Si la cédula ya existe, se actualizan sus datos.</span>
+      <a href="/plantilla-estudiantes.xlsx">Descargar plantilla</a>
+      <span class="muted">Llene la plantilla de Excel desde la fila 6 y súbala tal cual (.xlsx). Solo se importan las filas de esta sección (o sin sección). Si la cédula ya existe, se actualizan sus datos.</span>
     </form>
   </div>
 

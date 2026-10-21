@@ -9,7 +9,7 @@ if (Astro.request.method === 'POST') {
   const accion = str(f.get('accion'));
   if (accion === 'editar') {
     await exec('UPDATE {S}.estudiantes SET cedula=?, apellidos=?, nombre=?, fecha_nac=?, genero=?, encargado=?, telefono=?, extranjero=?, activo=? WHERE id=? AND usuario_id=?',
-      [str(f.get('cedula')), str(f.get('apellidos')), str(f.get('nombre')), str(f.get('fecha_nac')) || null, str(f.get('genero')) || null,
+      [str(f.get('cedula')).replace(/[-–\s]/g, ''), str(f.get('apellidos')), str(f.get('nombre')), str(f.get('fecha_nac')) || null, str(f.get('genero')) || null,
        str(f.get('encargado')), str(f.get('telefono')), f.get('extranjero') ? 1 : 0, f.get('activo') ? 1 : 0, num(f.get('id')), user.id]);
     msg = 'Datos actualizados.';
   } else if (accion === 'borrar') {

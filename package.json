@@ -11,6 +11,7 @@
     "@astrojs/netlify": "^8.2.10",
     "@astrojs/node": "^11.1.9",
     "astro": "^7.4.1",
+    "exceljs": "^4.4.0",
     "pg": "^8.23.1"
   },
   "type": "module",
