@@ -82,8 +82,8 @@ DB_PASSWORD=otra-clave
 - **Calificación masiva**: marque varios estudiantes (casillas, Shift+clic o arrastrando) y aplique
   la misma nota o nivel.
 - Cada componente se topa en su porcentaje. Asistencia: ausencias injustificadas + tardías
-  convertidas, sobre las lecciones efectivas → escala editable en *Ajustes*
-  (**verifique que coincida con el Reglamento de Evaluación vigente**).
+  convertidas, sobre las lecciones impartidas → escala del MEP (0% a menos de 1% → 10; 1% a menos de 10% → 9;
+  … 90% a 100% → 0, para un componente de 10%), proporcional al valor del componente y editable en *Ajustes*.
 - Nota anual: suma de `nota del periodo × ponderado`; bajo la mínima → *Aplazado*; convocatorias I y II.
 
 ## SEA

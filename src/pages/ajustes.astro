@@ -20,6 +20,10 @@ if (Astro.request.method === 'POST') {
       await exec('INSERT INTO general.escala_asistencia VALUES (?,?,?,?) ON CONFLICT DO NOTHING', [user.id, num(desde[i]), num(hasta[i]), num(pct[i])]);
     }
     ok = 'Escala de asistencia guardada.';
+  } else if (accion === 'escala-mep') {
+    // Al quedar vacía, getEscala vuelve a cargar la tabla del MEP
+    await exec('DELETE FROM general.escala_asistencia WHERE usuario_id=?', [user.id]);
+    ok = 'Se restauró la escala del MEP.';
   } else if (accion === 'asignatura') {
     if (str(f.get('nombre'))) await exec('INSERT INTO general.asignaturas (usuario_id, nombre) VALUES (?,?)', [user.id, str(f.get('nombre'))]);
   } else if (accion === 'borrar-asignatura') {
@@ -72,13 +76,15 @@ const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuari
   <form method="post" class="tarjeta">
     <input type="hidden" name="accion" value="escala" />
     <h2 style="margin-top:0">Escala del componente de asistencia</h2>
-    <p class="muted">Porcentaje de ausencias injustificadas (incluye tardías convertidas) → porcentaje del valor del componente que obtiene el estudiante. Verifique que coincida con el Reglamento de Evaluación vigente.</p>
+    <p class="muted">Porcentaje de ausencias injustificadas del total de lecciones impartidas en el periodo (incluye las tardías convertidas) → porcentaje del valor del componente que obtiene el estudiante. Viene con la tabla del MEP: con asistencia de 10%, «0% a menos del 1%» da 10, «del 1% a menos del 10%» da 9, y así hasta «del 90% al 100%», que da 0. Si su asistencia vale otro porcentaje, se ajusta en proporción (con 5%: 5, 4,5, 4…).</p>
     <table style="max-width:520px">
       <tr><th>Desde %</th><th>Hasta % (sin incluir)</th><th>Obtiene %</th></tr>
       {[...escala, { desde: '', hasta: '', porcentaje: '' }].map((e) => (
         <tr><td><input name="desde" value={e.desde} /></td><td><input name="hasta" value={e.hasta} /></td><td><input name="pct" value={e.porcentaje} /></td></tr>
       ))}
     </table>
-    <p><button>Guardar escala</button></p>
+    <p class="fila"><button>Guardar escala</button>
+      <button class="sec" form="escala-mep" onclick="return confirm('¿Volver a la escala del MEP? Se pierden los cambios hechos a la escala.')">Restaurar escala del MEP</button></p>
   </form>
+  <form id="escala-mep" method="post"><input type="hidden" name="accion" value="escala-mep" /></form>
 </Base>
