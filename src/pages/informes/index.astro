@@ -11,6 +11,10 @@ const niveles = [...new Set(secciones.map((s) => s.nivel))];
 const evaluaciones = await q<any>(`SELECT e.id, e.nombre, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, p.nombre AS periodo FROM {S}.evaluaciones e
   JOIN {S}.secciones s ON s.id=e.seccion_id JOIN {S}.componentes c ON c.id=e.componente_id JOIN {S}.periodos p ON p.id=e.periodo_id
   WHERE s.usuario_id=? AND c.tipo='indicadores' ORDER BY e.fecha DESC NULLS LAST, e.id DESC LIMIT 200`, [user.id]);
+// Pruebas del II periodo, para elegir cuál se exime
+const pruebas2 = await q<any>(`SELECT e.id, e.nombre, e.seccion_id FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id
+  JOIN {S}.periodos p ON p.id=e.periodo_id JOIN {S}.secciones s ON s.id=e.seccion_id
+  WHERE s.usuario_id=? AND c.clave='prueba' AND p.numero=2 ORDER BY e.fecha NULLS LAST, e.id`, [user.id]);
 const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_id FROM {S}.estudiantes e JOIN {S}.matriculas m ON m.estudiante_id=e.id
   WHERE e.usuario_id=? AND e.activo=1 ORDER BY e.apellidos, e.nombre`, [user.id]);
 ---
@@ -37,7 +41,11 @@ const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_
             <label>Estudiante<select name="estudiante" class="sel-est"><option value="">Todo el grupo</option>
               {estudiantes.map((e) => <option value={e.id} data-sec={e.seccion_id}>{e.apellidos} {e.nombre}</option>)}</select></label>
           )}
-          {c.pide.includes('umbral') && <><label>Nota mayor a<input type="number" name="umbral" value="90" min="0" max="100" style="width:80px" /></label><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="solo" value="1" /> Solo eximidos</label></>}
+          {c.pide.includes('examen') && (
+            <label>Prueba que se exime<select name="excluir" class="sel-sec-dep"><option value="">La última prueba del II periodo</option>
+              {pruebas2.map((e) => <option value={e.id} data-sec={e.seccion_id}>{e.nombre}</option>)}</select></label>
+          )}
+          {c.pide.includes('umbral') && <><label>Nota mínima (igual o mayor)<input type="number" name="umbral" value="90" min="0" max="100" style="width:80px" /></label><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="solo" value="1" /> Solo eximidos</label></>}
           {c.pide.includes('asunto') && <><label style="flex:1">Asunto<input name="asunto" /></label><label>Fecha<input type="date" name="fecha" value={hoy()} /></label></>}
           {c.pide.includes('dias') && <><label>Últimos días<input type="number" name="dias" style="width:80px" /></label><label>Lecciones desde<input type="number" name="min" style="width:80px" /></label></>}
           {c.pide.includes('evaluacion') && (
@@ -53,9 +61,11 @@ const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_
   <script is:inline>
     // El selector de estudiante muestra solo los de la sección elegida
     document.querySelectorAll('.grid-inf form').forEach((f) => {
-      const s = f.querySelector('.sel-seccion'), e = f.querySelector('.sel-est'); if (!s || !e) return;
-      const filtrar = () => { e.value = ''; e.querySelectorAll('option[data-sec]').forEach((o) => { o.hidden = o.dataset.sec !== s.value; }); };
-      s.addEventListener('change', filtrar); filtrar();
+      const s = f.querySelector('.sel-seccion'); if (!s) return;
+      f.querySelectorAll('.sel-est, .sel-sec-dep').forEach((e) => {
+        const filtrar = () => { e.value = ''; e.querySelectorAll('option[data-sec]').forEach((o) => { o.hidden = o.dataset.sec !== s.value; }); };
+        s.addEventListener('change', filtrar); filtrar();
+      });
     });
   </script>
 </Base>
