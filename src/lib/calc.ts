@@ -1,6 +1,6 @@
 import { q, one, getAjustes, getEscala } from './db';
 import { r2, etiquetaSeccion } from './util';
-import { asegurarComponentes } from './sea';
+import { asegurarComponentes, materializarImportadas } from './sea';
 
 export type Est = { id: number; cedula: string; apellidos: string; nombre: string; subgrupo: string; encargado: string; telefono: string; fecha_nac: string | null };
 export type Comp = { id: number; nombre: string; porcentaje: number; tipo: 'puntos' | 'indicadores' | 'asistencia'; clave: string | null };
@@ -94,6 +94,7 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
   const aj = await getAjustes(uid);
   const notaApb = Number(sec.nota_aprobatoria ?? aj.nota_aprobatoria);
   await asegurarComponentes(uid, sec.nivel);
+  await materializarImportadas(uid, sec, periodoId);
   const comps = await q<Comp>(
     'SELECT id, nombre, porcentaje, tipo, clave FROM {S}.componentes WHERE usuario_id = ? AND nivel = ? ORDER BY orden, id', [uid, sec.nivel]);
   // Valores importados (ReDDi / SEA): reemplazan lo calculado para ese componente
@@ -137,7 +138,8 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
         for (const ev of evals.filter((x) => x.componente_id === c.id)) {
           let p = 0;
           const n = notaMap.get(`${ev.id}:${e.id}`);
-          if (c.tipo === 'indicadores') {
+          const tipoEv = ev.tipo ?? c.tipo; // una evaluación puede calificarse por puntos aunque el componente sea por indicadores
+          if (tipoEv === 'indicadores') {
             const niveles = valMap.get(`${ev.id}:${e.id}`) ?? [];
             p = pctIndicadores(niveles, ev.porcentaje, aj.ne_cuenta_cero).pct;
             calificada[ev.id] = niveles.some((x) => x !== null && x !== undefined) || !!n?.no_entrego;
@@ -148,7 +150,7 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
             p = ev.puntos_total > 0 && n && n.puntos !== null && !n.no_entrego ? (Number(n.puntos) / ev.puntos_total) * ev.porcentaje : 0;
           }
           detalle[ev.id] = r2(p);
-          nota100[ev.id] = c.tipo === 'indicadores'
+          nota100[ev.id] = tipoEv === 'indicadores'
             ? (ev.porcentaje > 0 ? (p / ev.porcentaje) * 100 : 0)
             : (ev.puntos_total > 0 && n && n.puntos !== null && !n.no_entrego ? (Number(n.puntos) / ev.puntos_total) * 100 : 0);
           v += p;

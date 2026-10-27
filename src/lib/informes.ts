@@ -169,7 +169,9 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     // si no, es la última prueba del periodo (solo cuando hay dos o más).
     const compPrueba = r2.comps.find((x) => x.clave === 'prueba');
     const pruebas = r2.evals.filter((ev) => ev.componente_id === compPrueba?.id)
-      .sort((x, y) => String(x.fecha ?? '').localeCompare(String(y.fecha ?? '')) || x.id - y.id);
+      // la del SEA es la I prueba; la creada sola al importar ('auto') es la II
+      .sort((x, y) => (x.origen === 'sea' ? 0 : 1) - (y.origen === 'sea' ? 0 : 1) || (x.origen === 'auto' ? 1 : 0) - (y.origen === 'auto' ? 1 : 0)
+        || String(x.fecha ?? '').localeCompare(String(y.fecha ?? '')) || x.id - y.id);
     const elegida = Number(p.get('excluir') || 0);
     const excluida = elegida ? pruebas.find((ev) => ev.id === elegida) ?? null : pruebas.length >= 2 ? pruebas[pruebas.length - 1] : null;
     // Cuentan las evaluaciones ya aplicadas (con al menos una nota en el grupo), menos la prueba eximida

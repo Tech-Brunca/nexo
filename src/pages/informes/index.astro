@@ -10,7 +10,7 @@ const periodos = await q<any>('SELECT id, nombre FROM {S}.periodos WHERE usuario
 const niveles = [...new Set(secciones.map((s) => s.nivel))];
 const evaluaciones = await q<any>(`SELECT e.id, e.nombre, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, p.nombre AS periodo FROM {S}.evaluaciones e
   JOIN {S}.secciones s ON s.id=e.seccion_id JOIN {S}.componentes c ON c.id=e.componente_id JOIN {S}.periodos p ON p.id=e.periodo_id
-  WHERE s.usuario_id=? AND c.tipo='indicadores' ORDER BY e.fecha DESC NULLS LAST, e.id DESC LIMIT 200`, [user.id]);
+  WHERE s.usuario_id=? AND COALESCE(e.tipo, c.tipo)='indicadores' ORDER BY e.fecha DESC NULLS LAST, e.id DESC LIMIT 200`, [user.id]);
 // Pruebas del II periodo, para elegir cuál se exime
 const pruebas2 = await q<any>(`SELECT e.id, e.nombre, e.seccion_id FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id
   JOIN {S}.periodos p ON p.id=e.periodo_id JOIN {S}.secciones s ON s.id=e.seccion_id

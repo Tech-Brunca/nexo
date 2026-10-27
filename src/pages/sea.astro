@@ -5,7 +5,7 @@ import Selector from '../components/Selector.astro';
 import { q, one, exec, transaccion, preparar, esquemaActual } from '../lib/db';
 import { seccion, calcularPeriodo } from '../lib/calc';
 import { str, fmt, parseCsv, etiquetaSeccion } from '../lib/util';
-import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes } from '../lib/sea';
+import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes, guardarNotasSea, valorPrimeraPrueba, type NotaSea } from '../lib/sea';
 const { user } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
@@ -37,10 +37,14 @@ if (sec && per && Astro.request.method === 'POST') {
   const accion = str(f.get('accion'));
   if (accion === 'quitar') {
     await exec('DELETE FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=?', [sec.id, per.id]);
-    msg = `Se quitaron las notas importadas de ${per.nombre}. Ahora se usan las calculadas en Nexo.`;
+    // Las evaluaciones del SEA y la II prueba creada sola (si nadie la calificó)
+    await exec(`DELETE FROM {S}.evaluaciones e WHERE e.seccion_id=? AND e.periodo_id=? AND (e.origen='sea' OR (e.origen='auto'
+      AND NOT EXISTS (SELECT 1 FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego))))`, [sec.id, per.id]);
+    msg = `Se quitaron las calificaciones importadas de ${per.nombre}.`;
   } else if (accion === 'importar') {
     const archivo = f.get('archivo');
     const conNotas = str(f.get('modo')) !== 'estudiantes';
+    const primeraIndicada = Number(str(f.get('prueba1')).replace(',', '.')) || null;
     if (!(archivo instanceof File) || !archivo.size) errores.push('Elija el archivo .csv.');
     else if (/\.xlsx?$/i.test(archivo.name)) errores.push('El archivo es de Excel (.xlsx). En Excel use Archivo → Guardar como → «CSV UTF-8 (delimitado por comas)» y súbalo de nuevo.');
     else {
@@ -69,11 +73,16 @@ if (sec && per && Astro.request.method === 'POST') {
           datos.push({ cedula, nombre, vals });
         });
         if (!datos.length && !errores.length) errores.push('El archivo no tiene estudiantes.');
+        const iP = SEA.findIndex((s) => s.clave === 'prueba');
+        const maxP = Math.max(0, ...datos.map((d) => d.vals[iP] ?? 0));
+        if (conNotas && primeraIndicada !== null && maxP <= 25 && primeraIndicada < maxP)
+          errores.push(`La I prueba no puede valer ${primeraIndicada} %: hay notas de Prueba de hasta ${maxP}.`);
         if (!errores.length) {
           const esquema = esquemaActual();
-          let nuevos = 0, matriculados = 0, notas = 0;
+          let nuevos = 0, matriculados = 0, notas = 0, creadas: string[] = [];
+          const notasSea: NotaSea[] = [];
           await transaccion(async (c) => {
-            const x = (sql: string, p: unknown[]) => c.query(preparar(sql, esquema), p);
+            const x = (sql: string, p: unknown[] = []) => c.query(preparar(sql, esquema), p);
             for (const d of datos) {
               let est = (await x('SELECT id FROM {S}.estudiantes WHERE usuario_id=? AND cedula=?', [U, d.cedula])).rows[0];
               if (!est) {
@@ -85,21 +94,28 @@ if (sec && per && Astro.request.method === 'POST') {
               matriculados += m.rowCount ?? 0;
               if (conNotas) for (const [k, s] of SEA.entries()) {
                 if (d.vals[k] === null) continue;
-                await x(`INSERT INTO {S}.notas_importadas (estudiante_id, seccion_id, periodo_id, clave, valor) VALUES (?,?,?,?,?)
-                  ON CONFLICT (estudiante_id, seccion_id, periodo_id, clave) DO UPDATE SET valor=EXCLUDED.valor, creado=now()`, [est.id, sec.id, per.id, s.clave, d.vals[k]]);
                 notas++;
+                // Asistencia se guarda como valor del componente; lo demás, como evaluaciones (abajo)
+                if (s.clave === 'asistencia')
+                  await x(`INSERT INTO {S}.notas_importadas (estudiante_id, seccion_id, periodo_id, clave, valor) VALUES (?,?,?,?,?)
+                    ON CONFLICT (estudiante_id, seccion_id, periodo_id, clave) DO UPDATE SET valor=EXCLUDED.valor, creado=now()`, [est.id, sec.id, per.id, s.clave, d.vals[k]]);
+                else notasSea.push({ estudiante_id: est.id, clave: s.clave, valor: d.vals[k]! });
               }
             }
+            if (notasSea.length)
+              creadas = await guardarNotasSea(async (sql, p = []) => (await x(sql, p)).rows, U, sec, per.id, notasSea, primeraIndicada);
           });
           msg = `Archivo importado: ${datos.length} estudiantes (${nuevos} nuevos, ${matriculados} agregados a ${etiquetaSeccion(sec)})` +
-            (conNotas ? `, ${notas} calificaciones de ${per.nombre}.` : '. No se importaron calificaciones.');
+            (conNotas ? `, ${notas} calificaciones de ${per.nombre}.` : '. No se importaron calificaciones.') +
+            (creadas.length ? ` Evaluaciones: ${creadas.join(' · ')}.` : '');
         }
       }
     }
   }
 }
 const r = sec && per ? await calcularPeriodo(U, sec.id, per.id) : null;
-const nImp = sec && per ? Number((await one<any>('SELECT COUNT(*) AS n FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=?', [sec.id, per.id])).n) : 0;
+const nImp = sec && per ? Number((await one<any>(`SELECT (SELECT COUNT(*) FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=?)
+  + (SELECT COUNT(*) FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND origen='sea') AS n`, [sec.id, per.id, sec.id, per.id])).n) : 0;
 const sumaPct = comps.reduce((s, c) => s + Number(c.porcentaje), 0);
 const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
 ---
@@ -129,14 +145,19 @@ const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
           <div class="fila">
             <label style="flex:2">Archivo .csv<input type="file" name="archivo" accept=".csv,text/csv" required /></label>
             <label style="flex:1">Qué importar<select name="modo"><option value="notas">Estudiantes y calificaciones de {per.nombre}</option><option value="estudiantes">Solo estudiantes</option></select></label>
+          </div>
+          <div class="fila" style="margin-top:10px">
+            <label style="flex:2">Si la Prueba trae solo la I prueba (ninguna nota mayor a 25), esa prueba vale
+              <select name="prueba1"><option value="">Automático: 20 % si ninguna pasa de 20; si no, 25 %</option><option value="20">20 %</option><option value="25">25 %</option></select></label>
             <button>Importar</button>
           </div>
+          <p class="muted" style="margin:8px 0 0">Las notas quedan como evaluaciones «(SEA)» en Evaluaciones. Si la Prueba es solo la I prueba, se crea además la II prueba sin calificar.</p>
         </form>
       </div>
       <h2>{per.nombre} · {etiquetaSeccion(sec)} <span class="muted" style="font-weight:400">({r.filas.length} estudiantes)</span></h2>
       {nImp > 0 && (
         <div class="msg aviso fila" style="justify-content:space-between;align-items:center">
-          <span>Hay calificaciones importadas en este periodo (marcadas con <b>•</b>). Reemplazan lo calculado en Nexo para ese componente.</span>
+          <span>Hay calificaciones importadas en este periodo: evaluaciones «(SEA)» y, si venía, la asistencia (marcada con <b>•</b>).</span>
           <form method="post" action={`/sea?${qs}`} onsubmit="return confirm('¿Quitar las calificaciones importadas de este periodo?')"><input type="hidden" name="accion" value="quitar" /><button class="mini peligro">Quitar importadas</button></form>
         </div>
       )}

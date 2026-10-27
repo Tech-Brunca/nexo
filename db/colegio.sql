@@ -189,3 +189,9 @@ DO $$ BEGIN
       WHERE d.seccion_id = l.seccion_id AND (p.fecha_ini IS NULL OR d.fecha >= p.fecha_ini) AND (p.fecha_fin IS NULL OR d.fecha <= p.fecha_fin)), 0);
   END IF;
 END $$;
+
+-- v3.5: lo importado del SEA se guarda como evaluaciones reales (origen = 'sea'); 'auto' = segunda prueba
+-- creada sola al importar solo la primera. tipo permite calificar por puntos una evaluación aunque el
+-- componente sea por indicadores (las notas del SEA son puntos).
+ALTER TABLE __ESQUEMA__.evaluaciones ADD COLUMN IF NOT EXISTS tipo text CHECK (tipo IN ('puntos', 'indicadores'));
+ALTER TABLE __ESQUEMA__.evaluaciones ADD COLUMN IF NOT EXISTS origen text CHECK (origen IN ('sea', 'auto'));

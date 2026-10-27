@@ -92,8 +92,10 @@ DB_PASSWORD=otra-clave
   Prueba, Proyecto y Asistencia. Cada docente ajusta solo el porcentaje (y si se califica por puntos o indicadores).
 - *Importar / exportar SEA*: por sección y periodo. Exporta el CSV con las columnas de la plantilla
   (`"Id";"Nombre";…`, separado por punto y coma, UTF-8). Importa el mismo formato (desde ReDDi o el SEA):
-  verifica que las columnas sean exactamente esas, crea los estudiantes que falten, los matricula y guarda las
-  calificaciones como *importadas* (reemplazan lo calculado en ese componente; se pueden quitar).
+  verifica que las columnas sean exactamente esas, crea los estudiantes que falten y los matricula. Cada
+  componente queda como una evaluación «(SEA)» calificada por puntos (Asistencia queda como valor del componente).
+- El SEA da una sola nota de Prueba. Si ninguna pasa de 25, es solo la I prueba: se guarda como «I Prueba (SEA)»
+  de 20 % (o 25 % si alguna pasa de 20, o el valor elegido) y se crea la «II Prueba» sin calificar con el resto.
 
 ## Informes
 
