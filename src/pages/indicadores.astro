@@ -1,6 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
-import { exec, q } from '../lib/db';
+import { conEsquema, exec, q } from '../lib/db';
 import { num, numOrNull, str, parseCsv } from '../lib/util';
 import { leerPlantillaIndicadores, NIVELES } from '../lib/excel';
 let msg = '', error = '';
@@ -59,8 +59,18 @@ const niveles = (await q<any>('SELECT DISTINCT nivel FROM general.indicadores WH
 const lista = await q<any>(`SELECT i.*, a.nombre AS asignatura FROM general.indicadores i LEFT JOIN general.asignaturas a ON a.id=i.asignatura_id
   WHERE i.usuario_id=? AND (?='' OR i.nivel=?) ORDER BY length(i.nivel), i.nivel, i.periodo_numero NULLS FIRST, i.id`, [U, nivel, nivel]);
 const ed = lista.find((x) => x.id === editar) ?? { id: 0, nivel, nombre: '', inicial: '', intermedio: '', avanzado: '', periodo_numero: '', asignatura_id: null };
-// Niveles de la lista, más el del indicador si es uno que no está en ella
-const opcNivel = ed.nivel && !NIVELES.some(([, v]) => v === ed.nivel) ? [...NIVELES, [ed.nivel, ed.nivel] as [string, string]] : NIVELES;
+// Niveles y periodos registrados por el docente en sus colegios (secciones y periodos)
+const deColegios = async (sql: string) =>
+  (await Promise.all(Astro.locals.instituciones.map((i) => conEsquema(i.esquema, () => q<any>(sql, [U]))))).flat();
+const nivelesReg = [...new Set((await deColegios('SELECT DISTINCT nivel FROM {S}.secciones WHERE usuario_id=?')).map((r) => r.nivel as string))];
+if (ed.nivel && !nivelesReg.includes(ed.nivel)) nivelesReg.push(ed.nivel);
+const orden = (v: string) => { const i = NIVELES.findIndex(([, n]) => n === v); return i < 0 ? 99 : i; };
+nivelesReg.sort((a, b) => orden(a) - orden(b) || a.localeCompare(b));
+const etiquetaNivel = (v: string) => { const nom = NIVELES.find(([, n]) => n === v)?.[0]; return nom && /^\d+$/.test(v) ? `${v}.° (${nom})` : v; };
+const periodosReg = new Map<number, string>();
+for (const p of await deColegios('SELECT numero, nombre FROM {S}.periodos WHERE usuario_id=? ORDER BY numero')) if (!periodosReg.has(p.numero)) periodosReg.set(p.numero, p.nombre);
+if (ed.periodo_numero && !periodosReg.has(ed.periodo_numero)) periodosReg.set(ed.periodo_numero, `Periodo ${ed.periodo_numero}`);
+const periodosOpc = [...periodosReg].sort((a, b) => a[0] - b[0]);
 ---
 <Base titulo="Indicadores">
   <h1>Indicadores de aprendizaje</h1>
@@ -71,14 +81,16 @@ const opcNivel = ed.nivel && !NIVELES.some(([, v]) => v === ed.nivel) ? [...NIVE
     <div class="fila">
       <label>Nivel<select name="nivel" required>
         <option value="">— Elija —</option>
-        {opcNivel.map(([nom, v]) => <option value={v} selected={v === ed.nivel}>{/^\d+$/.test(v) ? `${v}.° (${nom})` : nom}</option>)}
+        {nivelesReg.map((v) => <option value={v} selected={v === ed.nivel}>{etiquetaNivel(v)}</option>)}
       </select></label>
       <label>Periodo<select name="periodo_numero">
         <option value="">Todos</option>
-        {[1, 2, 3].map((p) => <option value={p} selected={p === ed.periodo_numero}>{p}</option>)}
+        {periodosOpc.map(([n, nom]) => <option value={n} selected={n === ed.periodo_numero}>{nom}</option>)}
       </select></label>
       <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id} selected={a.id === ed.asignatura_id}>{a.nombre}</option>)}</select></label>
     </div>
+    {nivelesReg.length === 0 && <p class="muted">Los niveles salen de sus secciones: primero registre una en <a href="/secciones">Secciones</a>.</p>}
+    {periodosOpc.length === 0 && <p class="muted">No tiene periodos registrados (<a href="/periodos">Periodos</a>); el indicador quedará para todos.</p>}
     <label style="margin-top:10px">Indicador o aprendizaje esperado<textarea name="nombre" required>{ed.nombre}</textarea></label>
     <div class="fila" style="margin-top:10px">
       <label style="flex:1">Inicial (1 pto)<textarea name="inicial">{ed.inicial}</textarea></label>
