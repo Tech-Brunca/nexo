@@ -15,7 +15,7 @@ export const CATALOGO: { tipo: string; titulo: string; descripcion: string; pide
   { tipo: 'calificaciones-individual', titulo: 'Calificaciones por estudiante', descripcion: 'Una hoja por estudiante con sus componentes (para entregar al hogar).', pide: ['seccion', 'estudiante', 'periodo'] },
   { tipo: 'indicadores', titulo: 'Indicadores calificados', descripcion: 'Nivel obtenido en cada indicador de una evaluación, por estudiante.', pide: ['evaluacion'] },
   { tipo: 'anual', titulo: 'Informe anual de calificaciones', descripcion: 'Nota y ponderado de cada periodo, promedio y condición.', pide: ['seccion', 'subgrupo'] },
-  { tipo: 'eximidos', titulo: 'Eximidos del II periodo', descripcion: 'Quienes no hacen la segunda prueba: I periodo mayor a 90 y todas las notas del II periodo mayores a 90.', pide: ['seccion', 'subgrupo', 'umbral'] },
+  { tipo: 'eximidos', titulo: 'Eximidos del II periodo', descripcion: 'Quienes no hacen la segunda prueba: promedio del I periodo de 90 o más y cada componente del II periodo de 90 o más, sin contar la segunda prueba.', pide: ['seccion', 'subgrupo', 'examen', 'umbral'] },
   { tipo: 'convocatorias', titulo: 'Acta de aplazados y convocatorias', descripcion: 'Estudiantes aplazados, convocatorias I y II y condición final; por sección o por nivel.', pide: ['seccion_o_nivel'] },
 ];
 
@@ -165,43 +165,51 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     if (!p1 || !p2) return 'Se necesitan el I y el II periodo (configúrelos en Periodos).';
     const umbral = Number(p.get('umbral') || 90);
     const r1 = (await calcularPeriodo(c.uid, sec.id, p1.id))!, r2 = (await calcularPeriodo(c.uid, sec.id, p2.id))!;
-    // Solo cuentan las evaluaciones del II periodo ya aplicadas (con al menos una nota en el grupo):
-    // así la segunda prueba, que aún no se hace, no deja a nadie por fuera.
-    const aplicadas = r2.evals.filter((ev) => r2.filas.some((f) => f.calificada[ev.id]));
+    // La segunda prueba del II periodo es la que se exime: no cuenta. Se puede elegir en el formulario;
+    // si no, es la última prueba del periodo (solo cuando hay dos o más).
+    const compPrueba = r2.comps.find((x) => x.clave === 'prueba');
+    const pruebas = r2.evals.filter((ev) => ev.componente_id === compPrueba?.id)
+      // la del SEA es la I prueba; la creada sola al importar ('auto') es la II
+      .sort((x, y) => (x.origen === 'sea' ? 0 : 1) - (y.origen === 'sea' ? 0 : 1) || (x.origen === 'auto' ? 1 : 0) - (y.origen === 'auto' ? 1 : 0)
+        || String(x.fecha ?? '').localeCompare(String(y.fecha ?? '')) || x.id - y.id);
+    const elegida = Number(p.get('excluir') || 0);
+    const excluida = elegida ? pruebas.find((ev) => ev.id === elegida) ?? null : pruebas.length >= 2 ? pruebas[pruebas.length - 1] : null;
+    // Cuentan las evaluaciones ya aplicadas (con al menos una nota en el grupo), menos la prueba eximida
+    const aplicadas = r2.evals.filter((ev) => ev.id !== excluida?.id && r2.filas.some((f) => f.calificada[ev.id]));
     const n100 = (v: number, de: number) => (de > 0 ? r2r((v / de) * 100) : 0);
     const permitidos = new Set(filtroSub(r2.filas.map((f) => ({ ...f.est, fila: f })), p).map((e: any) => e.id));
     const filas = r2.filas.filter((f) => permitidos.has(f.est.id)).map((f) => {
       const motivos: string[] = [];
       const t1 = r1.filas.find((x) => x.est.id === f.est.id)?.total ?? 0;
-      if (!(t1 > umbral)) motivos.push(`${p1.nombre}: ${fmt(t1)}`);
-      let minima: number | null = null, revisadas = 0;
-      const anotar = (nombre: string, nota: number) => {
-        revisadas++;
-        minima = minima === null ? nota : Math.min(minima, nota);
-        if (!(nota > umbral)) motivos.push(`${nombre}: ${fmt(nota)}`);
-      };
-      for (const comp of r2.comps) {
-        if (f.importado[comp.id] || comp.tipo === 'asistencia') {
-          if (comp.tipo === 'asistencia' && !f.importado[comp.id] && r2.lecciones === 0) continue;
-          anotar(comp.nombre, n100(f.porComp[comp.id], comp.porcentaje));
-          continue;
-        }
-        for (const ev of aplicadas.filter((x) => x.componente_id === comp.id)) {
-          if (!f.calificada[ev.id]) { motivos.push(`${ev.nombre}: sin nota`); continue; }
-          anotar(`${ev.nombre} (${comp.nombre})`, r2r(f.nota100[ev.id] ?? 0));
-        }
-      }
-      const sinNotas = revisadas === 0 && !motivos.some((m) => m.includes('sin nota'));
-      const exime = motivos.length === 0 && !sinNotas;
-      return { f, t1, minima, exime, obs: sinNotas ? `Aún no hay notas del ${p2.nombre}` : motivos.join('; ') };
+      // I periodo: solo el promedio final, sin importar cada componente
+      if (t1 < umbral) motivos.push(`${p1.nombre}: ${fmt(t1)}`);
+      // II periodo: cada componente, en escala de 100, sobre lo evaluado hasta ahora
+      const porComp: (number | null)[] = r2.comps.map((comp) => {
+        if (f.importado[comp.id]) return n100(f.porComp[comp.id], comp.porcentaje);
+        if (comp.tipo === 'asistencia') return r2.lecciones > 0 ? n100(f.porComp[comp.id], comp.porcentaje) : null;
+        const evs = aplicadas.filter((ev) => ev.componente_id === comp.id);
+        const valor = evs.reduce((sm, ev) => sm + Number(ev.porcentaje), 0);
+        if (!evs.length || valor <= 0) return null;
+        for (const ev of evs) if (!f.calificada[ev.id]) motivos.push(`${ev.nombre}: sin nota`);
+        const obtenido = evs.reduce((sm, ev) => sm + ((f.nota100[ev.id] ?? 0) * Number(ev.porcentaje)) / 100, 0);
+        return n100(obtenido, valor);
+      });
+      r2.comps.forEach((comp, i) => { const v = porComp[i]; if (v !== null && v < umbral) motivos.push(`${comp.nombre}: ${fmt(v)}`); });
+      const sinNotas = porComp.every((v) => v === null);
+      const exime = !sinNotas && motivos.length === 0;
+      return { f, t1, porComp, exime, obs: sinNotas ? `Aún no hay notas del ${p2.nombre}` : motivos.join('; ') };
     });
     const lista = p.get('solo') ? filas.filter((x) => x.exime) : filas;
     const n = filas.filter((x) => x.exime).length;
     return { titulo: 'Estudiantes eximidos', archivo: `eximidos-${etiquetaSeccion(sec)}`, firma: true,
-      meta: [...metaSeccion(sec, c.docente, subMeta), ['Requisito', `${p1.nombre} > ${umbral} y todas las notas del ${p2.nombre} > ${umbral}`], ['Eximidos', `${n} de ${filas.length}`]],
-      nota: `Se revisan las evaluaciones del ${p2.nombre} ya aplicadas (${aplicadas.length}) y la asistencia, cada una en escala de 100. Del ${p1.nombre} cuenta solo la nota final.`,
-      bloques: [{ columnas: ['#', 'Estudiante', 'Cédula', `Nota ${p1.nombre}`, `Nota más baja ${p2.nombre}`, 'Condición', 'No cumple en'], num: [3, 4],
-        filas: lista.map((x, i) => [i + 1, `${x.f.est.apellidos} ${x.f.est.nombre}`, x.f.est.cedula, x.t1, x.minima, x.exime ? 'Eximido' : 'No eximido', x.exime ? '' : x.obs]) }] };
+      meta: [...metaSeccion(sec, c.docente, subMeta),
+        ['Requisito', `Promedio del ${p1.nombre} ≥ ${umbral} y cada componente del ${p2.nombre} ≥ ${umbral}`],
+        ['Prueba que se exime', excluida ? excluida.nombre : 'ninguna (aún no hay segunda prueba)'], ['Eximidos', `${n} de ${filas.length}`]],
+      nota: `Cada componente del ${p2.nombre} se calcula en escala de 100 con las evaluaciones ya aplicadas (${aplicadas.length}), sin contar la prueba que se exime. «—» = componente aún sin evaluar.`,
+      bloques: [{ columnas: ['#', 'Estudiante', 'Cédula', `Promedio ${p1.nombre}`, ...r2.comps.map((x) => x.nombre), 'Condición', 'No cumple en'],
+        num: [3, ...r2.comps.map((_, i) => 4 + i)],
+        filas: lista.map((x, i) => [i + 1, `${x.f.est.apellidos} ${x.f.est.nombre}`, x.f.est.cedula, x.t1, ...x.porComp.map((v) => v ?? '—'),
+          x.exime ? 'Eximido' : 'No eximido', x.exime ? '' : x.obs]) }] };
   }
 
   if (tipo === 'convocatorias') {

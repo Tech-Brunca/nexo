@@ -1,6 +1,6 @@
 // Componentes fijos de la plantilla del SEA (MEP). El nombre y el orden no se pueden cambiar
 // porque son las columnas del archivo; cada docente ajusta solo el porcentaje (y la forma de calificar).
-import { q, exec } from './db';
+import { q, exec, transaccion, preparar, esquemaActual } from './db';
 
 export type ClaveSea = 'tc' | 'tareas' | 'prueba' | 'proyecto' | 'asistencia';
 export const SEA: { clave: ClaveSea; nombre: string; pct: number; tipo: 'puntos' | 'indicadores' | 'asistencia' }[] = [
@@ -66,4 +66,72 @@ export function separarNombre(completo: string) {
     ap.push(pedazo.join(' '));
   }
   return { apellidos: ap.join(' '), nombre: p.slice(i).join(' ') };
+}
+
+// ── Notas del SEA como evaluaciones ─────────────────────────────────────────
+// Cada componente importado (menos Asistencia, que se calcula con la asistencia) queda como una
+// evaluación «<Componente> (SEA)» calificada por puntos, donde los puntos son el valor del SEA.
+// El SEA da una sola nota de Prueba: si ninguna pasa de 25 (y el componente vale más), es solo la
+// I prueba; se guarda con ese valor (20 % o 25 %, o el indicado) y se crea la II prueba sin calificar.
+export const MAX_UNA_PRUEBA = 25;
+type X = (sql: string, p?: unknown[]) => Promise<any[]>;
+export type NotaSea = { estudiante_id: number; clave: string; valor: number };
+
+export function valorPrimeraPrueba(maximo: number, pctComp: number, indicado?: number | null) {
+  if (!(pctComp > MAX_UNA_PRUEBA) || maximo > MAX_UNA_PRUEBA) return null; // trae todas las pruebas
+  const v = indicado && indicado > 0 ? indicado : maximo <= 20 ? 20 : 25;
+  return Math.min(Math.max(v, maximo), pctComp);
+}
+
+export async function guardarNotasSea(x: X, uid: number, sec: { id: number; nivel: string }, periodoId: number, notas: NotaSea[], primeraIndicada?: number | null) {
+  const hechas: string[] = [];
+  const comps = await x('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave IS NOT NULL', [uid, sec.nivel]);
+  for (const s of SEA.filter((s) => s.clave !== 'asistencia')) {
+    const comp = comps.find((c) => c.clave === s.clave);
+    const mias = notas.filter((n) => n.clave === s.clave);
+    if (!comp || !mias.length) continue;
+    const pctComp = Number(comp.porcentaje);
+    let valor = pctComp, nombre = `${comp.nombre} (SEA)`;
+    const primera = s.clave === 'prueba' ? valorPrimeraPrueba(Math.max(...mias.map((n) => n.valor)), pctComp, primeraIndicada) : null;
+    if (primera !== null) { valor = primera; nombre = 'I Prueba (SEA)'; }
+    let ev = (await x(`SELECT id FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND componente_id=? AND origen='sea'`, [sec.id, periodoId, comp.id]))[0];
+    if (ev) await x('UPDATE {S}.evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, tipo=? WHERE id=?', [nombre, valor, valor, 'puntos', ev.id]);
+    else ev = (await x(`INSERT INTO {S}.evaluaciones (componente_id, seccion_id, periodo_id, nombre, puntos_total, porcentaje, tipo, origen)
+      VALUES (?,?,?,?,?,?,'puntos','sea') RETURNING id`, [comp.id, sec.id, periodoId, nombre, valor, valor]))[0];
+    for (const n of mias)
+      await x(`INSERT INTO {S}.notas (evaluacion_id, estudiante_id, puntos, no_entrego) VALUES (?,?,?,false)
+        ON CONFLICT (evaluacion_id, estudiante_id) DO UPDATE SET puntos=EXCLUDED.puntos, no_entrego=false`, [ev.id, n.estudiante_id, n.valor]);
+    if (s.clave === 'prueba') {
+      const auto = await x(`SELECT e.id, (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego)) AS cal
+        FROM {S}.evaluaciones e WHERE e.seccion_id=? AND e.periodo_id=? AND e.componente_id=? AND e.origen='auto'`, [sec.id, periodoId, comp.id]);
+      if (primera !== null) {
+        const otras = await x(`SELECT id FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND componente_id=? AND origen IS DISTINCT FROM 'sea'`, [sec.id, periodoId, comp.id]);
+        const resto = Math.round((pctComp - primera) * 100) / 100;
+        if (!otras.length && resto > 0) {
+          await x(`INSERT INTO {S}.evaluaciones (componente_id, seccion_id, periodo_id, nombre, puntos_total, porcentaje, tipo, origen) VALUES (?,?,?,?,?,?,'puntos','auto')`,
+            [comp.id, sec.id, periodoId, 'II Prueba', resto, resto]);
+          hechas.push(`${nombre} (${valor} %)`, `II Prueba (${resto} %, sin calificar)`);
+          continue;
+        }
+        for (const a of auto) if (Number(a.cal) === 0) await x('UPDATE {S}.evaluaciones SET porcentaje=?, puntos_total=? WHERE id=?', [resto, resto, a.id]);
+      } else {
+        // Ya trae las dos pruebas: la II prueba creada sola sobra si nadie la calificó
+        for (const a of auto) if (Number(a.cal) === 0) await x('DELETE FROM {S}.evaluaciones WHERE id=?', [a.id]);
+      }
+    }
+    hechas.push(`${nombre} (${valor} %)`);
+  }
+  return hechas;
+}
+
+/** Convierte en evaluaciones las notas importadas antes de v3.5 (quedaban como reemplazo del componente). */
+export async function materializarImportadas(uid: number, sec: { id: number; nivel: string }, periodoId: number) {
+  const pend = await q<any>(`SELECT estudiante_id, clave, valor FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=? AND clave<>'asistencia'`, [sec.id, periodoId]);
+  if (!pend.length) return;
+  const esquema = esquemaActual();
+  await transaccion(async (c) => {
+    const x: X = async (sql, p = []) => (await c.query(preparar(sql, esquema), p)).rows;
+    await guardarNotasSea(x, uid, sec, periodoId, pend.map((n) => ({ estudiante_id: n.estudiante_id, clave: n.clave, valor: Number(n.valor) })));
+    await x(`DELETE FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=? AND clave<>'asistencia'`, [sec.id, periodoId]);
+  });
 }

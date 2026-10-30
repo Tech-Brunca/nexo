@@ -7,7 +7,7 @@ import { num, numOrNull, str, fmt, r2, sqlEtiquetaSeccion } from '../../lib/util
 import { plantillas, llenar, enlaceWa, fechaLarga } from '../../lib/whatsapp';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
-const ev = await one<any>(`SELECT e.*, c.nombre AS componente, c.tipo, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, p.nombre AS periodo, a.nombre AS asignatura
+const ev = await one<any>(`SELECT e.*, c.nombre AS componente, COALESCE(e.tipo, c.tipo) AS tipo, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, p.nombre AS periodo, a.nombre AS asignatura
   FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id JOIN {S}.secciones s ON s.id=e.seccion_id
   JOIN {S}.periodos p ON p.id=e.periodo_id LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id
   WHERE e.id=? AND s.usuario_id=?`, [id, user.id]);

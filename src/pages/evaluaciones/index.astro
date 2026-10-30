@@ -4,7 +4,7 @@ import Selector from '../../components/Selector.astro';
 import { exec, q, one } from '../../lib/db';
 import { seccion } from '../../lib/calc';
 import { num, str, hoy } from '../../lib/util';
-import { asegurarComponentes } from '../../lib/sea';
+import { asegurarComponentes, materializarImportadas } from '../../lib/sea';
 const { user, inst } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
@@ -30,11 +30,11 @@ if (sec && Astro.request.method === 'POST') {
     await exec('DELETE FROM {S}.evaluaciones WHERE id=? AND seccion_id=?', [num(f.get('id')), seccionId]);
   }
 }
-if (sec) await asegurarComponentes(U, sec.nivel);
+if (sec) { await asegurarComponentes(U, sec.nivel); if (periodoId) await materializarImportadas(U, sec, periodoId); }
 const comps = sec ? await q<any>(`SELECT c.*, COALESCE(SUM(e.porcentaje),0) AS usado FROM {S}.componentes c
   LEFT JOIN {S}.evaluaciones e ON e.componente_id=c.id AND e.seccion_id=? AND e.periodo_id=?
   WHERE c.usuario_id=? AND c.nivel=? GROUP BY c.id ORDER BY c.clave IS NULL, c.orden, c.id`, [seccionId, periodoId, U, sec.nivel]) : [];
-const evals = sec ? await q<any>(`SELECT e.*, c.nombre AS componente, c.tipo,
+const evals = sec ? await q<any>(`SELECT e.*, c.nombre AS componente, COALESCE(e.tipo, c.tipo) AS tipo,
   (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego)) +
   (SELECT COUNT(DISTINCT v.estudiante_id) FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
   FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id WHERE e.seccion_id=? AND e.periodo_id=? ORDER BY c.orden, e.fecha, e.id`, [seccionId, periodoId]) : [];

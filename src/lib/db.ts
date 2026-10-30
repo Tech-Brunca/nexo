@@ -79,7 +79,7 @@ export async function transaccion<T>(fn: (c: pg.PoolClient) => Promise<T>): Prom
 
 // ── Esquemas y migraciones ──────────────────────────────────────────────────
 // Subir VERSION cuando cambien general.sql o colegio.sql: la primera petición migra todo.
-export const VERSION = '3.4.0';
+export const VERSION = '3.5.0';
 let listo: Promise<void> | null = null;
 
 export const sqlDeColegio = (esquema: string) => sqlColegio.replaceAll('__ESQUEMA__', esquema);
