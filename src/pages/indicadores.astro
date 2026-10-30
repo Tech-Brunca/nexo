@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import { exec, q } from '../lib/db';
 import { num, numOrNull, str, parseCsv } from '../lib/util';
+import { leerPlantillaIndicadores, NIVELES } from '../lib/excel';
 let msg = '', error = '';
 const { user } = Astro.locals;
 const U = user.id;
@@ -24,16 +25,30 @@ if (Astro.request.method === 'POST') {
   } else if (accion === 'importar') {
     const a = f.get('archivo');
     if (a instanceof File && a.size) {
-      const filas = parseCsv(await a.text()); filas.shift();
-      const asg = await asgPropia(f.get('asignatura_id'));
-      let n = 0;
-      for (const r of filas) {
-        if (!r[0] || !r[1]) continue;
+      let asg = await asgPropia(f.get('asignatura_id'));
+      let nuevos: (string | number | null)[][] = [];
+      if (a.name.toLowerCase().endsWith('.xlsx')) {
+        const p = await leerPlantillaIndicadores(await a.arrayBuffer());
+        if (!p) error = 'El archivo no tiene la forma de la plantilla de indicadores. Descárguela de nuevo y use esa.';
+        else if (!p.nivel) error = 'Elija el nivel en la plantilla (celda «Nivel»).';
+        else {
+          if (!asg && p.asignatura) asg = (await q<any>('SELECT id FROM general.asignaturas WHERE usuario_id=? AND lower(nombre)=lower(?)', [U, p.asignatura]))[0]?.id ?? null;
+          nuevos = p.filas.map((r) => [p.nivel, p.periodo, r.nombre, r.inicial, r.intermedio, r.avanzado]);
+        }
+      } else {
+        const filas = parseCsv(await a.text()); filas.shift();
+        nuevos = filas.filter((r) => r[0] && r[1]).map((r) => [r[0].trim(), numOrNull(r[2] ?? null), r[1].trim(), r[3] ?? '', r[4] ?? '', r[5] ?? '']);
+      }
+      let n = 0, repetidos = 0;
+      for (const [niv, per, nombre, ini, inter, ava] of nuevos) {
+        const ya = await q('SELECT 1 FROM general.indicadores WHERE usuario_id=? AND nivel=? AND nombre=? AND periodo_numero IS NOT DISTINCT FROM ?::int AND asignatura_id IS NOT DISTINCT FROM ?::int',
+          [U, niv, nombre, per, asg]);
+        if (ya.length) { repetidos++; continue; }
         await exec('INSERT INTO general.indicadores (usuario_id, asignatura_id, nivel, periodo_numero, nombre, inicial, intermedio, avanzado) VALUES (?,?,?,?,?,?,?,?)',
-          [U, asg, r[0].trim(), numOrNull(r[2] ?? null), r[1].trim(), r[3] ?? '', r[4] ?? '', r[5] ?? '']);
+          [U, asg, niv, per, nombre, ini, inter, ava]);
         n++;
       }
-      msg = `${n} indicadores importados.`;
+      if (!error) msg = `${n} indicadores importados.` + (repetidos ? ` ${repetidos} ya existían y se omitieron.` : '');
     }
   }
 }
@@ -44,6 +59,8 @@ const niveles = (await q<any>('SELECT DISTINCT nivel FROM general.indicadores WH
 const lista = await q<any>(`SELECT i.*, a.nombre AS asignatura FROM general.indicadores i LEFT JOIN general.asignaturas a ON a.id=i.asignatura_id
   WHERE i.usuario_id=? AND (?='' OR i.nivel=?) ORDER BY length(i.nivel), i.nivel, i.periodo_numero NULLS FIRST, i.id`, [U, nivel, nivel]);
 const ed = lista.find((x) => x.id === editar) ?? { id: 0, nivel, nombre: '', inicial: '', intermedio: '', avanzado: '', periodo_numero: '', asignatura_id: null };
+// Niveles de la lista, más el del indicador si es uno que no está en ella
+const opcNivel = ed.nivel && !NIVELES.some(([, v]) => v === ed.nivel) ? [...NIVELES, [ed.nivel, ed.nivel] as [string, string]] : NIVELES;
 ---
 <Base titulo="Indicadores">
   <h1>Indicadores de aprendizaje</h1>
@@ -52,8 +69,14 @@ const ed = lista.find((x) => x.id === editar) ?? { id: 0, nivel, nombre: '', ini
   <form method="post" class="tarjeta">
     <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="id" value={ed.id} />
     <div class="fila">
-      <label>Nivel<input name="nivel" value={ed.nivel} size="4" required /></label>
-      <label>Periodo (vacío = todos)<input name="periodo_numero" value={ed.periodo_numero ?? ''} size="4" /></label>
+      <label>Nivel<select name="nivel" required>
+        <option value="">— Elija —</option>
+        {opcNivel.map(([nom, v]) => <option value={v} selected={v === ed.nivel}>{/^\d+$/.test(v) ? `${v}.° (${nom})` : nom}</option>)}
+      </select></label>
+      <label>Periodo<select name="periodo_numero">
+        <option value="">Todos</option>
+        {[1, 2, 3].map((p) => <option value={p} selected={p === ed.periodo_numero}>{p}</option>)}
+      </select></label>
       <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id} selected={a.id === ed.asignatura_id}>{a.nombre}</option>)}</select></label>
     </div>
     <label style="margin-top:10px">Indicador o aprendizaje esperado<textarea name="nombre" required>{ed.nombre}</textarea></label>
@@ -64,11 +87,15 @@ const ed = lista.find((x) => x.id === editar) ?? { id: 0, nivel, nombre: '', ini
     </div>
     <p><button>{ed.id ? 'Guardar cambios' : 'Agregar indicador'}</button> {ed.id ? <a class="btn sec" href="/indicadores">Cancelar</a> : null}</p>
   </form>
-  <form method="post" enctype="multipart/form-data" class="tarjeta fila">
+  <form method="post" enctype="multipart/form-data" class="tarjeta">
     <input type="hidden" name="accion" value="importar" />
-    <label>Importar CSV (nivel; indicador; periodo; inicial; intermedio; avanzado)<input type="file" name="archivo" accept=".csv" /></label>
-    <label>Asignatura<select name="asignatura_id"><option value="">—</option>{asignaturas.map((a) => <option value={a.id}>{a.nombre}</option>)}</select></label>
-    <button class="sec">Importar</button>
+    <p style="margin-top:0"><strong>Agregar varios a la vez:</strong> descargue la plantilla de Excel, elija el nivel y el periodo, escriba un indicador por fila y súbala aquí.
+      <a class="btn sec" href={`/indicadores-plantilla.xlsx${nivel ? `?nivel=${encodeURIComponent(nivel)}` : ''}`} download>Descargar plantilla</a></p>
+    <div class="fila">
+      <label>Archivo (plantilla .xlsx o CSV: nivel; indicador; periodo; inicial; intermedio; avanzado)<input type="file" name="archivo" accept=".xlsx,.csv" required /></label>
+      <label>Asignatura<select name="asignatura_id"><option value="">— (la de la plantilla)</option>{asignaturas.map((a) => <option value={a.id}>{a.nombre}</option>)}</select></label>
+      <button class="sec">Importar</button>
+    </div>
   </form>
   <form method="get" class="fila" style="margin-bottom:10px"><label>Filtrar nivel<select name="nivel" onchange="this.form.submit()"><option value="">Todos</option>{niveles.map((n) => <option selected={n === nivel}>{n}</option>)}</select></label></form>
   <div class="tabla"><table>
