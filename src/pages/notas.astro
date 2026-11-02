@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import EncabezadoImpreso from '../components/EncabezadoImpreso.astro';
 import Selector from '../components/Selector.astro';
 import { q } from '../lib/db';
 import { calcularPeriodo, periodoDeFecha } from '../lib/calc';
@@ -22,12 +23,12 @@ const prom = r && r.filas.length ? r.filas.reduce((s, f) => s + f.total, 0) / r.
 const aprob = r ? r.filas.filter((f) => f.condicion === 'Aprobado').length : 0;
 ---
 <Base titulo="Calificaciones">
-  <h1>Calificaciones del periodo</h1>
-  <p class="sub">Nota por componente calculada a partir de las evaluaciones, indicadores y asistencia.</p>
+  <h1 class="no-print">Calificaciones del periodo</h1>
+  <p class="sub no-print">Nota por componente calculada a partir de las evaluaciones, indicadores y asistencia.</p>
   <Selector seccionId={seccionId} periodoId={periodoId} conPeriodo />
   {r && (
     <>
-      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {etiquetaSeccion(r.sec)} · {r.per.nombre} · Docente: {cfg.docente}</p></div>
+      <EncabezadoImpreso titulo={`Calificaciones · ${r.per.nombre}`} detalle={`${r.sec.asignatura ?? ''} · Sección ${etiquetaSeccion(r.sec)} · Docente: ${cfg.docente}`} />
       <div class="grid-kpi no-print" style="margin-bottom:14px">
         <div class="kpi"><b>{fmt(prom)}</b><span>Promedio del grupo</span></div>
         <div class="kpi"><b style="color:var(--verde)">{aprob}</b><span>Aprobados (≥ {r.notaApb})</span></div>

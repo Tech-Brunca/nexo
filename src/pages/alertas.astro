@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import EncabezadoImpreso from '../components/EncabezadoImpreso.astro';
 import { q, getAjustes } from '../lib/db';
 import { hoy, csv, sqlEtiquetaSeccion } from '../lib/util';
 import EnviarWa from '../components/EnviarWa.astro';
@@ -33,8 +34,8 @@ const destinos = filas.map((f) => {
 const wa = (t: string) => { const d = t.replace(/\D/g, ''); return d.length === 8 ? `https://wa.me/506${d}` : d.length > 8 ? `https://wa.me/${d}` : null; };
 ---
 <Base titulo="Alerta temprana">
-  <h1>Alerta temprana de ausentismo</h1>
-  <p class="sub">Estudiantes con ausencias injustificadas recientes, para contactar al encargado a tiempo.</p>
+  <h1 class="no-print">Alerta temprana de ausentismo</h1>
+  <p class="sub no-print">Estudiantes con ausencias injustificadas recientes, para contactar al encargado a tiempo.</p>
   <form class="tarjeta fila no-print">
     <label>Últimos días<input type="number" name="dias" value={dias} style="width:90px" /></label>
     <label>Lecciones ausente, desde<input type="number" name="min" value={minimo} style="width:90px" /></label>
@@ -42,7 +43,7 @@ const wa = (t: string) => { const d = t.replace(/\D/g, ''); return d.length === 
     <a class="btn sec" href={`?dias=${dias}&min=${minimo}&csv=1`}>Exportar CSV</a>
     <button type="button" class="sec" onclick="print()">Imprimir</button>
   </form>
-  <div class="solo-print"><h2>{cfg.institucion}</h2><p>Alerta temprana · últimos {dias} días · Docente: {cfg.docente}</p></div>
+  <EncabezadoImpreso titulo="Alerta temprana de ausentismo" detalle={`Últimos ${dias} días · Docente: ${cfg.docente}`} />
   {filas.length === 0 ? <div class="msg ok">Ningún estudiante en alerta con estos criterios.</div> : (
     <div class="tabla"><table>
       <tr><th>Estudiante</th><th class="n">Edad</th><th>Sección</th><th class="n">Lecciones</th><th class="n">Días</th><th>Última</th><th>Encargado(a)</th><th>Teléfono</th></tr>

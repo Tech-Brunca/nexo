@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import EncabezadoImpreso from '../components/EncabezadoImpreso.astro';
 import Selector from '../components/Selector.astro';
 import { exec } from '../lib/db';
 import { estudiantesDe, seccion } from '../lib/calc';
@@ -33,13 +34,13 @@ if (r && Astro.url.searchParams.get('csv')) {
 const chip = (c: string) => (c.startsWith('Aprobado') ? 'ok' : c === 'Aplazado' ? 'aviso' : 'mal');
 ---
 <Base titulo="Nota anual">
-  <h1>Nota anual y convocatorias</h1>
-  <p class="sub">Promedio ponderado de los periodos. Quien quede bajo la nota mínima pasa a convocatorias.</p>
+  <h1 class="no-print">Nota anual y convocatorias</h1>
+  <p class="sub no-print">Promedio ponderado de los periodos. Quien quede bajo la nota mínima pasa a convocatorias.</p>
   <Selector seccionId={seccionId} />
   {msg && <div class="msg ok">{msg}</div>}
   {r && (
     <form method="post">
-      <div class="solo-print"><h2>{cfg.institucion}</h2><p>{r.sec.asignatura} · Sección {etiquetaSeccion(r.sec)} · Curso {r.sec.anio} · Docente: {cfg.docente}</p></div>
+      <EncabezadoImpreso titulo="Nota anual" detalle={`${r.sec.asignatura ?? ''} · Sección ${etiquetaSeccion(r.sec)} · Curso ${r.sec.anio} · Docente: ${cfg.docente}`} />
       <div class="tabla"><table>
         <tr><th>#</th><th>Estudiante</th>{r.periodos.map((p: any) => <th class="n">{p.nombre}<br />{p.ponderado}%</th>)}<th class="n">Anual</th><th class="n">Conv. 1</th><th class="n">Conv. 2</th><th>Condición</th></tr>
         {r.filas.map((f, i) => (

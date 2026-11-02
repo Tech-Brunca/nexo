@@ -78,6 +78,7 @@ const emision = hoy();
     .tabla-inf th, .tabla-inf td { border: 1px solid #c9d3d1; padding: 5px 7px; }
     .tabla-inf th { background: #eef3f6; text-transform: none; letter-spacing: 0; color: var(--tinta); font-size: 12px; position: static; }
     .tabla-inf td.n, .tabla-inf th.n { text-align: right; }
+    .tabla-inf td:last-child:not(.n) { min-width: 170px; }
     .firmas { margin-top: 28px; font-size: 13px; }
     .firmas .lineas { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
     @page { size: letter; margin: 14mm 12mm 16mm; @bottom-right { content: "Página " counter(page) " de " counter(pages); font-size: 10px; color: #555; } }

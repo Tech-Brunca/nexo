@@ -1,5 +1,6 @@
 ---
 import Base from '../../layouts/Base.astro';
+import EncabezadoImpreso from '../../components/EncabezadoImpreso.astro';
 import EnviarWa from '../../components/EnviarWa.astro';
 import { exec, q, one, getAjustes } from '../../lib/db';
 import { estudiantesDe, pctIndicadores } from '../../lib/calc';
@@ -75,8 +76,9 @@ const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
 ---
 <Base titulo={ev.nombre}>
   <p class="no-print"><a href={`/evaluaciones?seccion=${ev.seccion_id}&periodo=${ev.periodo_id}`}>← Evaluaciones</a></p>
-  <h1>{ev.nombre}</h1>
-  <p class="sub">{ev.componente} · Sección {ev.seccion} · {ev.periodo} · Valor {ev.porcentaje}%{!porInd && ` · ${ev.puntos_total} puntos`}</p>
+  <EncabezadoImpreso titulo={ev.nombre} detalle={`${ev.componente} · Sección ${ev.seccion} · ${ev.periodo} · Valor ${ev.porcentaje}% · Docente: ${Astro.locals.user.nombre}`} />
+  <h1 class="no-print">{ev.nombre}</h1>
+  <p class="sub no-print">{ev.componente} · Sección {ev.seccion} · {ev.periodo} · Valor {ev.porcentaje}%{!porInd && ` · ${ev.puntos_total} puntos`}</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
   <details class="tarjeta no-print"><summary>Editar datos de la evaluación</summary>
     <form method="post" class="fila" style="margin-top:10px"><input type="hidden" name="accion" value="datos" />

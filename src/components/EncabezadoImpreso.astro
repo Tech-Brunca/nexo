@@ -1,0 +1,26 @@
+---
+// Encabezado que solo aparece al imprimir una pantalla (Calificaciones, Nota anual, Alerta, una evaluación):
+// escudo del colegio, MEP, colegio, título y detalle.
+import { logoColegio } from '../lib/auth';
+interface Props { titulo: string; detalle?: string }
+const { titulo, detalle } = Astro.props;
+const { inst } = Astro.locals;
+const logo = logoColegio(inst);
+---
+<header class="solo-print enc-impreso">
+  {logo && <img src={logo} alt={`Escudo de ${inst!.nombre}`} />}
+  <div>
+    <div class="mep">Ministerio de Educación Pública</div>
+    <div><b>{inst?.nombre}</b>{inst?.codigo && ` · Código ${inst.codigo}`}{inst?.direccion_regional && ` · Dirección Regional ${inst.direccion_regional}`}</div>
+    <h2>{titulo}</h2>
+    {detalle && <p>{detalle}</p>}
+  </div>
+</header>
+<style>
+  .enc-impreso { gap: 16px; align-items: center; margin-bottom: 12px; font-size: 13px; line-height: 1.4; }
+  .enc-impreso img { width: 64px; height: 64px; object-fit: contain; flex: none; }
+  .enc-impreso .mep { font-weight: 700; }
+  .enc-impreso h2 { margin: 6px 0 2px; font-size: 17px; }
+  .enc-impreso p { margin: 0; }
+  @media print { .enc-impreso { display: flex !important; } }
+</style>
