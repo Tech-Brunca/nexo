@@ -79,7 +79,7 @@ export async function transaccion<T>(fn: (c: pg.PoolClient) => Promise<T>): Prom
 
 // ── Esquemas y migraciones ──────────────────────────────────────────────────
 // Subir VERSION cuando cambien general.sql o colegio.sql: la primera petición migra todo.
-export const VERSION = '3.6.0';
+export const VERSION = '3.7.0';
 let listo: Promise<void> | null = null;
 
 export const sqlDeColegio = (esquema: string) => sqlColegio.replaceAll('__ESQUEMA__', esquema);
@@ -162,6 +162,9 @@ export async function prepararColegio(uid: number, esquema: string) {
   if (!/^c_\d+$/.test(esquema)) throw new Error('Esquema inválido');
   const hay = await one(`SELECT id FROM ${esquema}.periodos WHERE usuario_id=? LIMIT 1`, [uid]);
   if (!hay) {
-    await exec(`INSERT INTO ${esquema}.periodos (usuario_id, numero, nombre, ponderado) VALUES (?,1,'I Periodo',50),(?,2,'II Periodo',50)`, [uid, uid]);
+    // Calendario semestral del curso lectivo (se ajusta en Periodos)
+    const anio = (await getAjustes(uid)).curso_lectivo || new Date().getFullYear();
+    await exec(`INSERT INTO ${esquema}.periodos (usuario_id, numero, nombre, ponderado, fecha_ini, fecha_fin) VALUES
+      (?,1,'I Periodo',50,?::date,?::date),(?,2,'II Periodo',50,?::date,?::date)`, [uid, `${anio}-02-01`, `${anio}-06-30`, uid, `${anio}-07-01`, `${anio}-12-15`]);
   }
 }

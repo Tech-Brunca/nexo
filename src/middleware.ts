@@ -1,6 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { COOKIE, COOKIE_INST, leerSesion, type Usuario, type Institucion } from './lib/auth';
 import { one, q, asegurarEsquema, conEsquema } from './lib/db';
+import { periodoDeFecha } from './lib/calc';
 
 const PUBLICAS = ['/login', '/registro'];
 // Páginas que funcionan sin colegio activo
@@ -36,6 +37,10 @@ if (
   ctx.locals.user = user;
   ctx.locals.instituciones = instituciones;
   ctx.locals.inst = inst;
+  // Periodo de trabajo: el elegido en el menú (cookie rd_per) si es de este docente y colegio; si no, el de hoy
+  ctx.locals.periodos = inst ? await conEsquema(inst.esquema, () => q<any>('SELECT id, numero, nombre, fecha_ini, fecha_fin FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id])) : [];
+  const perElegido = Number(ctx.cookies.get('rd_per')?.value ?? 0);
+  ctx.locals.periodo = ctx.locals.periodos.find((p) => p.id === perElegido) ?? periodoDeFecha(ctx.locals.periodos) ?? null;
   if (!inst && !SIN_COLEGIO.some((p) => ruta.startsWith(p))) return ctx.redirect('/cuenta?bienvenida=1');
   return conEsquema(inst?.esquema ?? null, next);
 });

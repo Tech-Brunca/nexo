@@ -2,7 +2,7 @@
 interface Props { titulo: string; sinMenu?: boolean }
 const { titulo, sinMenu = false } = Astro.props;
 const ruta = Astro.url.pathname;
-const { user, inst, instituciones } = Astro.locals;
+const { user, inst, instituciones, periodos = [], periodo = null } = Astro.locals;
 // Menú agrupado por lo que el docente va a hacer
 const grupos: [string, [string, string][]][] = [
   ['', [['/', 'Inicio']]],
@@ -74,6 +74,9 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     nav.lateral .quien a { display: inline; padding: 0; border: 0; color: #fff; text-decoration: underline; }
     nav.lateral .colegio { margin: 0 6px 12px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(73,225,255,.25); color: #fff; font-size: 13px; font-weight: 600; }
     nav.lateral .colegio a { padding: 4px 0 0; border: 0; font-weight: 400; color: var(--aqua); font-size: 12px; }
+    nav.lateral .periodo-trabajo { display: flex; flex-direction: column; gap: 4px; margin: -4px 6px 14px; color: #a9c4e6; font-size: 12.5px; }
+    nav.lateral .periodo-trabajo select { width: 100%; margin: 0; font-weight: 600; font-size: 15px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
+    nav.lateral .periodo-trabajo select option { color: var(--tinta); }
     nav.lateral .colegio a:hover { background: none; text-decoration: underline; }
 
     /* Contenido */
@@ -146,7 +149,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       .barra-movil .marca img { width: 30px; height: 30px; }
       .barra-movil .marca b { color: #fff; font-size: 18px; }
       .barra-movil .marca b span { color: var(--aqua); }
-      .barra-movil .donde { margin-left: auto; font-size: 12px; color: #cfe0f5; text-align: right; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .barra-movil .donde { margin-left: auto; font-size: 12px; line-height: 1.3; color: #cfe0f5; text-align: right; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
       nav.lateral { position: fixed; z-index: 60; inset: 0 auto 0 0; width: min(290px, 84vw); height: 100dvh; transform: translateX(-102%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(3,18,48,.35); padding-bottom: 40px; }
       nav.lateral a { padding: 11px 12px; font-size: 15px; }
@@ -194,7 +197,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     <header class="barra-movil">
       <button type="button" class="menu-btn" aria-label="Abrir menú" aria-controls="menu" aria-expanded="false" data-menu>☰</button>
       <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><b>NE<span>XO</span></b></a>
-      {inst && <span class="donde">{inst.nombre}</span>}
+      {inst && <span class="donde">{inst.nombre}{periodo && <><br />{periodo.nombre}</>}</span>}
     </header>
     <div class="velo" data-menu></div>
     <div class="app">
@@ -202,6 +205,13 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
         <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
         {inst && <div class="colegio">{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div>}
+        {inst && periodos.length > 0 && (
+          <label class="periodo-trabajo">Periodo de trabajo
+            <select onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
+              {periodos.map((p) => <option value={p.id} selected={p.id === periodo?.id}>{p.nombre}</option>)}
+            </select>
+          </label>
+        )}
         {inst && grupos.map(([g, items]) => (<>
           {g && <div class="grupo">{g}</div>}
           {items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}

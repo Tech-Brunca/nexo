@@ -4,7 +4,7 @@ import Selector from '../components/Selector.astro';
 import EnviarWa from '../components/EnviarWa.astro';
 import { plantillas, llenar, enlaceWa, fechaLarga } from '../lib/whatsapp';
 import { exec, q, one } from '../lib/db';
-import { estudiantesDe, seccion, ausencias, leccionesEfectivas } from '../lib/calc';
+import { estudiantesDe, seccion, ausencias, leccionesEfectivas, periodosDe, periodoDeFecha } from '../lib/calc';
 import { num, str, hoy, fmt, csv, TIPOS_AUSENCIA, etiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 const U = user.id;
@@ -12,7 +12,7 @@ const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
 const fecha = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('fecha') ?? '') ? Astro.url.searchParams.get('fecha')! : hoy();
 const sec = seccionId ? await seccion(U, seccionId) : null;
 let msg = '', error = '';
-const per = sec ? await one<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? AND (fecha_ini IS NULL OR fecha_ini<=?::date) AND (fecha_fin IS NULL OR fecha_fin>=?::date) ORDER BY numero LIMIT 1', [U, fecha, fecha]) : null;
+const per = sec ? periodoDeFecha(await periodosDe(U), fecha) ?? null : null;
 const fechaCorta = fecha.split('-').reverse().join('/');
 const entero = (v: string, max = 9999) => /^\d{1,4}$/.test(v) && Number(v) <= max;
 if (sec && Astro.request.method === 'POST') {

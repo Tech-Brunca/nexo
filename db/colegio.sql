@@ -198,3 +198,17 @@ ALTER TABLE __ESQUEMA__.evaluaciones ADD COLUMN IF NOT EXISTS origen text CHECK 
 
 -- v3.6: valor de la I prueba del II periodo (el SEA trae solo esa nota); la II prueba es el resto del componente
 ALTER TABLE __ESQUEMA__.componentes ADD COLUMN IF NOT EXISTS prueba1 numeric(5,2);
+
+-- v3.7: periodos sin fechas (creados así hasta ahora): se les pone el calendario semestral del curso lectivo
+-- (I: 1 feb – 30 jun; II: 1 jul – 15 dic) para que cada pantalla sepa en qué periodo está y la asistencia
+-- se cuente en el periodo correcto. Solo a docentes con exactamente dos periodos y ambos sin fechas.
+UPDATE __ESQUEMA__.periodos p SET
+  fecha_ini = CASE p.numero WHEN 1 THEN make_date(a.anio, 2, 1) ELSE make_date(a.anio, 7, 1) END,
+  fecha_fin = CASE p.numero WHEN 1 THEN make_date(a.anio, 6, 30) ELSE make_date(a.anio, 12, 15) END
+FROM (
+  SELECT x.usuario_id, COALESCE((SELECT curso_lectivo FROM general.ajustes j WHERE j.usuario_id = x.usuario_id),
+                                extract(year FROM now())::int) AS anio
+  FROM __ESQUEMA__.periodos x GROUP BY x.usuario_id
+  HAVING COUNT(*) = 2 AND bool_and(x.fecha_ini IS NULL AND x.fecha_fin IS NULL) AND array_agg(x.numero::int ORDER BY x.numero) = ARRAY[1, 2]
+) a
+WHERE p.usuario_id = a.usuario_id;

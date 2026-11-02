@@ -3,15 +3,15 @@
 import Base from '../layouts/Base.astro';
 import Selector from '../components/Selector.astro';
 import { q, one, exec, transaccion, preparar, esquemaActual } from '../lib/db';
-import { seccion, calcularPeriodo } from '../lib/calc';
+import { seccion, calcularPeriodo, periodoDeFecha } from '../lib/calc';
 import { str, fmt, parseCsv, etiquetaSeccion } from '../lib/util';
 import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes, guardarNotasSea, valorPrueba1, type NotaSea } from '../lib/sea';
 const { user } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
-const periodos = await q<any>('SELECT id, numero, nombre FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [U]);
+const periodos = await q<any>('SELECT id, numero, nombre, fecha_ini, fecha_fin FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [U]);
 const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
-const per = periodos.find((p) => p.id === pedido) ?? periodos[0];
+const per = periodos.find((p) => p.id === pedido) ?? periodos.find((p) => p.id === Astro.locals.periodo?.id) ?? periodoDeFecha(periodos);
 const sec = seccionId ? await seccion(U, seccionId) : null;
 if (sec) await asegurarComponentes(U, sec.nivel);
 const comps = sec ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave IS NOT NULL', [U, sec.nivel]) : [];

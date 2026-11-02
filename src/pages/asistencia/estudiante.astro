@@ -3,7 +3,7 @@
 // o corregirlas de una vez, y el valor del componente Asistencia de cada periodo (incluido el importado del SEA).
 import Base from '../../layouts/Base.astro';
 import { exec, q, one } from '../../lib/db';
-import { seccion, periodosDe, calcularPeriodo } from '../../lib/calc';
+import { seccion, periodosDe, calcularPeriodo, periodoDeFecha } from '../../lib/calc';
 import { num, str, fmt, TIPOS_AUSENCIA, etiquetaSeccion, hoy } from '../../lib/util';
 const { user } = Astro.locals;
 const U = user.id;
@@ -16,7 +16,7 @@ if (!sec || !est) return Astro.redirect('/asistencia' + (sec ? `?seccion=${sec.i
 const periodos = await periodosDe(U);
 // Periodo: el pedido, el que contiene hoy, o todo el curso ('todo')
 const pedido = sp.get('periodo');
-const actual = periodos.find((p) => (!p.fecha_ini || p.fecha_ini <= hoy()) && (!p.fecha_fin || p.fecha_fin >= hoy()));
+const actual = periodos.find((p) => p.id === Astro.locals.periodo?.id) ?? periodoDeFecha(periodos);
 const per = pedido === 'todo' ? null : periodos.find((p) => p.id === Number(pedido)) ?? actual ?? periodos[0] ?? null;
 const base = `?seccion=${sec.id}&id=${est.id}${sp.get('fecha') ? `&fecha=${sp.get('fecha')}` : ''}`;
 const qs = () => `${base}&periodo=${per ? per.id : 'todo'}`;

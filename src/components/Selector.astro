@@ -1,6 +1,7 @@
 ---
 // Selector de sección (y opcionalmente periodo / fecha) que recarga la página por GET
-import { q } from '../lib/db';
+import { q } from '../lib/db';
+
 import { etiquetaSeccion } from '../lib/util';
 interface Props { seccionId?: number; periodoId?: number; conPeriodo?: boolean; fecha?: string; extra?: Record<string, string> }
 const { seccionId, periodoId, conPeriodo = false, fecha, extra = {} } = Astro.props;
@@ -21,7 +22,7 @@ const periodos = conPeriodo ? await q<any>('SELECT id, nombre FROM {S}.periodos 
   </label>
   {conPeriodo && (
     <label>Periodo
-      <select name="periodo" onchange="this.form.submit()">
+      <select name="periodo" onchange="document.cookie = 'rd_per=' + this.value + '; path=/; max-age=34560000; samesite=lax'; this.form.submit()">
         {periodos.map((p) => <option value={p.id} selected={p.id === periodoId}>{p.nombre}</option>)}
       </select>
     </label>

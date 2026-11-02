@@ -4,13 +4,13 @@
 import Base from '../layouts/Base.astro';
 import { q, one, getAjustes } from '../lib/db';
 import { hoy, etiquetaSeccion } from '../lib/util';
+import { periodosDe, periodoDeFecha } from '../lib/calc';
 const { user, inst } = Astro.locals;
 const aj = await getAjustes(user.id);
 const fecha = hoy();
 const fechaLarga = new Date(fecha + 'T12:00:00').toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' });
 const fechaTexto = fechaLarga.charAt(0).toUpperCase() + fechaLarga.slice(1);
-const per = await one<any>(`SELECT * FROM {S}.periodos WHERE usuario_id=? AND (fecha_ini IS NULL OR fecha_ini<=?::date) AND (fecha_fin IS NULL OR fecha_fin>=?::date)
-  ORDER BY numero LIMIT 1`, [user.id, fecha, fecha]) ?? await one<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? ORDER BY numero DESC LIMIT 1', [user.id]);
+const per = Astro.locals.periodo ?? periodoDeFecha(await periodosDe(user.id), fecha);
 const secciones = await q<any>(
   `SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura,
      (SELECT COUNT(*) FROM {S}.matriculas m JOIN {S}.estudiantes e ON e.id=m.estudiante_id WHERE m.seccion_id=s.id AND e.activo=1) AS n,

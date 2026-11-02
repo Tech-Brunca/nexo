@@ -2,15 +2,15 @@
 import Base from '../../layouts/Base.astro';
 import Selector from '../../components/Selector.astro';
 import { exec, q, one } from '../../lib/db';
-import { seccion } from '../../lib/calc';
+import { seccion, periodoDeFecha } from '../../lib/calc';
 import { num, str, hoy } from '../../lib/util';
 import { asegurarComponentes, materializarImportadas, evalsQueCuentan } from '../../lib/sea';
 const { user, inst } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
-const periodos = await q<any>('SELECT id, numero FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [U]);
+const periodos = await q<any>('SELECT id, numero, fecha_ini, fecha_fin FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [U]);
 const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
-const periodoId = periodos.find((p) => p.id === pedido)?.id ?? periodos[0]?.id ?? 0;
+const periodoId = periodos.find((p) => p.id === pedido)?.id ?? Astro.locals.periodo?.id ?? periodoDeFecha(periodos)?.id ?? 0;
 const sec = seccionId ? await seccion(U, seccionId) : null;
 let error = '';
 if (sec && Astro.request.method === 'POST') {

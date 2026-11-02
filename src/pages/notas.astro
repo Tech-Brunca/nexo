@@ -2,13 +2,13 @@
 import Base from '../layouts/Base.astro';
 import Selector from '../components/Selector.astro';
 import { q } from '../lib/db';
-import { calcularPeriodo } from '../lib/calc';
+import { calcularPeriodo, periodoDeFecha } from '../lib/calc';
 import { fmt, csv, etiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
-const periodos = await q<any>('SELECT id FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]);
+const periodos = await q<any>('SELECT id, numero, fecha_ini, fecha_fin FROM {S}.periodos WHERE usuario_id=? ORDER BY numero', [user.id]);
 const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
-const periodoId = periodos.find((p) => p.id === pedido)?.id ?? periodos[0]?.id ?? 0;
+const periodoId = periodos.find((p) => p.id === pedido)?.id ?? Astro.locals.periodo?.id ?? periodoDeFecha(periodos)?.id ?? 0;
 const detalle = Astro.url.searchParams.get('detalle') === '1';
 const r = seccionId && periodoId ? await calcularPeriodo(user.id, seccionId, periodoId) : null;
 const cfg = { institucion: inst!.nombre, docente: user.nombre };

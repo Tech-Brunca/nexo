@@ -1,5 +1,5 @@
 import { q, one, getAjustes, getEscala } from './db';
-import { r2, etiquetaSeccion } from './util';
+import { r2, etiquetaSeccion, hoy } from './util';
 import { asegurarComponentes, materializarImportadas, evalsQueCuentan } from './sea';
 
 export type Est = { id: number; cedula: string; apellidos: string; nombre: string; subgrupo: string; encargado: string; telefono: string; fecha_nac: string | null };
@@ -44,6 +44,20 @@ export async function leccionesEfectivas(seccionId: number, per: { id: number; f
   const fila = per ? await one<any>('SELECT ajuste FROM {S}.lecciones WHERE seccion_id = ? AND periodo_id = ?', [seccionId, per.id]) : undefined;
   const calculado = Number(suma?.n ?? 0), ajuste = Number(fila?.ajuste ?? 0);
   return { calculado, ajuste, efectivas: Math.max(0, calculado + ajuste), hasta: fin };
+}
+
+/**
+ * Periodo que corresponde a una fecha (por defecto, hoy): el que la contiene; si ninguno, el último que ya
+ * empezó; si los periodos no tienen fechas y son dos, el II desde julio. Se usa cuando la página no indica periodo.
+ */
+export function periodoDeFecha<T extends { numero: number; fecha_ini: string | null; fecha_fin: string | null }>(periodos: T[], fecha = hoy()): T | undefined {
+  const ord = [...periodos].sort((a, b) => a.numero - b.numero);
+  const dentro = ord.find((p) => (p.fecha_ini || p.fecha_fin) && (!p.fecha_ini || p.fecha_ini <= fecha) && (!p.fecha_fin || p.fecha_fin >= fecha));
+  if (dentro) return dentro;
+  const empezados = ord.filter((p) => p.fecha_ini && p.fecha_ini <= fecha);
+  if (empezados.length) return empezados[empezados.length - 1];
+  if (ord.length === 2 && ord.every((p) => !p.fecha_ini && !p.fecha_fin)) return ord[Number(fecha.slice(5, 7)) >= 7 ? 1 : 0];
+  return ord[0];
 }
 
 export const periodosDe = (uid: number) =>
