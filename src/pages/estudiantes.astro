@@ -35,7 +35,9 @@ const seccion = secciones.has(pedida) ? pedida : '';
 const subgrupos = seccion ? secciones.get(seccion)!.subgrupos.sort() : [];
 const subgrupo = subgrupos.includes(Astro.url.searchParams.get('subgrupo') ?? '') ? Astro.url.searchParams.get('subgrupo')! : '';
 
-const lista = await q<any>(
+// Se carga la lista completa (hasta 500) y la búsqueda filtra en el navegador mientras se escribe;
+// solo si hay más de 500 se busca en el servidor.
+const consultar = (texto: string) => q<any>(
   `SELECT e.*, string_agg(${sqlEtiquetaSeccion()}, ', ' ORDER BY s.nivel) AS secciones
    FROM {S}.estudiantes e LEFT JOIN {S}.matriculas m ON m.estudiante_id=e.id LEFT JOIN {S}.secciones s ON s.id=m.seccion_id
    WHERE e.usuario_id = ? AND (? = '' OR e.cedula ILIKE ? OR (e.apellidos || ' ' || e.nombre) ILIKE ?)
@@ -43,14 +45,17 @@ const lista = await q<any>(
        WHERE m2.estudiante_id=e.id AND s2.usuario_id=e.usuario_id
          AND ${sqlEtiquetaSeccion('s2', false)} = ? AND (? = '' OR s2.subgrupo = ?)))
    GROUP BY e.id ORDER BY e.apellidos, e.nombre LIMIT 500`,
-  [user.id, buscar, `%${buscar}%`, `%${buscar}%`, seccion, seccion, subgrupo, subgrupo]);
+  [user.id, texto, `%${texto}%`, `%${texto}%`, seccion, seccion, subgrupo, subgrupo]);
+let lista = await consultar('');
+const enServidor = lista.length === 500 && !!buscar;
+if (enServidor) lista = await consultar(buscar);
 const filtros = `q=${encodeURIComponent(buscar)}${seccion ? `&seccion=${encodeURIComponent(seccion)}` : ''}${subgrupo ? `&subgrupo=${subgrupo}` : ''}`;
 ---
 <Base titulo="Estudiantes">
   <h1>Estudiantes</h1>
   <p class="sub">Su lista de estudiantes en {inst!.nombre}. Para agregarlos a un grupo, entre a la <a href="/secciones">sección</a>.</p>
   {msg && <div class="msg ok">{msg}</div>}
-  <form class="tarjeta fila"><label style="flex:1">Buscar por nombre o cédula<input name="q" value={buscar} /></label>
+  <form class="tarjeta fila" id="f-buscar"><label style="flex:1">Buscar por nombre o cédula<input name="q" value={buscar} id="q" autocomplete="off" placeholder="Escriba un nombre, apellido o cédula" /></label>
     <label>Sección
       <select name="seccion" onchange="this.form.subgrupo.value = ''; this.form.subgrupo.disabled = true; this.form.submit()"><option value="">Todas las secciones</option>
         {opciones.map((o) => <option value={o} selected={o === seccion}>{o}</option>)}</select>
@@ -60,9 +65,10 @@ const filtros = `q=${encodeURIComponent(buscar)}${seccion ? `&seccion=${encodeUR
         {subgrupos.map((g) => <option selected={g === subgrupo}>{g}</option>)}</select>
     </label>
     <button class="sec">Buscar</button></form>
-  <p class="muted">{lista.length} {lista.length === 1 ? 'estudiante' : 'estudiantes'}{lista.length === 500 && ' (se muestran los primeros 500; afine la búsqueda)'}</p>
+  <p class="muted" id="cuenta" data-total={lista.length} data-tope={lista.length === 500 ? '1' : ''} data-servidor={enServidor ? '1' : ''}>{lista.length} {lista.length === 1 ? 'estudiante' : 'estudiantes'}{lista.length === 500 && ' (se muestran los primeros 500; afine la búsqueda)'}</p>
   <div class="tabla"><table>
     <tr><th>Cédula</th><th>Estudiante</th><th>Secciones</th><th>Encargado(a)</th><th>Teléfono</th><th>Estado</th><th></th></tr>
+    <tr id="sin-resultados" hidden><td colspan="7" class="muted">Ningún estudiante coincide con la búsqueda.</td></tr>
     {lista.length === 0 && <tr><td colspan="7" class="muted">{buscar || seccion ? 'No hay estudiantes en esta sección con ese criterio de búsqueda.' : 'Aún no hay estudiantes. Agréguelos desde una sección.'}</td></tr>}
     {lista.map((e) => editar === e.id ? (
       <tr><td colspan="7">
@@ -84,9 +90,36 @@ const filtros = `q=${encodeURIComponent(buscar)}${seccion ? `&seccion=${encodeUR
         </form>
       </td></tr>
     ) : (
-      <tr><td>{e.cedula}</td><td class="nom">{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
+      <tr class="fila-est" data-b={`${e.cedula} ${e.apellidos} ${e.nombre} ${e.nombre} ${e.apellidos} ${e.encargado ?? ''} ${e.telefono ?? ''}`}><td>{e.cedula}</td><td class="nom">{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
         <td>{e.activo ? <span class="chip ok">Activo</span> : <span class="chip mal">Inactivo</span>}</td>
-        <td><a href={`?${filtros}&editar=${e.id}`}>Editar</a></td></tr>
+        <td><a class="editar" href={`?${filtros}&editar=${e.id}`}>Editar</a></td></tr>
     ))}
   </table></div>
+  <script is:inline>
+    // Filtra mientras se escribe (sin tildes ni mayúsculas). Si la lista llegó al tope de 500, busca en el servidor.
+    (() => {
+      const q = document.getElementById('q'), cuenta = document.getElementById('cuenta'), vacio = document.getElementById('sin-resultados');
+      const filas = [...document.querySelectorAll('tr.fila-est')];
+      const norm = (t) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+      filas.forEach((f) => { f.dataset.b = norm(f.dataset.b); });
+      let espera;
+      const filtrar = () => {
+        const v = q.value;
+        if (cuenta.dataset.tope) { clearTimeout(espera); espera = setTimeout(() => q.form.submit(), 450); return; }
+        const partes = norm(v).split(' ').filter(Boolean);
+        let n = 0;
+        for (const f of filas) { const ok = partes.every((p) => f.dataset.b.includes(p)); f.hidden = !ok; if (ok) n++; }
+        cuenta.textContent = `${n} ${n === 1 ? 'estudiante' : 'estudiantes'}`;
+        vacio.hidden = n > 0 || filas.length === 0;
+        // Recordar la búsqueda en la dirección y en los enlaces de Editar
+        const u = new URL(location.href); if (v) u.searchParams.set('q', v); else u.searchParams.delete('q');
+        history.replaceState(null, '', u);
+        document.querySelectorAll('a.editar').forEach((a) => { const e = new URL(a.href); if (v) e.searchParams.set('q', v); else e.searchParams.delete('q'); a.href = e; });
+      };
+      q.addEventListener('input', filtrar);
+      if (q.value && !cuenta.dataset.servidor) filtrar();
+      // Con el filtro en vivo, Enter no recarga la página
+      q.form.addEventListener('submit', (ev) => { if (!cuenta.dataset.tope && document.activeElement === q) ev.preventDefault(); });
+    })();
+  </script>
 </Base>

@@ -24,7 +24,7 @@ const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_
   {secciones.length === 0 && <div class="msg aviso">Primero cree una sección.</div>}
   <div class="grid-inf">
     {CATALOGO.map((c) => (
-      <form method="get" action={`/informes/${c.tipo}`} class="tarjeta" target="_blank">
+      <form method="get" action={`/informes/${c.tipo}`} class="tarjeta">
         <h2 style="margin-top:0">{c.titulo}</h2>
         <p class="muted" style="margin-top:-4px">{c.descripcion}</p>
         <div class="fila">
