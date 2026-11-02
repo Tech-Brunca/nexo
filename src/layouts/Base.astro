@@ -3,23 +3,30 @@ interface Props { titulo: string; sinMenu?: boolean }
 const { titulo, sinMenu = false } = Astro.props;
 const ruta = Astro.url.pathname;
 const { user, inst, instituciones, periodos = [], periodo = null } = Astro.locals;
-// Menú agrupado por lo que el docente va a hacer
-const grupos: [string, [string, string][]][] = [
-  ['', [['/', 'Inicio']]],
-  ['En el aula', [['/asistencia', 'Asistencia'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones']]],
-  ['Grupos', [['/secciones', 'Secciones'], ['/estudiantes', 'Estudiantes']]],
-  ['Resultados', [['/anual', 'Nota anual'], ['/informes', 'Informes'], ['/sea', 'Importar / exportar SEA']]],
-  ['Familias', [['/comunicados', 'Comunicados'], ['/alertas', 'Alerta temprana']]],
+// Menú agrupado por lo que el docente va a hacer. Cada grupo se pliega; el de la página actual queda abierto.
+// Íconos propios (trazo de 1,8 px, 24×24) que heredan el color del texto.
+const ICONOS: Record<string, string> = {
+  inicio: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-5.5h4V20"/>',
+  aula: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20l2.5-4M16 20l-2.5-4M7 9h6M7 12h9"/>',
+  grupos: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M15.5 14.4c2.6-.3 4.5 1.3 5 4.1"/>',
+  resultados: '<path d="M4 20h16"/><rect x="5.5" y="11" width="3" height="6.5" rx=".6"/><rect x="10.5" y="7" width="3" height="10.5" rx=".6"/><rect x="15.5" y="13" width="3" height="4.5" rx=".6"/>',
+  familias: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
+  config: '<path d="M4 7h8M16 7h4M4 12h2M10 12h10M4 17h10M18 17h2"/><circle cx="14" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="17" r="2"/>',
+  admin: '<path d="M12 3.5 5 6.5v5c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9v-5Z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
+};
+type Grupo = { clave: string; titulo: string; abierto?: boolean; items: [string, string][] };
+const grupos: Grupo[] = [
+  { clave: 'aula', titulo: 'En el aula', abierto: true, items: [['/asistencia', 'Asistencia'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones']] },
+  { clave: 'grupos', titulo: 'Grupos', items: [['/secciones', 'Secciones'], ['/estudiantes', 'Estudiantes']] },
+  { clave: 'resultados', titulo: 'Resultados', items: [['/anual', 'Nota anual'], ['/informes', 'Informes'], ['/sea', 'Importar / exportar SEA']] },
+  { clave: 'familias', titulo: 'Familias', items: [['/comunicados', 'Comunicados'], ['/alertas', 'Alerta temprana']] },
 ];
-const config: [string, string][] = [
-  ['/indicadores', 'Indicadores'],
-  ['/componentes', 'Componentes'],
-  ['/periodos', 'Periodos'],
-  ['/plantillas', 'Mensajes WhatsApp'],
-  ['/ajustes', 'Ajustes'],
-  ['/respaldo', 'Respaldo'],
-];
-const admin: [string, string][] = [['/admin/usuarios', 'Usuarios'], ['/admin/colegios', 'Colegios']];
+const config: Grupo = { clave: 'config', titulo: 'Configuración', items: [
+  ['/indicadores', 'Indicadores'], ['/componentes', 'Componentes'], ['/periodos', 'Periodos'],
+  ['/plantillas', 'Mensajes WhatsApp'], ['/ajustes', 'Ajustes'], ['/respaldo', 'Respaldo'],
+] };
+const admin: Grupo = { clave: 'admin', titulo: 'Administración', items: [['/admin/usuarios', 'Usuarios'], ['/admin/colegios', 'Colegios']] };
+const menuGrupos = [...(inst ? grupos : []), config, ...(user?.rol === 'admin' ? [admin] : [])];
 const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 ---
 <!doctype html>
@@ -68,7 +75,20 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     nav.lateral a.on { background: rgba(18,207,243,.16); color: #fff; border-left-color: var(--cian); font-weight: 600; }
     nav.lateral form button { margin: 16px 8px 0; background: transparent; border: 1px solid rgba(255,255,255,.28); color: #d4e4f7; width: calc(100% - 16px); font-weight: 400; }
     nav.lateral form button:hover { background: rgba(255,255,255,.08); }
-    nav.lateral .grupo { margin: 18px 12px 4px; font-size: 12.5px; color: #8fb3e0; font-weight: 600; }
+    nav.lateral .ico { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    nav.lateral a.ir-inicio { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    nav.lateral .gmenu { margin-top: 2px; }
+    nav.lateral .gmenu summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
+      color: #b9d2f0; font-weight: 600; font-size: 14px; user-select: none; -webkit-tap-highlight-color: transparent; }
+    nav.lateral .gmenu summary::-webkit-details-marker { display: none; }
+    nav.lateral .gmenu summary:hover { background: rgba(255,255,255,.08); color: #fff; }
+    nav.lateral .gmenu summary:focus-visible { outline: 3px solid rgba(18,207,243,.55); outline-offset: -2px; }
+    nav.lateral .gmenu summary span { flex: 1; }
+    nav.lateral .gmenu .flecha { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transition: transform .15s ease; }
+    nav.lateral .gmenu[open] .flecha { transform: rotate(90deg); }
+    nav.lateral .gmenu[data-aqui="1"] > summary { color: #fff; }
+    nav.lateral .gmenu .items { margin: 2px 0 6px; padding-left: 19px; border-left: 1px solid rgba(255,255,255,.12); margin-left: 19px; }
+    nav.lateral .gmenu .items a { padding: 7px 10px; }
     nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2); font-size: 13px; }
     nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #a9c4e6; }
     nav.lateral .quien a { display: inline; padding: 0; border: 0; color: #fff; text-decoration: underline; }
@@ -153,6 +173,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 
       nav.lateral { position: fixed; z-index: 60; inset: 0 auto 0 0; width: min(290px, 84vw); height: 100dvh; transform: translateX(-102%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(3,18,48,.35); padding-bottom: 40px; }
       nav.lateral a { padding: 11px 12px; font-size: 15px; }
+      nav.lateral .gmenu summary { padding: 12px 10px; font-size: 15px; }
       body.menu-abierto nav.lateral { transform: none; }
       body.menu-abierto .velo { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(3,18,48,.5); }
       body.menu-abierto { overflow: hidden; }
@@ -212,20 +233,33 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
             </select>
           </label>
         )}
-        {inst && grupos.map(([g, items]) => (<>
-          {g && <div class="grupo">{g}</div>}
-          {items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
-        </>))}
-        <div class="grupo">Configuración</div>
-        {config.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
-        {user?.rol === 'admin' && <div class="grupo">Administración</div>}
-        {user?.rol === 'admin' && admin.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
+        {inst && <a href="/" class={`ir-inicio ${activo('/') ? 'on' : ''}`} aria-current={activo('/') ? 'page' : undefined}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.inicio} />Inicio</a>}
+        {menuGrupos.map((g) => {
+          const aqui = g.items.some(([h]) => activo(h));
+          return (
+            <details class="gmenu" data-g={g.clave} data-aqui={aqui ? '1' : ''} open={aqui || g.abierto}>
+              <summary><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[g.clave]} /><span>{g.titulo}</span><svg class="flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
+              <div class="items">{g.items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}</div>
+            </details>
+          );
+        })}
         <form method="post" action="/login?salir=1"><button type="submit">Salir</button></form>
       </nav>
       <main><slot /></main>
     </div>
   )}
   <script is:inline>
+    // Grupos del menú: recordar cuáles dejó abiertos (el de la página actual siempre abierto)
+    (() => {
+      let guardado = null;
+      try { guardado = JSON.parse(localStorage.getItem('nexo-menu') || 'null'); } catch {}
+      const grupos = document.querySelectorAll('nav.lateral details.gmenu');
+      if (guardado) grupos.forEach((d) => { if (!d.dataset.aqui && d.dataset.g in guardado) d.open = guardado[d.dataset.g]; });
+      grupos.forEach((d) => d.addEventListener('toggle', () => {
+        const estado = {}; grupos.forEach((x) => { estado[x.dataset.g] = x.open; });
+        try { localStorage.setItem('nexo-menu', JSON.stringify(estado)); } catch {}
+      }));
+    })();
     // Menú lateral del teléfono
     document.querySelectorAll('[data-menu]').forEach((el) => el.addEventListener('click', () => {
       const abierto = document.body.classList.toggle('menu-abierto');
