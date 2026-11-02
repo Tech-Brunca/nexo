@@ -30,6 +30,13 @@ if (sec && per && Astro.url.searchParams.get('exportar')) {
   return new Response(texto, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${nombreArchivo()}"` } });
 }
 
+// Evaluaciones creadas directamente en Nexo en esta sección y periodo (no vienen del SEA)
+const directas = async () => sec && per ? await q<any>(`SELECT e.id, e.nombre, c.nombre AS componente,
+    (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego))
+    + (SELECT COUNT(DISTINCT v.estudiante_id) FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
+  FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id
+  WHERE e.seccion_id=? AND e.periodo_id=? AND e.origen IS NULL ORDER BY c.orden, e.fecha NULLS LAST, e.id`, [sec.id, per.id]) : [];
+
 // ── Importar ───────────────────────────────────────────────────────────────
 let msg = '', errores: string[] = [];
 if (sec && per && Astro.request.method === 'POST') {
@@ -45,6 +52,11 @@ if (sec && per && Astro.request.method === 'POST') {
     const archivo = f.get('archivo');
     const conNotas = str(f.get('modo')) !== 'estudiantes';
     // II periodo: la Prueba del archivo es solo la I prueba (se puede cambiar en el formulario)
+    // Qué hacer con las evaluaciones creadas en Nexo: 'conservar' o 'eliminar' (se pregunta si hay alguna)
+    const conExistentes = str(f.get('existentes'));
+    const previas = conNotas ? await directas() : [];
+    if (previas.length && !['conservar', 'eliminar'].includes(conExistentes))
+      errores.push('Indique qué hacer con las evaluaciones creadas en Nexo en este periodo.');
     const soloPrimera = (str(f.get('prueba')) || (per.numero === 2 ? 'primera' : 'ambas')) === 'primera';
     if (!(archivo instanceof File) || !archivo.size) errores.push('Elija el archivo .csv.');
     else if (/\.xlsx?$/i.test(archivo.name)) errores.push('El archivo es de Excel (.xlsx). En Excel use Archivo → Guardar como → «CSV UTF-8 (delimitado por comas)» y súbalo de nuevo.');
@@ -106,8 +118,12 @@ if (sec && per && Astro.request.method === 'POST') {
                 else notasSea.push({ estudiante_id: est.id, clave: s.clave, valor: d.vals[k]! });
               }
             }
+            if (conNotas && conExistentes === 'eliminar' && previas.length) {
+              await x(`DELETE FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND origen IS NULL`, [sec.id, per.id]);
+              creadas.push(previas.length === 1 ? 'se eliminó la evaluación creada en Nexo' : `se eliminaron ${previas.length} evaluaciones creadas en Nexo`);
+            }
             if (notasSea.length)
-              creadas = await guardarNotasSea(async (sql, p = []) => (await x(sql, p)).rows, U, sec, per.id, notasSea, soloPrimera);
+              creadas = [...creadas, ...await guardarNotasSea(async (sql, p = []) => (await x(sql, p)).rows, U, sec, per.id, notasSea, soloPrimera)];
           });
           msg = `Archivo importado: ${datos.length} estudiantes (${nuevos} nuevos, ${matriculados} agregados a ${etiquetaSeccion(sec)})` +
             (conNotas ? `, ${notas} calificaciones de ${per.nombre}.` : '. No se importaron calificaciones.') +
@@ -117,6 +133,7 @@ if (sec && per && Astro.request.method === 'POST') {
     }
   }
 }
+const existentes = await directas();
 const r = sec && per ? await calcularPeriodo(U, sec.id, per.id) : null;
 const nImp = sec && per ? Number((await one<any>(`SELECT (SELECT COUNT(*) FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=?)
   + (SELECT COUNT(*) FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND origen='sea') AS n`, [sec.id, per.id, sec.id, per.id])).n) : 0;
@@ -156,7 +173,15 @@ const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
                 <option value="ambas" selected={per.numero !== 2}>La suma de las dos pruebas (todo el componente)</option>
                 <option value="primera" selected={per.numero === 2}>Solo la I prueba{valorPrueba1(compDe('prueba')) !== null ? ` (vale ${valorPrueba1(compDe('prueba'))} %)` : ''}</option>
               </select></label>
-            <button>Importar</button>
+            {existentes.length > 0 && (
+              <label style="flex:2">Este periodo ya tiene {existentes.length === 1 ? 'una evaluación creada' : `${existentes.length} evaluaciones creadas`} en Nexo: {existentes.slice(0, 6).map((e) => `${e.nombre} (${e.componente}${Number(e.calificados) ? `, ${e.calificados} con nota` : ''})`).join(', ')}{existentes.length > 6 ? '…' : ''}. {existentes.length === 1 ? '¿Qué hacer con ella?' : '¿Qué hacer con ellas?'}
+                <select name="existentes" id="sel-existentes">
+                  <option value="">— Elija —</option>
+                  <option value="conservar">Conservarlas (si el componente viene completo del SEA, no cuentan)</option>
+                  <option value="eliminar">Eliminarlas y dejar solo lo importado</option>
+                </select></label>
+            )}
+            <button onclick="const s=document.getElementById('sel-existentes'); return !s || s.value!=='eliminar' || confirm('Se eliminarán las evaluaciones creadas en Nexo en este periodo, con sus notas. ¿Continuar?')">Importar</button>
           </div>
           <p class="muted" style="margin:8px 0 0">Las notas quedan como evaluaciones «(SEA)» en Evaluaciones. En el II periodo la Prueba es solo la I prueba (su valor se configura en Componentes) y se crea la II prueba sin calificar.</p>
         </form>
