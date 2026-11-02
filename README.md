@@ -103,7 +103,7 @@ DB_PASSWORD=otra-clave
 
 Lista de estudiantes · Resumen de asistencia · Detalle de asistencia · Alerta de ausentismo ·
 Calificaciones del grupo · Calificaciones por estudiante · Indicadores calificados · Informe anual ·
-Acta de aplazados y convocatorias · Eximidos del II periodo (I periodo > 90 y todas las notas del II > 90). Con encabezado del MEP, para imprimir/guardar en PDF o Excel (CSV).
+Acta de aplazados y convocatorias · Eximidos del II periodo (promedio del I ≥ 90 y cada componente del II ≥ 90, sin la segunda prueba), con reconocimientos imprimibles por estudiante y aviso por WhatsApp al encargado. Con encabezado del MEP, para imprimir/guardar en PDF o Excel (CSV).
 
 ## Comunicados por WhatsApp
 

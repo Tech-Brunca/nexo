@@ -1,0 +1,135 @@
+---
+// Reconocimientos para los estudiantes eximidos de la segunda prueba del II periodo:
+// uno por estudiante, para imprimir o guardar en PDF, y un mensaje de WhatsApp para el encargado.
+import Base from '../../layouts/Base.astro';
+import EnviarWa from '../../components/EnviarWa.astro';
+import { q } from '../../lib/db';
+import { seccion } from '../../lib/calc';
+import { calcularEximidos } from '../../lib/informes';
+import { fmt, hoy, etiquetaSeccion } from '../../lib/util';
+import { plantillas, llenar, enlaceWa } from '../../lib/whatsapp';
+const { user, inst } = Astro.locals;
+const p = Astro.url.searchParams;
+const sec = p.get('seccion') ? await seccion(user.id, Number(p.get('seccion'))) : null;
+const ex = sec ? await calcularEximidos(user.id, sec, p) : 'Elija una sección.';
+const porHoja = p.get('hoja') === '1' ? 1 : 2;
+let eximidos: any[] = [];
+let generos = new Map<number, string>();
+if (typeof ex !== 'string') {
+  eximidos = ex.filas.filter((x) => x.exime);
+  if (p.get('estudiante')) eximidos = eximidos.filter((x) => x.f.est.id === Number(p.get('estudiante')));
+  const ids = eximidos.map((x) => x.f.est.id);
+  if (ids.length) generos = new Map((await q<any>('SELECT id, genero FROM {S}.estudiantes WHERE id = ANY(?)', [ids])).map((r) => [r.id, r.genero ?? '']));
+}
+const fecha = hoy();
+const fechaTexto = new Date(fecha + 'T12:00:00').toLocaleDateString('es-CR', { day: 'numeric', month: 'long', year: 'numeric' });
+const prueba = typeof ex !== 'string' ? ex.excluida?.nombre ?? 'II Prueba' : '';
+const asignatura = sec?.asignatura ?? '';
+const eximidoA = (id: number) => (generos.get(id) === 'F' ? 'eximida' : generos.get(id) === 'M' ? 'eximido' : 'eximido(a)');
+const elA = (id: number) => (generos.get(id) === 'F' ? 'la estudiante' : generos.get(id) === 'M' ? 'el estudiante' : 'el (la) estudiante');
+// Componentes del II periodo con nota (para mostrar en el reconocimiento)
+const detalle = (x: any) => typeof ex === 'string' ? [] : ex.r2.comps.map((c, i) => [c.nombre, x.porComp[i]] as [string, number | null]).filter(([, v]) => v !== null);
+// WhatsApp al encargado
+const pl = await plantillas(user.id);
+const destinos = sec && typeof ex !== 'string' ? eximidos.map((x) => {
+  const e = x.f.est;
+  const mensaje = llenar(pl.eximido, { encargado: e.encargado, estudiante: `${e.nombre} ${e.apellidos}`, seccion: etiquetaSeccion(sec), asignatura,
+    docente: user.nombre, colegio: inst!.nombre, evaluacion: prueba, fecha });
+  return { estudiante_id: e.id, nombre: `${e.apellidos} ${e.nombre}`, encargado: e.encargado, telefono: e.telefono, mensaje, enlace: enlaceWa(e.telefono, mensaje) };
+}) : [];
+const volver = `/informes/eximidos?${new URLSearchParams([...p].filter(([k]) => !['hoja', 'estudiante'].includes(k)))}`;
+const conHoja = (n: number) => `?${new URLSearchParams([...[...p].filter(([k]) => k !== 'hoja'), ['hoja', String(n)]])}`;
+---
+<Base titulo="Reconocimientos">
+  <p class="no-print"><a href={volver}>← Informe de eximidos</a></p>
+  {typeof ex === 'string' ? <div class="msg aviso">{ex} <a href="/informes">Volver</a></div> : eximidos.length === 0 ? (
+    <div class="msg aviso">No hay estudiantes eximidos en {etiquetaSeccion(sec)} con los criterios elegidos.</div>
+  ) : (
+    <>
+      <div class="no-print tarjeta">
+        <h1 style="margin:0 0 4px">Reconocimientos · {etiquetaSeccion(sec)}</h1>
+        <p class="sub" style="margin-bottom:12px">{eximidos.length === 1 ? 'Un estudiante eximido' : `${eximidos.length} estudiantes eximidos`} de la {prueba}. Imprímalos o guárdelos en PDF para enviarlos al hogar.</p>
+        <div class="fila">
+          <button onclick="print()">Imprimir o guardar PDF</button>
+          <a class={`btn ${porHoja === 2 ? '' : 'sec'}`} href={conHoja(2)}>Dos por hoja</a>
+          <a class={`btn ${porHoja === 1 ? '' : 'sec'}`} href={conHoja(1)}>Uno por hoja</a>
+        </div>
+      </div>
+      <div class={`hojas por-${porHoja}`}>
+        {eximidos.map((x) => (
+          <article class="reco">
+            <div class="marco">
+              <header>
+                <div class="mep">Ministerio de Educación Pública</div>
+                <div class="inst">{inst!.nombre}{inst!.direccion_regional && ` · Dirección Regional de ${inst!.direccion_regional}`}</div>
+              </header>
+              <h2>Reconocimiento</h2>
+              <p class="otorga">Se otorga a</p>
+              <p class="nombre">{x.f.est.nombre} {x.f.est.apellidos}</p>
+              <p class="texto">
+                por su excelente rendimiento académico{asignatura && <> en <b>{asignatura}</b></>}, sección {etiquetaSeccion(sec)}.
+                Con un promedio de <b>{fmt(x.t1)}</b> en el {ex.p1.nombre} y todos los componentes del {ex.p2.nombre} en {ex.umbral} o más,
+                {' '}{elA(x.f.est.id)} queda <b>{eximidoA(x.f.est.id)}</b> de la <b>{prueba}</b>.
+              </p>
+              <p class="notas">{detalle(x).map(([n, v]) => <span>{n}: <b>{fmt(v)}</b></span>)}</p>
+              <p class="felicita">¡Felicidades por su esfuerzo y dedicación!</p>
+              <footer>
+                <div class="firma"><span class="linea"></span>{user.nombre}<small>Docente</small></div>
+                <div class="firma"><span class="linea"></span>{inst!.director || ' '}<small>Director(a)</small></div>
+              </footer>
+              <div class="fecha">{inst!.nombre}, {fechaTexto}</div>
+            </div>
+          </article>
+        ))}
+      </div>
+      <div class="no-print" style="margin-top:18px">
+        <EnviarWa destinos={destinos} tipo="eximido" referencia={`eximidos:${sec!.id}:${fecha}`} titulo="Avisar a los encargados por WhatsApp" />
+        <p class="muted">WhatsApp se abre con el mensaje listo; para enviar el reconocimiento, adjunte el PDF guardado. El texto se edita en <a href="/plantillas">Mensajes WhatsApp</a>.</p>
+      </div>
+    </>
+  )}
+  <style is:global>
+    .hojas { display: grid; gap: 18px; }
+    .reco { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(10,61,145,.12); padding: 10px; break-inside: avoid; }
+    .reco .marco { border: 3px solid var(--marino); outline: 1px solid var(--cian); outline-offset: -8px; border-radius: 6px; padding: 26px 34px 18px;
+      text-align: center; color: var(--tinta); background: linear-gradient(180deg, #fff 0%, #fff 70%, var(--hielo) 100%); }
+    .reco header { font-size: 13px; line-height: 1.5; }
+    .reco .mep { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--marino); }
+    .reco .inst { color: var(--suave); }
+    .reco h2 { font-family: var(--titulos); font-size: 30px; letter-spacing: .08em; text-transform: uppercase; color: var(--marino); margin: 12px 0 4px; }
+    .reco .otorga { margin: 0; color: var(--suave); font-size: 14px; }
+    .reco .nombre { font-family: var(--titulos); font-size: 26px; font-weight: 700; color: var(--teal); margin: 4px 0 8px; border-bottom: 2px solid var(--cian); display: inline-block; padding: 0 18px 4px; }
+    .reco .texto { font-size: 14.5px; line-height: 1.55; max-width: 640px; margin: 6px auto; }
+    .reco .notas { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; font-size: 12.5px; color: var(--suave); margin: 6px 0; }
+    .reco .felicita { font-family: var(--titulos); font-weight: 600; color: var(--marino); margin: 8px 0 14px; }
+    .reco footer { display: flex; justify-content: space-around; gap: 30px; margin-top: 22px; }
+    .reco .firma { display: flex; flex-direction: column; align-items: center; font-size: 13px; min-width: 200px; }
+    .reco .firma .linea { display: block; width: 100%; border-top: 1px solid var(--tinta); margin-bottom: 4px; }
+    .reco .firma small { color: var(--suave); }
+    .reco .fecha { font-size: 11.5px; color: var(--suave); margin-top: 12px; }
+    @media (max-width: 700px) { .reco .marco { padding: 18px 14px; } .reco h2 { font-size: 22px; } .reco .nombre { font-size: 20px; } .reco footer { flex-direction: column; gap: 22px; } }
+    @media print {
+      @page { size: letter; margin: 10mm; }
+      body, main { background: #fff !important; }
+      .hojas { display: block; }
+      .reco { box-shadow: none; border-radius: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .hojas.por-2 .reco { height: calc((279.4mm - 20mm) / 2 - 2mm); display: flex; padding: 3mm 0; }
+      .hojas.por-2 .reco:nth-child(2n) { break-after: page; }
+      .hojas.por-1 .reco { height: calc(279.4mm - 22mm); display: flex; break-after: page; }
+      .hojas.por-1 .reco .marco { padding: 40px 56px; }
+      .hojas.por-1 .reco header { font-size: 16px; }
+      .hojas.por-1 .reco h2 { font-size: 46px; margin: 26px 0 10px; }
+      .hojas.por-1 .reco .otorga { font-size: 18px; }
+      .hojas.por-1 .reco .nombre { font-size: 38px; margin: 10px 0 18px; }
+      .hojas.por-1 .reco .texto { font-size: 18px; max-width: 560px; line-height: 1.7; }
+      .hojas.por-1 .reco .notas { font-size: 15px; margin: 14px 0; }
+      .hojas.por-1 .reco .felicita { font-size: 22px; margin: 18px 0 30px; }
+      .hojas.por-1 .reco footer { margin-top: 60px; } .hojas.por-1 .reco .firma { font-size: 15px; min-width: 230px; }
+      .hojas.por-1 .reco .fecha { font-size: 13px; margin-top: 30px; }
+      .reco .marco { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+      .hojas.por-2 .reco .marco { padding: 14px 28px 10px; }
+      .hojas.por-2 .reco h2 { font-size: 24px; margin-top: 6px; } .hojas.por-2 .reco .nombre { font-size: 22px; }
+      .hojas.por-2 .reco .texto { font-size: 13px; } .hojas.por-2 .reco footer { margin-top: 14px; }
+    }
+  </style>
+</Base>

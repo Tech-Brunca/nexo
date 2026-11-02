@@ -160,45 +160,9 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
 
   if (tipo === 'eximidos') {
     if (!sec) return 'Elija una sección.';
-    const pers = await periodosDe(c.uid);
-    const p1 = pers.find((x) => x.numero === 1), p2 = pers.find((x) => x.numero === 2);
-    if (!p1 || !p2) return 'Se necesitan el I y el II periodo (configúrelos en Periodos).';
-    const umbral = Number(p.get('umbral') || 90);
-    const r1 = (await calcularPeriodo(c.uid, sec.id, p1.id))!, r2 = (await calcularPeriodo(c.uid, sec.id, p2.id))!;
-    // La segunda prueba del II periodo es la que se exime: no cuenta. Se puede elegir en el formulario;
-    // si no, es la última prueba del periodo (solo cuando hay dos o más).
-    const compPrueba = r2.comps.find((x) => x.clave === 'prueba');
-    const pruebas = r2.evals.filter((ev) => ev.componente_id === compPrueba?.id && !r2.ignoradas.has(ev.id))
-      // la del SEA es la I prueba; la creada sola al importar ('auto') es la II
-      .sort((x, y) => (x.origen === 'sea' ? 0 : 1) - (y.origen === 'sea' ? 0 : 1) || (x.origen === 'auto' ? 1 : 0) - (y.origen === 'auto' ? 1 : 0)
-        || String(x.fecha ?? '').localeCompare(String(y.fecha ?? '')) || x.id - y.id);
-    const elegida = Number(p.get('excluir') || 0);
-    const excluida = elegida ? pruebas.find((ev) => ev.id === elegida) ?? null : pruebas.length >= 2 ? pruebas[pruebas.length - 1] : null;
-    // Cuentan las evaluaciones ya aplicadas (con al menos una nota en el grupo), menos la prueba eximida
-    const aplicadas = r2.evals.filter((ev) => ev.id !== excluida?.id && !r2.ignoradas.has(ev.id) && r2.filas.some((f) => f.calificada[ev.id]));
-    const n100 = (v: number, de: number) => (de > 0 ? r2r((v / de) * 100) : 0);
-    const permitidos = new Set(filtroSub(r2.filas.map((f) => ({ ...f.est, fila: f })), p).map((e: any) => e.id));
-    const filas = r2.filas.filter((f) => permitidos.has(f.est.id)).map((f) => {
-      const motivos: string[] = [];
-      const t1 = r1.filas.find((x) => x.est.id === f.est.id)?.total ?? 0;
-      // I periodo: solo el promedio final, sin importar cada componente
-      if (t1 < umbral) motivos.push(`${p1.nombre}: ${fmt(t1)}`);
-      // II periodo: cada componente, en escala de 100, sobre lo evaluado hasta ahora
-      const porComp: (number | null)[] = r2.comps.map((comp) => {
-        if (f.importado[comp.id]) return n100(f.porComp[comp.id], comp.porcentaje);
-        if (comp.tipo === 'asistencia') return r2.lecciones > 0 ? n100(f.porComp[comp.id], comp.porcentaje) : null;
-        const evs = aplicadas.filter((ev) => ev.componente_id === comp.id);
-        const valor = evs.reduce((sm, ev) => sm + Number(ev.porcentaje), 0);
-        if (!evs.length || valor <= 0) return null;
-        for (const ev of evs) if (!f.calificada[ev.id]) motivos.push(`${ev.nombre}: sin nota`);
-        const obtenido = evs.reduce((sm, ev) => sm + ((f.nota100[ev.id] ?? 0) * Number(ev.porcentaje)) / 100, 0);
-        return n100(obtenido, valor);
-      });
-      r2.comps.forEach((comp, i) => { const v = porComp[i]; if (v !== null && v < umbral) motivos.push(`${comp.nombre}: ${fmt(v)}`); });
-      const sinNotas = porComp.every((v) => v === null);
-      const exime = !sinNotas && motivos.length === 0;
-      return { f, t1, porComp, exime, obs: sinNotas ? `Aún no hay notas del ${p2.nombre}` : motivos.join('; ') };
-    });
+    const ex = await calcularEximidos(c.uid, sec, p);
+    if (typeof ex === 'string') return ex;
+    const { p1, p2, umbral, excluida, aplicadas, r2, filas } = ex;
     const lista = p.get('solo') ? filas.filter((x) => x.exime) : filas;
     const n = filas.filter((x) => x.exime).length;
     return { titulo: 'Estudiantes eximidos', archivo: `eximidos-${etiquetaSeccion(sec)}`, firma: true,
@@ -234,4 +198,48 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
         num: nivel ? [3, 5, 6] : [2, 4, 5], filas }] };
   }
   return 'Informe no encontrado.';
+}
+
+/** Estudiantes eximidos de la segunda prueba del II periodo (usado por el informe y los reconocimientos) */
+export async function calcularEximidos(uid: number, sec: any, p: P) {
+    const pers = await periodosDe(uid);
+    const p1 = pers.find((x) => x.numero === 1), p2 = pers.find((x) => x.numero === 2);
+    if (!p1 || !p2) return 'Se necesitan el I y el II periodo (configúrelos en Periodos).';
+    const umbral = Number(p.get('umbral') || 90);
+    const r1 = (await calcularPeriodo(uid, sec.id, p1.id))!, r2 = (await calcularPeriodo(uid, sec.id, p2.id))!;
+    // La segunda prueba del II periodo es la que se exime: no cuenta. Se puede elegir en el formulario;
+    // si no, es la última prueba del periodo (solo cuando hay dos o más).
+    const compPrueba = r2.comps.find((x) => x.clave === 'prueba');
+    const pruebas = r2.evals.filter((ev) => ev.componente_id === compPrueba?.id && !r2.ignoradas.has(ev.id))
+      // la del SEA es la I prueba; la creada sola al importar ('auto') es la II
+      .sort((x, y) => (x.origen === 'sea' ? 0 : 1) - (y.origen === 'sea' ? 0 : 1) || (x.origen === 'auto' ? 1 : 0) - (y.origen === 'auto' ? 1 : 0)
+        || String(x.fecha ?? '').localeCompare(String(y.fecha ?? '')) || x.id - y.id);
+    const elegida = Number(p.get('excluir') || 0);
+    const excluida = elegida ? pruebas.find((ev) => ev.id === elegida) ?? null : pruebas.length >= 2 ? pruebas[pruebas.length - 1] : null;
+    // Cuentan las evaluaciones ya aplicadas (con al menos una nota en el grupo), menos la prueba eximida
+    const aplicadas = r2.evals.filter((ev) => ev.id !== excluida?.id && !r2.ignoradas.has(ev.id) && r2.filas.some((f) => f.calificada[ev.id]));
+    const n100 = (v: number, de: number) => (de > 0 ? r2r((v / de) * 100) : 0);
+    const permitidos = new Set(filtroSub(r2.filas.map((f) => ({ ...f.est, fila: f })), p).map((e: any) => e.id));
+    const filas = r2.filas.filter((f) => permitidos.has(f.est.id)).map((f) => {
+      const motivos: string[] = [];
+      const t1 = r1.filas.find((x) => x.est.id === f.est.id)?.total ?? 0;
+      // I periodo: solo el promedio final, sin importar cada componente
+      if (t1 < umbral) motivos.push(`${p1.nombre}: ${fmt(t1)}`);
+      // II periodo: cada componente, en escala de 100, sobre lo evaluado hasta ahora
+      const porComp: (number | null)[] = r2.comps.map((comp) => {
+        if (f.importado[comp.id]) return n100(f.porComp[comp.id], comp.porcentaje);
+        if (comp.tipo === 'asistencia') return r2.lecciones > 0 ? n100(f.porComp[comp.id], comp.porcentaje) : null;
+        const evs = aplicadas.filter((ev) => ev.componente_id === comp.id);
+        const valor = evs.reduce((sm, ev) => sm + Number(ev.porcentaje), 0);
+        if (!evs.length || valor <= 0) return null;
+        for (const ev of evs) if (!f.calificada[ev.id]) motivos.push(`${ev.nombre}: sin nota`);
+        const obtenido = evs.reduce((sm, ev) => sm + ((f.nota100[ev.id] ?? 0) * Number(ev.porcentaje)) / 100, 0);
+        return n100(obtenido, valor);
+      });
+      r2.comps.forEach((comp, i) => { const v = porComp[i]; if (v !== null && v < umbral) motivos.push(`${comp.nombre}: ${fmt(v)}`); });
+      const sinNotas = porComp.every((v) => v === null);
+      const exime = !sinNotas && motivos.length === 0;
+      return { f, t1, porComp, exime, obs: sinNotas ? `Aún no hay notas del ${p2.nombre}` : motivos.join('; ') };
+    });
+    return { p1, p2, umbral, excluida, aplicadas, r2, filas };
 }

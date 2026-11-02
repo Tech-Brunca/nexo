@@ -24,6 +24,11 @@ export const TIPOS: Record<string, { titulo: string; ayuda: string; texto: strin
     ayuda: 'Desde la alerta temprana',
     texto: 'Buenas, {encargado}. Le saluda {docente}, docente de {asignatura} en {colegio}. {estudiante} ({seccion}) acumula {lecciones} lección(es) de ausencia injustificada en los últimos días. Me gustaría conversar con usted para apoyarle. Gracias.',
   },
+  eximido: {
+    titulo: 'Eximido de la prueba',
+    ayuda: 'Desde los reconocimientos de eximidos (informe de eximidos)',
+    texto: 'Buenas, {encargado}. Le saluda {docente}, docente de {asignatura} en {colegio}. Con mucho gusto le informo que {estudiante} ({seccion}) quedó eximido(a) de la {evaluacion} por su excelente rendimiento académico. ¡Felicidades! Le adjunto el reconocimiento.',
+  },
   libre: {
     titulo: 'Mensaje general',
     ayuda: 'Comunicado a todo un grupo',

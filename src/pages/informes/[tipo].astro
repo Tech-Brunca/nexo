@@ -26,6 +26,7 @@ const emision = hoy();
       <div class="no-print fila" style="margin-bottom:14px">
         <button onclick="print()">Imprimir o guardar PDF</button>
         <a class="btn sec" href={`?${new URLSearchParams([...Astro.url.searchParams, ['csv', '1']])}`}>Excel (CSV)</a>
+        {tipo === 'eximidos' && <a class="btn" href={`/informes/reconocimientos?${Astro.url.searchParams}`}>Reconocimientos para los eximidos ★</a>}
       </div>
       <article class="informe">
         <header class="enc">
