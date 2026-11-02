@@ -84,3 +84,11 @@ CREATE TABLE IF NOT EXISTS general.plantillas (
   texto text NOT NULL,
   PRIMARY KEY (usuario_id, tipo)
 );
+
+-- v3.8: escudo o logo de cada colegio (aparte, para no cargar la imagen en cada consulta del colegio)
+CREATE TABLE IF NOT EXISTS general.colegio_logos (
+  colegio_id int PRIMARY KEY REFERENCES general.colegios(id) ON DELETE CASCADE,
+  imagen bytea NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('image/png', 'image/jpeg', 'image/webp')),
+  actualizado timestamptz NOT NULL DEFAULT now()
+);

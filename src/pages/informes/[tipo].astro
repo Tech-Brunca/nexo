@@ -2,6 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import { generar, CATALOGO } from '../../lib/informes';
 import { csv, fmt, hoy } from '../../lib/util';
+import { logoColegio } from '../../lib/auth';
 const { user, inst } = Astro.locals;
 const tipo = Astro.params.tipo!;
 const info = CATALOGO.find((c) => c.tipo === tipo);
@@ -29,7 +30,8 @@ const emision = hoy();
         {tipo === 'eximidos' && <a class="btn" href={`/informes/reconocimientos?${Astro.url.searchParams}`}>Reconocimientos para los eximidos ★</a>}
       </div>
       <article class="informe">
-        <header class="enc">
+        <header class={`enc ${logoColegio(inst) ? 'con-escudo' : ''}`}>
+          {logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt={`Escudo de ${inst!.nombre}`} />}
           <div class="mep">Ministerio de Educación Pública</div>
           <div>Dirección Regional de Educación {inst!.direccion_regional} {inst!.circuito && `· Circuito escolar ${inst!.circuito}`}</div>
           <div><b>{inst!.nombre}</b>{inst!.codigo && ` · Código ${inst!.codigo}`}</div>
@@ -62,6 +64,9 @@ const emision = hoy();
     .informe { background: #fff; border: 1px solid var(--linea); border-radius: 10px; padding: 28px 32px; max-width: 1050px; }
     .enc { text-align: center; line-height: 1.45; font-size: 14px; margin-bottom: 14px; }
     .enc .mep { font-weight: 700; letter-spacing: .02em; }
+    .enc.con-escudo { position: relative; padding: 0 96px; min-height: 80px; }
+    .enc .escudo { position: absolute; left: 0; top: 0; width: 80px; height: 80px; object-fit: contain; }
+    @media (max-width: 600px) { .enc.con-escudo { padding: 0; } .enc .escudo { position: static; display: block; margin: 0 auto 6px; width: 64px; height: 64px; } }
     .enc h1 { margin: 10px 0 2px; font-size: 20px; }
     .meta { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 10px 0 14px; font-size: 13px; }
     .meta div { display: flex; gap: 6px; } .meta dt { color: var(--suave); } .meta dd { margin: 0; font-weight: 600; }

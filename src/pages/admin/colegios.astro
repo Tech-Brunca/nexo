@@ -2,6 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import { exec, q, one, transaccion, crearEsquemaColegio } from '../../lib/db';
 import { num, str } from '../../lib/util';
+import { logoColegio } from '../../lib/auth';
 let msg = '', error = '';
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
@@ -22,6 +23,25 @@ if (Astro.request.method === 'POST') {
       });
       msg = `Colegio creado con su propia base (${esquema}). Los docentes ya pueden agregarlo en «Mi cuenta».`;
     }
+  } else if (accion === 'logo') {
+    // Escudo o logo: PNG, JPG o WebP de hasta 1 MB (se revisa el contenido, no solo el nombre)
+    const a = f.get('logo');
+    const b = a instanceof File && a.size ? Buffer.from(await a.arrayBuffer()) : null;
+    const tipo = !b ? null : b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG' ? 'image/png'
+      : b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? 'image/jpeg'
+      : b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP' ? 'image/webp' : null;
+    if (!(await one('SELECT id FROM general.colegios WHERE id=?', [id]))) error = 'No existe.';
+    else if (!b) error = 'Elija la imagen del escudo.';
+    else if (b.length > 1024 * 1024) error = 'La imagen pesa más de 1 MB. Redúzcala e inténtelo de nuevo.';
+    else if (!tipo) error = 'La imagen debe ser PNG, JPG o WebP.';
+    else {
+      await exec(`INSERT INTO general.colegio_logos (colegio_id, imagen, tipo) VALUES (?,?,?)
+        ON CONFLICT (colegio_id) DO UPDATE SET imagen=EXCLUDED.imagen, tipo=EXCLUDED.tipo, actualizado=now()`, [id, b, tipo]);
+      msg = 'Escudo guardado.';
+    }
+  } else if (accion === 'quitar-logo') {
+    await exec('DELETE FROM general.colegio_logos WHERE colegio_id=?', [id]);
+    msg = 'Se quitó el escudo.';
   } else if (accion === 'borrar') {
     const col = await one<any>('SELECT * FROM general.colegios WHERE id=?', [id]);
     const miembros = (await one<any>('SELECT COUNT(*) AS n FROM general.usuario_colegios WHERE colegio_id=?', [id])).n;
@@ -40,6 +60,7 @@ if (Astro.request.method === 'POST') {
 }
 const editar = Number(Astro.url.searchParams.get('editar') ?? 0);
 const lista = await q<any>(`SELECT c.*, u.nombre AS creador,
+  (SELECT extract(epoch FROM l.actualizado)::bigint FROM general.colegio_logos l WHERE l.colegio_id=c.id) AS logo_v,
   (SELECT COUNT(*) FROM general.usuario_colegios uc WHERE uc.colegio_id=c.id) AS docentes
   FROM general.colegios c LEFT JOIN general.usuarios u ON u.id=c.creado_por ORDER BY c.nombre`);
 for (const c of lista) {
@@ -61,10 +82,25 @@ const ed = lista.find((i) => i.id === editar) ?? { id: 0, nombre: '', codigo: ''
     <label style="flex:1">Director(a)<input name="director" value={ed.director} /></label>
     <button>{ed.id ? 'Guardar cambios' : 'Crear colegio'}</button>{ed.id ? <a class="btn sec" href="/admin/colegios">Cancelar</a> : null}
   </form>
+  {ed.id > 0 && (
+    <div class="tarjeta escudo-edit">
+      <div class="escudo-vista">{logoColegio(ed) ? <img src={logoColegio(ed)!} alt={`Escudo de ${ed.nombre}`} /> : <span class="muted">Sin escudo</span>}</div>
+      <div>
+        <h2 style="margin:0 0 4px">Escudo o logo de {ed.nombre}</h2>
+        <p class="muted" style="margin:0 0 10px">Aparece en el menú, en los informes impresos y en los reconocimientos. PNG, JPG o WebP de hasta 1 MB; mejor con fondo transparente.</p>
+        <form method="post" enctype="multipart/form-data" class="fila">
+          <input type="hidden" name="accion" value="logo" /><input type="hidden" name="id" value={ed.id} />
+          <label>Imagen<input type="file" name="logo" accept="image/png,image/jpeg,image/webp" required /></label>
+          <button>{logoColegio(ed) ? 'Cambiar escudo' : 'Subir escudo'}</button>
+        </form>
+        {logoColegio(ed) && <form method="post" style="margin-top:8px" onsubmit="return confirm('¿Quitar el escudo de este colegio?')"><input type="hidden" name="accion" value="quitar-logo" /><input type="hidden" name="id" value={ed.id} /><button class="mini peligro">Quitar escudo</button></form>}
+      </div>
+    </div>
+  )}
   <div class="tabla"><table>
     <tr><th>Colegio</th><th>Código</th><th>Regional</th><th>Base</th><th class="n">Docentes</th><th class="n">Estudiantes</th><th class="n">Tamaño</th><th></th></tr>
     {lista.map((i) => (
-      <tr><td><b>{i.nombre}</b><br /><span class="muted">{i.director}</span></td><td>{i.codigo}</td><td>{i.direccion_regional}{i.circuito && ` · circ. ${i.circuito}`}</td>
+      <tr><td><div style="display:flex;gap:10px;align-items:center">{logoColegio(i) && <img src={logoColegio(i)!} alt="" style="width:34px;height:34px;object-fit:contain" />}<div><b>{i.nombre}</b><br /><span class="muted">{i.director}</span></div></div></td><td>{i.codigo}</td><td>{i.direccion_regional}{i.circuito && ` · circ. ${i.circuito}`}</td>
         <td><code>{i.esquema}</code></td><td class="n">{i.docentes}</td><td class="n">{i.estudiantes}</td><td class="n">{i.tamano}</td>
         <td style="white-space:nowrap"><a href={`?editar=${i.id}`}>Editar</a>
           {i.docentes == 0 && i.estudiantes == 0 && (
@@ -75,4 +111,9 @@ const ed = lista.find((i) => i.id === editar) ?? { id: 0, nombre: '', codigo: ''
           )}</td></tr>
     ))}
   </table></div>
+  <style>
+    .escudo-edit { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+    .escudo-vista { width: 110px; height: 110px; border: 1px dashed #c6d4e3; border-radius: 12px; display: grid; place-items: center; background: #fff; flex: none; }
+    .escudo-vista img { max-width: 96px; max-height: 96px; object-fit: contain; }
+  </style>
 </Base>

@@ -15,7 +15,9 @@ export const COOKIE_INST = 'rd_inst';
 export const DURACION_H = 12;
 
 export type Usuario = { id: number; correo: string; nombre: string; rol: 'admin' | 'docente'; estado: string };
-export type Institucion = { id: number; nombre: string; codigo: string; direccion_regional: string; circuito: string; director: string; esquema: string };
+export type Institucion = { id: number; nombre: string; codigo: string; direccion_regional: string; circuito: string; director: string; esquema: string; logo_v?: number | null };
+/** Dirección del escudo del colegio (con versión para que el navegador lo guarde en caché), o null */
+export const logoColegio = (i: Pick<Institucion, 'id' | 'logo_v'> | null | undefined) => (i?.logo_v ? `/colegio-logo/${i.id}?v=${i.logo_v}` : null);
 
 // ── Contraseñas (scrypt con sal aleatoria) ─────────────────────────────────
 export async function hashClave(clave: string) {

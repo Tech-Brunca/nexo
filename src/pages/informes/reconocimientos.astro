@@ -8,6 +8,7 @@ import { seccion } from '../../lib/calc';
 import { calcularEximidos } from '../../lib/informes';
 import { fmt, hoy, etiquetaSeccion } from '../../lib/util';
 import { plantillas, llenar, enlaceWa } from '../../lib/whatsapp';
+import { logoColegio } from '../../lib/auth';
 const { user, inst } = Astro.locals;
 const p = Astro.url.searchParams;
 const sec = p.get('seccion') ? await seccion(user.id, Number(p.get('seccion'))) : null;
@@ -60,6 +61,7 @@ const conHoja = (n: number) => `?${new URLSearchParams([...[...p].filter(([k]) =
           <article class="reco">
             <div class="marco">
               <header>
+                {logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt={`Escudo de ${inst!.nombre}`} />}
                 <div class="mep">Ministerio de Educación Pública</div>
                 <div class="inst">{inst!.nombre}{inst!.direccion_regional && ` · Dirección Regional de ${inst!.direccion_regional}`}</div>
               </header>
@@ -94,6 +96,8 @@ const conHoja = (n: number) => `?${new URLSearchParams([...[...p].filter(([k]) =
     .reco .marco { border: 3px solid var(--marino); outline: 1px solid var(--cian); outline-offset: -8px; border-radius: 6px; padding: 26px 34px 18px;
       text-align: center; color: var(--tinta); background: linear-gradient(180deg, #fff 0%, #fff 70%, var(--hielo) 100%); }
     .reco header { font-size: 13px; line-height: 1.5; }
+    .reco .escudo { display: block; margin: 0 auto 6px; width: 64px; height: 64px; object-fit: contain; }
+    .hojas.por-2 .reco .escudo { width: 46px; height: 46px; margin-bottom: 2px; }
     .reco .mep { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--marino); }
     .reco .inst { color: var(--suave); }
     .reco h2 { font-family: var(--titulos); font-size: 30px; letter-spacing: .08em; text-transform: uppercase; color: var(--marino); margin: 12px 0 4px; }

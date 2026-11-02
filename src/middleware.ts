@@ -5,7 +5,7 @@ import { periodoDeFecha } from './lib/calc';
 
 const PUBLICAS = ['/login', '/registro'];
 // Páginas que funcionan sin colegio activo
-const SIN_COLEGIO = ['/cuenta', '/admin', '/ajustes', '/indicadores', '/plantillas'];
+const SIN_COLEGIO = ['/cuenta', '/admin', '/ajustes', '/indicadores', '/plantillas', '/colegio-logo'];
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
   const ruta = ctx.url.pathname;
@@ -29,7 +29,8 @@ if (
 
   // Colegios del docente; el activo determina a qué esquema se conecta toda la petición
   const instituciones = await q<Institucion>(
-    `SELECT c.* FROM general.colegios c JOIN general.usuario_colegios uc ON uc.colegio_id=c.id
+    `SELECT c.*, (SELECT extract(epoch FROM l.actualizado)::bigint FROM general.colegio_logos l WHERE l.colegio_id=c.id) AS logo_v
+     FROM general.colegios c JOIN general.usuario_colegios uc ON uc.colegio_id=c.id
      WHERE uc.usuario_id=? AND c.esquema IS NOT NULL ORDER BY c.nombre`, [user.id]);
   const elegido = Number(ctx.cookies.get(COOKIE_INST)?.value ?? 0);
   const inst = instituciones.find((i) => i.id === elegido) ?? instituciones[0] ?? null;

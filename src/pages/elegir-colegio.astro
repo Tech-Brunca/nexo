@@ -1,6 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
-import { COOKIE_INST } from '../lib/auth';
+import { COOKIE_INST, logoColegio } from '../lib/auth';
 const { instituciones, inst, user } = Astro.locals;
 const id = Number(Astro.url.searchParams.get('id') ?? 0);
 if (id && instituciones.some((i) => i.id === id)) {
@@ -16,7 +16,8 @@ if (id && instituciones.some((i) => i.id === id)) {
       <p class="sub">{user.nombre}: cada colegio tiene sus propios grupos, estudiantes y notas.</p>
       <div style="display:grid;gap:10px">
         {instituciones.map((i) => (
-          <a class={`btn ${i.id === inst?.id ? '' : 'sec'}`} href={`/elegir-colegio?id=${i.id}`} style="text-align:left;padding:12px 16px">
+          <a class={`btn ${i.id === inst?.id ? '' : 'sec'}`} href={`/elegir-colegio?id=${i.id}`} style="text-align:left;padding:12px 16px;display:flex;align-items:center;gap:12px">
+            {logoColegio(i) && <img src={logoColegio(i)!} alt="" style="width:40px;height:40px;object-fit:contain;flex:none" />}
             <b>{i.nombre}</b>{i.codigo && <span style="opacity:.8"> · {i.codigo}</span>}
           </a>
         ))}

@@ -2,6 +2,7 @@
 interface Props { titulo: string; sinMenu?: boolean }
 const { titulo, sinMenu = false } = Astro.props;
 const ruta = Astro.url.pathname;
+import { logoColegio } from '../lib/auth';
 const { user, inst, instituciones, periodos = [], periodo = null } = Astro.locals;
 // Menú agrupado por lo que el docente va a hacer. Cada grupo se pliega; el de la página actual queda abierto.
 // Íconos propios (trazo de 1,8 px, 24×24) que heredan el color del texto.
@@ -92,7 +93,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2); font-size: 13px; }
     nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #a9c4e6; }
     nav.lateral .quien a { display: inline; padding: 0; border: 0; color: #fff; text-decoration: underline; }
-    nav.lateral .colegio { margin: 0 6px 12px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(73,225,255,.25); color: #fff; font-size: 13px; font-weight: 600; }
+    nav.lateral .colegio { display: flex; align-items: center; gap: 10px; margin: 0 6px 12px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(73,225,255,.25); color: #fff; font-size: 13px; font-weight: 600; }
+    nav.lateral .colegio .escudo { width: 38px; height: 38px; object-fit: contain; flex: none; background: #fff; border-radius: 8px; padding: 3px; }
     nav.lateral .colegio a { padding: 4px 0 0; border: 0; font-weight: 400; color: var(--aqua); font-size: 12px; }
     nav.lateral .periodo-trabajo { display: flex; flex-direction: column; gap: 4px; margin: -4px 6px 14px; color: #a9c4e6; font-size: 12.5px; }
     nav.lateral .periodo-trabajo select { width: 100%; margin: 0; font-weight: 600; font-size: 15px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
@@ -225,7 +227,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       <nav class="lateral" id="menu">
         <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
-        {inst && <div class="colegio">{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div>}
+        {inst && <div class="colegio">{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<div>{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div></div>}
         {inst && periodos.length > 0 && (
           <label class="periodo-trabajo">Periodo de trabajo
             <select onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
