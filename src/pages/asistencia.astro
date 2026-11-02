@@ -92,7 +92,7 @@ if (sec) {
 ---
 <Base titulo="Asistencia">
   <h1>Asistencia</h1>
-  <p class="sub">Marque solo a quien falta o llega tarde; el resto queda presente.</p>
+  <p class="sub">Marque solo a quien falta o llega tarde; el resto queda presente. Haga clic en un nombre para ver y justificar todas sus ausencias y tardías.</p>
   <Selector seccionId={seccionId} fecha={fecha}>
     {sec && (
       <div class="efectivas">
@@ -121,7 +121,7 @@ if (sec) {
           {ests.map((e, i) => {
             const a = delDia.get(e.id); const t = tot.get(e.id);
             const pct = lecciones > 0 && t ? (t.equivalentes / lecciones) * 100 : null;
-            return <tr><td>{i + 1}</td><td class="nom">{e.apellidos} {e.nombre}</td>
+            return <tr><td>{i + 1}</td><td class="nom"><a href={`/asistencia/estudiante?seccion=${seccionId}&id=${e.id}&fecha=${fecha}`} title="Ver todas sus ausencias y tardías">{e.apellidos} {e.nombre}</a></td>
               <td><select name={`t_${e.id}`} class="estado" style={a ? 'border-color:var(--rojo)' : ''}><option value="">Presente</option>{Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option value={k} selected={a?.tipo === k}>{v}</option>)}</select></td>
               <td><input type="number" name={`l_${e.id}`} class="lec" value={a?.lecciones ?? ''} disabled={!a} required min="1" max={leccionesDia || undefined} step="1" title="Lecciones que faltó o llegó tarde ese día" style="width:70px;text-align:right" /></td>
               <td><input name={`o_${e.id}`} value={a?.observacion ?? ''} /></td>
@@ -164,7 +164,7 @@ if (sec) {
         <tr><th>Fecha</th><th>Estudiante</th><th>Tipo</th><th class="n">Lecciones</th><th>Observación</th><th></th></tr>
         {historial.length === 0 && <tr><td colspan="6" class="muted">Sin ausencias ni tardías.</td></tr>}
         {historial.map((h) => (
-          <tr><td>{h.fecha}</td><td>{h.apellidos} {h.nombre}</td><td><span class={`chip ${h.tipo.endsWith('J') ? 'ok' : 'mal'}`}>{TIPOS_AUSENCIA[h.tipo]}</span></td><td class="n">{h.lecciones}</td><td>{h.observacion}</td>
+          <tr><td>{h.fecha}</td><td><a href={`/asistencia/estudiante?seccion=${seccionId}&id=${h.estudiante_id}&fecha=${fecha}`}>{h.apellidos} {h.nombre}</a></td><td><span class={`chip ${h.tipo.endsWith('J') ? 'ok' : 'mal'}`}>{TIPOS_AUSENCIA[h.tipo]}</span></td><td class="n">{h.lecciones}</td><td>{h.observacion}</td>
             <td><form method="post"><input type="hidden" name="accion" value="justificar" /><input type="hidden" name="id" value={h.id} /><button class="mini sec">{h.tipo.endsWith('I') ? 'Justificar' : 'Quitar justificación'}</button></form></td></tr>
         ))}
       </table></div>

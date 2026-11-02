@@ -1,0 +1,164 @@
+---
+// Ficha de asistencia de un estudiante en una sección: todas sus ausencias y tardías, para justificarlas
+// o corregirlas de una vez, y el valor del componente Asistencia de cada periodo (incluido el importado del SEA).
+import Base from '../../layouts/Base.astro';
+import { exec, q, one } from '../../lib/db';
+import { seccion, periodosDe, calcularPeriodo } from '../../lib/calc';
+import { num, str, fmt, TIPOS_AUSENCIA, etiquetaSeccion, hoy } from '../../lib/util';
+const { user } = Astro.locals;
+const U = user.id;
+const sp = Astro.url.searchParams;
+const seccionId = Number(sp.get('seccion') ?? 0), estId = Number(sp.get('id') ?? 0);
+const sec = seccionId ? await seccion(U, seccionId) : null;
+const est = sec ? await one<any>(`SELECT e.* FROM {S}.estudiantes e JOIN {S}.matriculas m ON m.estudiante_id=e.id
+  WHERE e.id=? AND m.seccion_id=? AND e.usuario_id=?`, [estId, seccionId, U]) : null;
+if (!sec || !est) return Astro.redirect('/asistencia' + (sec ? `?seccion=${sec.id}` : ''));
+const periodos = await periodosDe(U);
+// Periodo: el pedido, el que contiene hoy, o todo el curso ('todo')
+const pedido = sp.get('periodo');
+const actual = periodos.find((p) => (!p.fecha_ini || p.fecha_ini <= hoy()) && (!p.fecha_fin || p.fecha_fin >= hoy()));
+const per = pedido === 'todo' ? null : periodos.find((p) => p.id === Number(pedido)) ?? actual ?? periodos[0] ?? null;
+const base = `?seccion=${sec.id}&id=${est.id}${sp.get('fecha') ? `&fecha=${sp.get('fecha')}` : ''}`;
+const qs = () => `${base}&periodo=${per ? per.id : 'todo'}`;
+
+let msg = '', error = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  const ids = f.getAll('sel').map((x) => num(x)).filter(Boolean);
+  const mios = `id = ANY(?) AND estudiante_id=? AND seccion_id=?`;
+  if (accion === 'justificar' || accion === 'injustificar') {
+    if (!ids.length) error = 'Marque al menos un registro.';
+    else {
+      const sql = accion === 'justificar'
+        ? `UPDATE {S}.asistencia SET tipo = CASE tipo WHEN 'AI' THEN 'AJ' WHEN 'TI' THEN 'TJ' ELSE tipo END WHERE ${mios}`
+        : `UPDATE {S}.asistencia SET tipo = CASE tipo WHEN 'AJ' THEN 'AI' WHEN 'TJ' THEN 'TI' ELSE tipo END WHERE ${mios}`;
+      await exec(sql, [ids, est.id, sec.id]);
+      msg = accion === 'justificar' ? `${ids.length === 1 ? 'Se justificó un registro' : `Se justificaron ${ids.length} registros`}.` : `Se quitó la justificación de ${ids.length === 1 ? 'un registro' : `${ids.length} registros`}.`;
+    }
+  } else if (accion === 'borrar') {
+    if (!ids.length) error = 'Marque al menos un registro.';
+    else { await exec(`DELETE FROM {S}.asistencia WHERE ${mios}`, [ids, est.id, sec.id]); msg = 'Se marcó como presente (registro eliminado).'; }
+  } else if (accion === 'guardar') {
+    // Cambios de tipo, lecciones y observación de cada fila
+    const filas = f.getAll('rid').map((x) => num(x));
+    for (const id of filas) {
+      const tipo = str(f.get('tipo_' + id)), lec = num(f.get('lec_' + id));
+      if (!['AI', 'AJ', 'TI', 'TJ'].includes(tipo) || !(lec >= 1 && lec <= 99)) { error = 'Revise el tipo y las lecciones (de 1 a 99) de cada registro.'; break; }
+    }
+    if (!error) {
+      for (const id of filas)
+        await exec(`UPDATE {S}.asistencia SET tipo=?, lecciones=?, observacion=? WHERE id=? AND estudiante_id=? AND seccion_id=?`,
+          [str(f.get('tipo_' + id)), num(f.get('lec_' + id)), str(f.get('obs_' + id)), id, est.id, sec.id]);
+      msg = 'Cambios guardados.';
+    }
+  } else if (accion === 'importada' || accion === 'quitar-importada') {
+    // Valor del componente Asistencia traído del SEA para un periodo
+    const pid = num(f.get('periodo_id'));
+    const p = periodos.find((x) => x.id === pid);
+    const comp = await one<any>(`SELECT porcentaje FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave='asistencia'`, [U, sec.nivel]);
+    if (!p) error = 'Periodo no válido.';
+    else if (accion === 'quitar-importada') {
+      await exec(`DELETE FROM {S}.notas_importadas WHERE estudiante_id=? AND seccion_id=? AND periodo_id=? AND clave='asistencia'`, [est.id, sec.id, p.id]);
+      msg = `Asistencia del ${p.nombre}: ahora se calcula con los registros.`;
+    } else {
+      const v = Number(str(f.get('valor')).replace(',', '.'));
+      if (str(f.get('valor')) === '' || !(v >= 0 && v <= Number(comp?.porcentaje ?? 0))) error = `El valor debe estar entre 0 y ${Number(comp?.porcentaje ?? 0)} (el porcentaje de Asistencia).`;
+      else {
+        await exec(`INSERT INTO {S}.notas_importadas (estudiante_id, seccion_id, periodo_id, clave, valor) VALUES (?,?,?,'asistencia',?)
+          ON CONFLICT (estudiante_id, seccion_id, periodo_id, clave) DO UPDATE SET valor=EXCLUDED.valor, creado=now()`, [est.id, sec.id, p.id, v]);
+        msg = `Asistencia del ${p.nombre}: ${fmt(v)}.`;
+      }
+    }
+  }
+}
+
+const desde = per?.fecha_ini ?? null, hasta = per?.fecha_fin ?? null;
+const registros = await q<any>(`SELECT * FROM {S}.asistencia WHERE estudiante_id=? AND seccion_id=?
+  AND (?::date IS NULL OR fecha>=?::date) AND (?::date IS NULL OR fecha<=?::date) ORDER BY fecha DESC`, [est.id, sec.id, desde, desde, hasta, hasta]);
+const t = { AI: 0, AJ: 0, TI: 0, TJ: 0 } as Record<string, number>;
+for (const r of registros) t[r.tipo] += r.lecciones;
+// Valor del componente Asistencia en cada periodo (calculado o importado del SEA)
+const porPeriodo = [];
+for (const p of periodos) {
+  const r = await calcularPeriodo(U, sec.id, p.id);
+  const c = r?.comps.find((x) => x.clave === 'asistencia');
+  const fila = r?.filas.find((x) => x.est.id === est.id);
+  if (r && c && fila) porPeriodo.push({ p, comp: c, valor: fila.porComp[c.id], importado: !!fila.importado[c.id], pctAus: fila.pctAus, lecciones: r.lecciones });
+}
+const volver = `/asistencia?seccion=${sec.id}${sp.get('fecha') ? `&fecha=${sp.get('fecha')}` : ''}`;
+---
+<Base titulo={`Asistencia · ${est.apellidos} ${est.nombre}`}>
+  <p><a href={volver}>← Asistencia de {etiquetaSeccion(sec)}</a></p>
+  <h1>{est.apellidos} {est.nombre}</h1>
+  <p class="sub">{etiquetaSeccion(sec)}{sec.asignatura ? ` · ${sec.asignatura}` : ''} · Cédula {est.cedula}{est.encargado && ` · Encargado(a): ${est.encargado}`}{est.telefono && ` · ${est.telefono}`}</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+
+  <div class="tarjeta fila">
+    <label>Periodo
+      <select onchange={`location = '${base}&periodo=' + this.value`}>
+        {periodos.map((p) => <option value={p.id} selected={per?.id === p.id}>{p.nombre}</option>)}
+        <option value="todo" selected={!per}>Todo el curso</option>
+      </select>
+    </label>
+    <div class="fila" style="gap:8px">
+      <span class="chip mal">AI {t.AI}</span><span class="chip ok">AJ {t.AJ}</span><span class="chip mal">TI {t.TI}</span><span class="chip ok">TJ {t.TJ}</span>
+      <span class="muted">lecciones</span>
+    </div>
+  </div>
+
+  <h2>Ausencias y tardías {per ? `del ${per.nombre}` : 'del curso'}</h2>
+  {registros.length === 0 ? <p class="muted">Sin ausencias ni tardías{per ? ' en este periodo' : ''}.</p> : (
+    <form method="post" action={qs()} id="f-reg">
+      <button name="accion" value="guardar" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px">Guardar</button>
+      <div class="fila no-print" style="margin-bottom:10px;align-items:center">
+        <button type="button" class="mini sec" id="todos">Marcar injustificadas</button>
+        <button name="accion" value="justificar">Justificar marcadas</button>
+        <button name="accion" value="injustificar" class="sec">Quitar justificación</button>
+        <button name="accion" value="borrar" class="peligro" onclick="return confirm('¿Marcar como presente? Se eliminan los registros marcados.')">Marcar presente</button>
+        <span class="muted" id="cuenta">0 marcadas</span>
+      </div>
+      <div class="tabla"><table>
+        <tr><th></th><th>Fecha</th><th>Tipo</th><th class="n">Lecciones</th><th>Observación</th></tr>
+        {registros.map((r) => (
+          <tr>
+            <td><input type="checkbox" name="sel" value={r.id} data-tipo={r.tipo} /><input type="hidden" name="rid" value={r.id} /></td>
+            <td style="white-space:nowrap">{r.fecha.split('-').reverse().join('/')}</td>
+            <td><select name={`tipo_${r.id}`} style={r.tipo.endsWith('I') ? 'border-color:var(--rojo)' : ''}>{Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option value={k} selected={r.tipo === k}>{v}</option>)}</select></td>
+            <td class="n"><input type="number" name={`lec_${r.id}`} value={r.lecciones} min="1" max="99" step="1" style="width:70px;text-align:right" /></td>
+            <td><input name={`obs_${r.id}`} value={r.observacion} placeholder="Motivo, comprobante…" /></td>
+          </tr>
+        ))}
+      </table></div>
+      <p><button name="accion" value="guardar">Guardar cambios</button></p>
+    </form>
+  )}
+
+  <h2>Componente Asistencia por periodo</h2>
+  <div class="tabla"><table>
+    <tr><th>Periodo</th><th class="n">% ausentismo</th><th class="n">Valor</th><th>Origen</th><th>Corregir valor</th></tr>
+    {porPeriodo.map((x) => (
+      <tr><td>{x.p.nombre}</td>
+        <td class="n">{x.importado ? '—' : x.lecciones > 0 ? `${fmt(x.pctAus)}%` : '—'}</td>
+        <td class="n"><b>{fmt(x.valor)}</b> <span class="muted">de {Number(x.comp.porcentaje)}</span></td>
+        <td>{x.importado ? <span class="chip aviso">Importado del SEA</span> : <span class="muted">{x.lecciones > 0 ? 'Calculado con la asistencia' : 'Sin lecciones registradas'}</span>}</td>
+        <td><form method="post" action={qs()} class="fila" style="gap:6px;align-items:center">
+          <input type="hidden" name="periodo_id" value={x.p.id} />
+          <input name="valor" inputmode="decimal" value={x.importado ? Number(x.valor) : ''} placeholder={String(Number(x.comp.porcentaje))} style="width:70px;text-align:right" />
+          <button name="accion" value="importada" class="mini">Guardar</button>
+          {x.importado && <button name="accion" value="quitar-importada" class="mini sec">Usar lo calculado</button>}
+        </form></td></tr>
+    ))}
+  </table></div>
+  <p class="muted">El valor escrito a mano (o el importado del SEA) reemplaza el calculado con los registros de asistencia de ese periodo.</p>
+
+  <script is:inline>
+    const f = document.getElementById('f-reg');
+    if (f) {
+      const cajas = [...f.querySelectorAll('input[name=sel]')], cuenta = document.getElementById('cuenta');
+      const contar = () => { const n = cajas.filter((c) => c.checked).length; cuenta.textContent = n === 1 ? '1 marcada' : `${n} marcadas`; };
+      cajas.forEach((c) => c.addEventListener('change', contar));
+      document.getElementById('todos').onclick = () => { cajas.forEach((c) => { c.checked = c.dataset.tipo.endsWith('I'); }); contar(); };
+    }
+  </script>
+</Base>
