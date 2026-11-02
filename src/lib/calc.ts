@@ -1,6 +1,6 @@
 import { q, one, getAjustes, getEscala } from './db';
 import { r2, etiquetaSeccion } from './util';
-import { asegurarComponentes, materializarImportadas } from './sea';
+import { asegurarComponentes, materializarImportadas, evalsQueCuentan } from './sea';
 
 export type Est = { id: number; cedula: string; apellidos: string; nombre: string; subgrupo: string; encargado: string; telefono: string; fecha_nac: string | null };
 export type Comp = { id: number; nombre: string; porcentaje: number; tipo: 'puntos' | 'indicadores' | 'asistencia'; clave: string | null };
@@ -135,7 +135,7 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
         pctAus = lecciones > 0 && a ? (a.equivalentes / lecciones) * 100 : 0;
         v = (porcentajeAsistencia(pctAus, esc) / 100) * c.porcentaje;
       } else {
-        for (const ev of evals.filter((x) => x.componente_id === c.id)) {
+        for (const ev of evalsQueCuentan(evals, c)) {
           let p = 0;
           const n = notaMap.get(`${ev.id}:${e.id}`);
           const tipoEv = ev.tipo ?? c.tipo; // una evaluación puede calificarse por puntos aunque el componente sea por indicadores
@@ -162,7 +162,10 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
     const total = r2(Object.values(porComp).reduce((s, n) => s + n, 0));
     return { est: e, porComp, detalle, noEntrego, importado, calificada, nota100, total, pctAus: r2(pctAus), condicion: total >= notaApb ? 'Aprobado' : 'Aplazado' };
   });
-  return { sec, per, comps, evals, filas, notaApb, lecciones };
+  // Evaluaciones que no cuentan porque su componente ya trae la nota completa del SEA
+  const cuentan = new Set(comps.flatMap((c) => evalsQueCuentan(evals, c).map((e) => e.id)));
+  const ignoradas = new Set<number>(evals.filter((e) => !cuentan.has(e.id)).map((e) => e.id));
+  return { sec, per, comps, evals, filas, notaApb, lecciones, ignoradas };
 }
 
 export async function calcularAnual(uid: number, seccionId: number) {

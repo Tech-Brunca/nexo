@@ -168,14 +168,14 @@ export async function generar(tipo: string, c: Ctx, p: P): Promise<Informe | str
     // La segunda prueba del II periodo es la que se exime: no cuenta. Se puede elegir en el formulario;
     // si no, es la última prueba del periodo (solo cuando hay dos o más).
     const compPrueba = r2.comps.find((x) => x.clave === 'prueba');
-    const pruebas = r2.evals.filter((ev) => ev.componente_id === compPrueba?.id)
+    const pruebas = r2.evals.filter((ev) => ev.componente_id === compPrueba?.id && !r2.ignoradas.has(ev.id))
       // la del SEA es la I prueba; la creada sola al importar ('auto') es la II
       .sort((x, y) => (x.origen === 'sea' ? 0 : 1) - (y.origen === 'sea' ? 0 : 1) || (x.origen === 'auto' ? 1 : 0) - (y.origen === 'auto' ? 1 : 0)
         || String(x.fecha ?? '').localeCompare(String(y.fecha ?? '')) || x.id - y.id);
     const elegida = Number(p.get('excluir') || 0);
     const excluida = elegida ? pruebas.find((ev) => ev.id === elegida) ?? null : pruebas.length >= 2 ? pruebas[pruebas.length - 1] : null;
     // Cuentan las evaluaciones ya aplicadas (con al menos una nota en el grupo), menos la prueba eximida
-    const aplicadas = r2.evals.filter((ev) => ev.id !== excluida?.id && r2.filas.some((f) => f.calificada[ev.id]));
+    const aplicadas = r2.evals.filter((ev) => ev.id !== excluida?.id && !r2.ignoradas.has(ev.id) && r2.filas.some((f) => f.calificada[ev.id]));
     const n100 = (v: number, de: number) => (de > 0 ? r2r((v / de) * 100) : 0);
     const permitidos = new Set(filtroSub(r2.filas.map((f) => ({ ...f.est, fila: f })), p).map((e: any) => e.id));
     const filas = r2.filas.filter((f) => permitidos.has(f.est.id)).map((f) => {

@@ -4,7 +4,7 @@ import Selector from '../../components/Selector.astro';
 import { exec, q, one } from '../../lib/db';
 import { seccion } from '../../lib/calc';
 import { num, str, hoy } from '../../lib/util';
-import { asegurarComponentes, materializarImportadas } from '../../lib/sea';
+import { asegurarComponentes, materializarImportadas, evalsQueCuentan } from '../../lib/sea';
 const { user, inst } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
@@ -38,6 +38,9 @@ const evals = sec ? await q<any>(`SELECT e.*, c.nombre AS componente, COALESCE(e
   (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego)) +
   (SELECT COUNT(DISTINCT v.estudiante_id) FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
   FROM {S}.evaluaciones e JOIN {S}.componentes c ON c.id=e.componente_id WHERE e.seccion_id=? AND e.periodo_id=? ORDER BY c.orden, e.fecha, e.id`, [seccionId, periodoId]) : [];
+// Evaluaciones que no cuentan: su componente ya trae la nota completa del SEA
+const cuentan = new Set(comps.flatMap((c) => evalsQueCuentan(evals, c).map((e: any) => e.id)));
+const completoSea = (c: any) => evals.some((e) => e.componente_id === c.id && e.origen === 'sea' && Number(e.porcentaje) >= Number(c.porcentaje) - 0.001);
 const per = periodos.find((p) => p.id === periodoId);
 const indicadores = sec ? await q<any>(`SELECT * FROM general.indicadores WHERE usuario_id=? AND nivel=? AND (asignatura_id IS NULL OR asignatura_id IS NOT DISTINCT FROM ?::int)
   AND (periodo_numero IS NULL OR periodo_numero=?::int) ORDER BY id`, [U, sec.nivel, sec.asignatura_id, per?.numero ?? 0]) : [];
@@ -54,14 +57,15 @@ const nEst = sec ? (await one<any>('SELECT COUNT(*) AS n FROM {S}.matriculas WHE
       <div class="grid-kpi" style="margin-bottom:16px">
         {comps.map((c) => (
           <div class="kpi"><span>{c.nombre}</span><b style="font-size:20px">{Number(c.usado)} / {Number(c.porcentaje)}%</b>
-            <span>{c.tipo === 'asistencia' ? 'Se calcula con la asistencia' : Number(c.usado) < Number(c.porcentaje) ? `Faltan ${Number(c.porcentaje) - Number(c.usado)}% por asignar` : 'Completo'}</span></div>
+            <span>{c.tipo === 'asistencia' ? 'Se calcula con la asistencia' : completoSea(c) ? 'Completo (nota total del SEA)' : Number(c.usado) < Number(c.porcentaje) ? `Faltan ${Number(c.porcentaje) - Number(c.usado)}% por asignar` : 'Completo'}</span></div>
         ))}
       </div>
       <div class="tabla"><table>
         <tr><th>Componente</th><th>Evaluación</th><th>Fecha</th><th class="n">Puntos</th><th class="n">Valor %</th><th class="n">Calificados</th><th></th></tr>
         {evals.length === 0 && <tr><td colspan="7" class="muted">Aún no hay evaluaciones en este periodo.</td></tr>}
         {evals.map((e) => (
-          <tr><td>{e.componente}</td><td><a href={`/evaluaciones/${e.id}`}><b>{e.nombre}</b></a></td><td>{e.fecha ?? '—'}</td>
+          <tr style={cuentan.has(e.id) ? '' : 'opacity:.55'}><td>{e.componente}</td><td><a href={`/evaluaciones/${e.id}`}><b>{e.nombre}</b></a>
+            {!cuentan.has(e.id) && <div class="muted" style="font-size:12px">No cuenta: {e.componente} ya trae la nota total del SEA</div>}</td><td>{e.fecha ?? '—'}</td>
             <td class="n">{e.tipo === 'indicadores' ? 'Indicadores' : e.puntos_total}</td><td class="n">{e.porcentaje}</td><td class="n">{e.calificados}/{nEst}</td>
             <td style="text-align:right"><a class="btn mini sec" href={`/evaluaciones/${e.id}`}>Calificar</a>
               <form method="post" style="display:inline" onsubmit="return confirm('¿Eliminar la evaluación y sus notas?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="id" value={e.id} /><button class="mini peligro">×</button></form></td></tr>

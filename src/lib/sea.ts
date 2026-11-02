@@ -68,6 +68,17 @@ export function separarNombre(completo: string) {
   return { apellidos: ap.join(' '), nombre: p.slice(i).join(' ') };
 }
 
+/**
+ * Evaluaciones que cuentan para un componente en un periodo. Si el SEA trajo la nota completa del
+ * componente (evaluación «(SEA)» por todo su porcentaje), esa es la nota: las demás no se suman.
+ * Con la Prueba del II periodo el SEA trae solo la I prueba, así que la II sí cuenta.
+ */
+export function evalsQueCuentan<T extends { componente_id: number; origen?: string | null; porcentaje: unknown }>(evals: T[], comp: { id: number; porcentaje: unknown }) {
+  const mias = evals.filter((e) => e.componente_id === comp.id);
+  const completa = mias.find((e) => e.origen === 'sea' && Number(e.porcentaje) >= Number(comp.porcentaje) - 0.001);
+  return completa ? [completa] : mias;
+}
+
 // ── Notas del SEA como evaluaciones ─────────────────────────────────────────
 // Cada componente importado (menos Asistencia, que se calcula con la asistencia) queda como una
 // evaluación «<Componente> (SEA)» calificada por puntos: los puntos son el valor del SEA (el total del rubro).
