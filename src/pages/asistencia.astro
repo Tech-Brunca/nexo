@@ -75,6 +75,8 @@ if (sec && Astro.url.searchParams.get('csv')) {
     { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="asistencia-${etiquetaSeccion(sec)}.csv"` } });
 }
 const lecciones = ef.efectivas;
+// Botones de un toque: Presente y los cuatro tipos (abreviatura del MEP)
+const MARCAS: [string, string, string][] = [['', 'Presente', 'Presente'], ...Object.entries(TIPOS_AUSENCIA).map(([k, v]) => [k, k, v] as [string, string, string])];
 
 // Avisos por WhatsApp de las ausencias y tardías injustificadas del día
 let destinos: any[] = [];
@@ -116,13 +118,17 @@ if (sec) {
     <>
       <form method="post" id="f-lista">
         <input type="hidden" name="accion" value="lista" />
-        <div class="tabla"><table>
-          <tr><th>#</th><th>Estudiante</th><th>{fecha}</th><th class="n">Lecciones</th><th>Observación</th><th class="n">AI</th><th class="n">AJ</th><th class="n">TI</th><th class="n">% Ausentismo</th></tr>
+        <div class="tabla"><table class="asis">
+          <tr><th>#</th><th>Estudiante</th><th>{fechaCorta}</th><th class="n">Lecciones</th><th>Observación</th><th class="n">AI</th><th class="n">AJ</th><th class="n">TI</th><th class="n">% Ausentismo</th></tr>
           {ests.map((e, i) => {
             const a = delDia.get(e.id); const t = tot.get(e.id);
             const pct = lecciones > 0 && t ? (t.equivalentes / lecciones) * 100 : null;
-            return <tr><td>{i + 1}</td><td class="nom"><a href={`/asistencia/estudiante?seccion=${seccionId}&id=${e.id}&fecha=${fecha}`} title="Ver todas sus ausencias y tardías">{e.apellidos} {e.nombre}</a></td>
-              <td><select name={`t_${e.id}`} class="estado" style={a ? 'border-color:var(--rojo)' : ''}><option value="">Presente</option>{Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option value={k} selected={a?.tipo === k}>{v}</option>)}</select></td>
+            return <tr class={a ? `con-marca t-${a.tipo}` : ''}><td>{i + 1}</td><td class="nom"><a href={`/asistencia/estudiante?seccion=${seccionId}&id=${e.id}&fecha=${fecha}`} title="Ver todas sus ausencias y tardías">{e.apellidos} {e.nombre}</a></td>
+              <td><div class="marcas" role="radiogroup" aria-label={`Asistencia de ${e.apellidos} ${e.nombre}`}>
+                {MARCAS.map(([v, corto, largo]) => (
+                  <label class={`m-${v || 'P'}`} title={largo}><input type="radio" class="estado" name={`t_${e.id}`} value={v} checked={(a?.tipo ?? '') === v} /><span>{corto}</span></label>
+                ))}
+              </div></td>
               <td><input type="number" name={`l_${e.id}`} class="lec" value={a?.lecciones ?? ''} disabled={!a} required min="1" max={leccionesDia || undefined} step="1" title="Lecciones que faltó o llegó tarde ese día" style="width:70px;text-align:right" /></td>
               <td><input name={`o_${e.id}`} value={a?.observacion ?? ''} /></td>
               <td class="n">{t?.AI ?? 0}</td><td class="n">{t?.AJ ?? 0}</td><td class="n">{t?.TI ?? 0}</td>
@@ -151,10 +157,11 @@ if (sec) {
           lecs.forEach((i) => { i.max = hoy.value; });
           if (/^\d+$/.test(hoy.value)) { const n = sinHoy + Number(hoy.value); valor.textContent = n; campo.value = n; pintar(n); }
         };
-        document.querySelectorAll('select.estado').forEach((s) => s.addEventListener('change', () => {
-          const i = s.closest('tr').querySelector('input.lec');
+        document.querySelectorAll('input.estado').forEach((s) => s.addEventListener('change', () => {
+          const tr = s.closest('tr'), i = tr.querySelector('input.lec');
           i.disabled = !s.value;
           if (!s.value) i.value = ''; else if (!i.value) i.value = hoy.value;
+          tr.className = s.value ? `con-marca t-${s.value}` : '';
         }));
       </script>
       {destinos.length > 0 && <EnviarWa destinos={destinos} tipo="ausencia" referencia={`asistencia:${seccionId}:${fecha}`} titulo={`Avisar ausencias y tardías del ${fecha}`} />}
@@ -173,6 +180,49 @@ if (sec) {
 </Base>
 
 <style>
+  /* Marca de un toque: Presente / AI / AJ / TI / TJ */
+  .marcas { display: inline-flex; border: 1px solid #c6d4e3; border-radius: 9px; overflow: hidden; background: #fff; }
+  .marcas label { position: relative; display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .marcas input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .marcas span { display: block; min-width: 42px; padding: 7px 10px; text-align: center; font-size: 14px; font-weight: 600; color: var(--suave); border-left: 1px solid #e1e9f1; user-select: none; }
+  .marcas label:first-child span { border-left: 0; min-width: 78px; }
+  .marcas label:hover span { background: var(--hielo); }
+  .marcas input:focus-visible + span { outline: 3px solid rgba(18,207,243,.55); outline-offset: -3px; }
+  .marcas .m-P input:checked + span { background: var(--hielo); color: var(--marino); }
+  .marcas .m-AI input:checked + span { background: var(--rojo); color: #fff; }
+  .marcas .m-TI input:checked + span { background: #b45309; color: #fff; }
+  .marcas .m-AJ input:checked + span, .marcas .m-TJ input:checked + span { background: var(--verde); color: #fff; }
+  tr.t-AI td, tr.t-TI td { background: #fff6f3; }
+  tr.t-AJ td, tr.t-TJ td { background: #f2faf6; }
+  @media (max-width: 800px) {
+    .marcas span { min-width: 40px; padding: 10px 8px; font-size: 13.5px; }
+    .marcas label:first-child span { min-width: 70px; }
+  }
+  /* Nombres: enlace discreto (lleva a la ficha del estudiante) */
+  table.asis td.nom a, .tabla td a.disc { color: inherit; text-decoration: none; }
+  table.asis td.nom a:hover { color: var(--teal); text-decoration: underline; }
+  /* Teléfono: cada estudiante en dos renglones, con los botones a lo ancho */
+  @media (max-width: 800px) {
+    table.asis, table.asis tbody { display: block; }
+    table.asis tr:first-child { display: none; }
+    table.asis tr { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px 8px; padding: 12px; border-top: 1px solid var(--linea); }
+    table.asis td { display: block; border: 0; padding: 0; }
+    table.asis td.nom { position: static; white-space: normal; box-shadow: none; background: transparent; font-weight: 600; }
+    table.asis td:nth-child(1) { color: var(--suave); padding-top: 1px; }
+    table.asis td:nth-child(3) { grid-column: 1 / -1; }
+    table.asis .marcas { display: flex; width: 100%; }
+    table.asis .marcas label { flex: 1; }
+    table.asis .marcas label:first-child { flex: 1.6; }
+    table.asis .marcas span { min-width: 0; }
+    table.asis td:nth-child(4), table.asis td:nth-child(5) { grid-column: 1 / -1; }
+    table.asis td:nth-child(4)::before { content: 'Lecciones: '; color: var(--suave); font-size: 14px; }
+    table.asis td:nth-child(5) input { width: 100%; }
+    table.asis tr:not(.con-marca) td:nth-child(4), table.asis tr:not(.con-marca) td:nth-child(5) { display: none; }
+    table.asis td:nth-child(6), table.asis td:nth-child(7), table.asis td:nth-child(8) { display: none; }
+    table.asis td:nth-child(9) { grid-column: 3; grid-row: 1; }
+    table.asis tr.t-AI, table.asis tr.t-TI { background: #fff6f3; }
+    table.asis tr.t-AJ, table.asis tr.t-TJ { background: #f2faf6; }
+  }
   /* Mismo aspecto que los campos de la barra (etiqueta pequeña arriba) */
   .efectivas { display: flex; flex-direction: column; gap: 4px; flex: 0 1 auto; }
   .efectivas .etq { font-size: 12px; color: var(--suave); }

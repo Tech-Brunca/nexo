@@ -1,56 +1,113 @@
 ---
+// Inicio = «Hoy»: lo que el docente tiene que hacer en cada sección (pasar lista, evaluaciones
+// sin calificar, estudiantes en alerta) en vez de contadores generales.
 import Base from '../layouts/Base.astro';
 import { q, one, getAjustes } from '../lib/db';
 import { hoy, etiquetaSeccion } from '../lib/util';
 const { user, inst } = Astro.locals;
 const aj = await getAjustes(user.id);
-const k = await one<any>(`SELECT
-  (SELECT COUNT(*) FROM {S}.secciones WHERE usuario_id=?) AS secciones,
-  (SELECT COUNT(*) FROM {S}.estudiantes WHERE usuario_id=? AND activo=1) AS estudiantes,
-  (SELECT COUNT(*) FROM {S}.evaluaciones e JOIN {S}.secciones s ON s.id=e.seccion_id WHERE s.usuario_id=?) AS evaluaciones,
-  (SELECT COUNT(*) FROM {S}.asistencia a JOIN {S}.secciones s ON s.id=a.seccion_id WHERE s.usuario_id=? AND a.fecha=?::date) AS aushoy`,
-  [user.id, user.id, user.id, user.id, hoy()]);
-const alertas = await one<any>(
-  `SELECT COUNT(DISTINCT estudiante_id) AS n FROM (
+const fecha = hoy();
+const fechaLarga = new Date(fecha + 'T12:00:00').toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' });
+const fechaTexto = fechaLarga.charAt(0).toUpperCase() + fechaLarga.slice(1);
+const per = await one<any>(`SELECT * FROM {S}.periodos WHERE usuario_id=? AND (fecha_ini IS NULL OR fecha_ini<=?::date) AND (fecha_fin IS NULL OR fecha_fin>=?::date)
+  ORDER BY numero LIMIT 1`, [user.id, fecha, fecha]) ?? await one<any>('SELECT * FROM {S}.periodos WHERE usuario_id=? ORDER BY numero DESC LIMIT 1', [user.id]);
+const secciones = await q<any>(
+  `SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura,
+     (SELECT COUNT(*) FROM {S}.matriculas m JOIN {S}.estudiantes e ON e.id=m.estudiante_id WHERE m.seccion_id=s.id AND e.activo=1) AS n,
+     (SELECT cantidad FROM {S}.lecciones_dia d WHERE d.seccion_id=s.id AND d.fecha=?::date) AS lecciones_hoy,
+     (SELECT COUNT(*) FROM {S}.asistencia x WHERE x.seccion_id=s.id AND x.fecha=?::date AND x.tipo IN ('AI','TI')) AS faltas_hoy
+   FROM {S}.secciones s LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id
+   WHERE s.usuario_id=? ORDER BY length(s.nivel), s.nivel, s.nombre, s.subgrupo NULLS FIRST`, [fecha, fecha, user.id]);
+// Evaluaciones del periodo actual con estudiantes sin calificar
+const sinCalificar = per ? await q<any>(`SELECT e.id, e.nombre, e.seccion_id, e.origen,
+    (SELECT COUNT(*) FROM {S}.matriculas m JOIN {S}.estudiantes x ON x.id=m.estudiante_id WHERE m.seccion_id=e.seccion_id AND x.activo=1) AS n,
+    (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego))
+    + (SELECT COUNT(DISTINCT v.estudiante_id) FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
+  FROM {S}.evaluaciones e JOIN {S}.secciones s ON s.id=e.seccion_id
+  WHERE s.usuario_id=? AND e.periodo_id=? ORDER BY e.fecha NULLS LAST, e.id`, [user.id, per.id]) : [];
+const pendientesDe = (id: number) => sinCalificar.filter((e) => e.seccion_id === id && Number(e.calificados) < Number(e.n));
+// Estudiantes en alerta de ausentismo, por sección
+const alertas = await q<any>(
+  `SELECT seccion_id, COUNT(*) AS n FROM (
      SELECT a.estudiante_id, a.seccion_id FROM {S}.asistencia a JOIN {S}.secciones s ON s.id=a.seccion_id
      WHERE s.usuario_id=? AND a.tipo='AI' AND a.fecha BETWEEN ?::date - ?::int AND ?::date
-     GROUP BY a.estudiante_id, a.seccion_id HAVING SUM(a.lecciones) >= ?) t`,
-  [user.id, hoy(), aj.alerta_dias, hoy(), aj.alerta_ausencias]);
-const secciones = await q<any>(
-  `SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura, COUNT(m.id) AS n
-   FROM {S}.secciones s LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id LEFT JOIN {S}.matriculas m ON m.seccion_id=s.id
-   WHERE s.usuario_id=?
-   GROUP BY s.id, a.nombre ORDER BY length(s.nivel), s.nivel, s.nombre, s.subgrupo NULLS FIRST`, [user.id]);
-const pendientes = user.rol === 'admin' ? (await one<any>(`SELECT COUNT(*) AS n FROM general.usuarios WHERE estado='pendiente'`)).n : 0;
+     GROUP BY a.estudiante_id, a.seccion_id HAVING SUM(a.lecciones) >= ?) t GROUP BY seccion_id`,
+  [user.id, fecha, aj.alerta_dias, fecha, aj.alerta_ausencias]);
+const alertaDe = (id: number) => Number(alertas.find((a) => a.seccion_id === id)?.n ?? 0);
+const pendientesUsuarios = user.rol === 'admin' ? Number((await one<any>(`SELECT COUNT(*) AS n FROM general.usuarios WHERE estado='pendiente'`)).n) : 0;
+const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
 ---
 <Base titulo="Inicio">
   <div class="inicio">
-    <div class="inicio-contenido">
+    <header class="hoy-enc">
       <h1>Hola, {user.nombre.split(' ')[0]}</h1>
-      <p class="sub">{inst!.nombre} · Curso lectivo {aj.curso_lectivo}</p>
-      {pendientes > 0 && <div class="msg aviso">Hay {pendientes} solicitud(es) de acceso por aprobar. <a href="/admin/usuarios?estado=pendiente">Revisar</a></div>}
-      <div class="grid-kpi">
-        <div class="kpi"><b>{k.secciones}</b><span>Secciones</span></div>
-        <div class="kpi"><b>{k.estudiantes}</b><span>Estudiantes activos</span></div>
-        <div class="kpi"><b>{k.evaluaciones}</b><span>Evaluaciones creadas</span></div>
-        <div class="kpi"><b>{k.aushoy}</b><span>Ausencias/tardías hoy</span></div>
-        <a class="kpi" href="/alertas" style="text-decoration:none;color:inherit"><b style={alertas.n ? 'color:var(--rojo)' : ''}>{alertas.n}</b><span>En alerta de ausentismo ({aj.alerta_dias} días)</span></a>
+      <p class="sub">{fechaTexto}{per && ` — ${per.nombre}`}. {inst!.nombre}, curso lectivo {aj.curso_lectivo}.</p>
+    </header>
+    {pendientesUsuarios > 0 && <div class="msg aviso">{pendientesUsuarios === 1 ? 'Hay una solicitud de acceso' : `Hay ${pendientesUsuarios} solicitudes de acceso`} por aprobar. <a href="/admin/usuarios?estado=pendiente">Revisar solicitudes</a></div>}
+
+    {secciones.length === 0 ? (
+      <div class="vacio tarjeta">
+        <h2>Empiece por crear una sección</h2>
+        <p>Cree sus grupos (por ejemplo 10-3) y agregue los estudiantes, o impórtelos desde el SEA.</p>
+        <p><a class="btn" href="/secciones">Crear sección</a> <a class="btn sec" href="/sea">Importar del SEA</a></p>
       </div>
-      <h2>Mis secciones en {inst!.nombre}</h2>
-      {secciones.length === 0 ? <p class="muted">Aún no hay secciones. <a href="/secciones">Crear la primera</a>.</p> : (
-        <div class="tabla"><table>
-          <tr><th>Sección</th><th>Asignatura</th><th class="n">Estudiantes</th><th></th></tr>
-          {secciones.map((s) => (
-            <tr><td><b>{etiquetaSeccion(s)}</b></td><td>{s.asignatura ?? '—'}</td><td class="n">{s.n}</td>
-              <td style="text-align:right;white-space:nowrap">
-                <a href={`/asistencia?seccion=${s.id}`}>Pasar lista</a> ·
-                <a href={`/evaluaciones?seccion=${s.id}`}>Evaluar</a> ·
-                <a href={`/notas?seccion=${s.id}`}>Notas</a>
-              </td></tr>
-          ))}
-        </table></div>
-      )}
-      <img class="marca-agua-inicio" src="/images/logo-nexo.png" alt="Logo NEXO" />
-    </div>
+    ) : (
+      <>
+        <p class="resumen">{totalSinLista === 0 ? 'Ya pasó lista hoy en todas sus secciones.' : totalSinLista === secciones.length ? `Hoy aún no ha pasado lista.` : `Falta pasar lista en ${totalSinLista} de ${secciones.length} secciones.`}</p>
+        <ul class="secciones-hoy">
+          {secciones.map((s) => {
+            const pend = pendientesDe(s.id), al = alertaDe(s.id), lista = s.lecciones_hoy !== null;
+            return (
+              <li class={lista ? 'hecha' : ''}>
+                <div class="id">
+                  <a class="nombre" href={`/secciones/${s.id}`}>{etiquetaSeccion(s)}</a>
+                  <span class="muted">{s.asignatura ?? 'Sin asignatura'} · {s.n} {Number(s.n) === 1 ? 'estudiante' : 'estudiantes'}</span>
+                </div>
+                <div class="estado">
+                  {lista
+                    ? <span class="ok-txt">Lista pasada{Number(s.faltas_hoy) > 0 ? ` · ${s.faltas_hoy} ${Number(s.faltas_hoy) === 1 ? 'ausencia o tardía' : 'ausencias o tardías'}` : ' · todos presentes'}</span>
+                    : <span class="muted">Sin lista de hoy</span>}
+                  {pend.length > 0 && <a class="aviso-txt" href={pend.length === 1 ? `/evaluaciones/${pend[0].id}` : `/evaluaciones?seccion=${s.id}${per ? `&periodo=${per.id}` : ''}`}>
+                    {pend.length === 1 ? `«${pend[0].nombre}» sin calificar (${pend[0].calificados}/${pend[0].n})` : `${pend.length} evaluaciones sin calificar`}</a>}
+                  {al > 0 && <a class="mal-txt" href="/alertas">{al === 1 ? 'Un estudiante en alerta de ausentismo' : `${al} estudiantes en alerta de ausentismo`}</a>}
+                </div>
+                <div class="acciones">
+                  <a class={lista ? 'btn sec' : 'btn'} href={`/asistencia?seccion=${s.id}`}>{lista ? 'Ver lista' : 'Pasar lista'}</a>
+                  <a class="btn sec" href={`/evaluaciones?seccion=${s.id}`}>Evaluar</a>
+                  <a class="btn sec" href={`/notas?seccion=${s.id}`}>Notas</a>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    )}
+    <img class="marca-agua-inicio" src="/images/logo-nexo.png" alt="" />
   </div>
+  <style>
+    .hoy-enc { margin-bottom: 6px; }
+    .resumen { font-size: 16px; margin: 4px 0 14px; color: var(--tinta); }
+    .secciones-hoy { list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .secciones-hoy li { display: grid; grid-template-columns: minmax(170px, 1.1fr) 2fr auto; gap: 8px 20px; align-items: center; padding: 14px 18px; border-top: 1px solid var(--linea); border-left: 4px solid var(--cian); }
+    .secciones-hoy li:first-child { border-top: 0; border-top-left-radius: 12px; }
+    .secciones-hoy li:last-child { border-bottom-left-radius: 12px; }
+    .secciones-hoy li.hecha { border-left-color: transparent; }
+    .id { display: flex; flex-direction: column; }
+    .nombre { font-family: var(--titulos); font-weight: 700; font-size: 20px; color: var(--marino); text-decoration: none; line-height: 1.15; }
+    .nombre:hover { text-decoration: underline; }
+    .estado { display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+    .ok-txt { color: var(--verde); }
+    .aviso-txt { color: var(--ambar); }
+    .mal-txt { color: var(--rojo); }
+    .acciones { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .vacio { max-width: 560px; }
+    .vacio h2 { margin-top: 0; }
+    .marca-agua-inicio { width: min(30vw, 230px); opacity: .14; margin: 40px auto 10px; }
+    @media (max-width: 800px) {
+      .secciones-hoy li { grid-template-columns: 1fr; padding: 14px; }
+      .acciones { justify-content: flex-start; }
+      .acciones .btn { flex: 1; text-align: center; }
+      .marca-agua-inicio { width: 160px; }
+    }
+  </style>
 </Base>

@@ -67,6 +67,8 @@ const emision = hoy();
     .meta div { display: flex; gap: 6px; } .meta dt { color: var(--suave); } .meta dd { margin: 0; font-weight: 600; }
     .meta.pie { justify-content: flex-end; border-top: 1px solid var(--linea); padding-top: 6px; }
     .bloque h2 { font-size: 15px; margin: 18px 0 6px; }
+    @media screen { .bloque { overflow-x: auto; } }
+    @media (max-width: 800px) { .informe { padding: 16px 12px; } .tabla-inf { font-size: 12.5px; } }
     .tabla-inf { width: 100%; border-collapse: collapse; font-size: 13px; }
     .tabla-inf th, .tabla-inf td { border: 1px solid #c9d3d1; padding: 5px 7px; }
     .tabla-inf th { background: #eef3f6; text-transform: none; letter-spacing: 0; color: var(--tinta); font-size: 12px; position: static; }

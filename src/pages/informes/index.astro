@@ -22,11 +22,11 @@ const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_
   <h1>Informes</h1>
   <p class="sub">Para imprimir, guardar en PDF o abrir en Excel. Llevan el encabezado del MEP con los datos de su colegio.</p>
   {secciones.length === 0 && <div class="msg aviso">Primero cree una sección.</div>}
-  <div class="grid-inf">
+  <div class="grid-inf lista-inf">
     {CATALOGO.map((c) => (
-      <form method="get" action={`/informes/${c.tipo}`} class="tarjeta">
-        <h2 style="margin-top:0">{c.titulo}</h2>
-        <p class="muted" style="margin-top:-4px">{c.descripcion}</p>
+      <details class="inf" name="informe" id={c.tipo}>
+      <summary><b>{c.titulo}</b><span>{c.descripcion}</span></summary>
+      <form method="get" action={`/informes/${c.tipo}`}>
         <div class="fila">
           {(c.pide.includes('seccion') || c.pide.includes('seccion_o_nivel')) && (
             <label>Sección<select name="seccion" class="sel-seccion" required={c.pide.includes('seccion')}>
@@ -55,10 +55,31 @@ const estudiantes = await q<any>(`SELECT e.id, e.apellidos, e.nombre, m.seccion_
           <button>Ver informe</button>
         </div>
       </form>
+      </details>
     ))}
   </div>
-  <style>.grid-inf { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 14px; } .grid-inf .tarjeta { margin: 0; }</style>
+  <style>
+    .lista-inf { max-width: 980px; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .inf { border-top: 1px solid var(--linea); }
+    .inf:first-child { border-top: 0; }
+    .inf summary { list-style: none; cursor: pointer; padding: 14px 18px 14px 44px; position: relative; display: flex; flex-direction: column; gap: 2px; border-radius: 12px; }
+    .inf summary::-webkit-details-marker { display: none; }
+    .inf summary::before { content: ''; position: absolute; left: 20px; top: 21px; width: 8px; height: 8px; border-right: 2px solid var(--teal); border-bottom: 2px solid var(--teal); transform: rotate(-45deg); transition: transform .15s; }
+    .inf[open] summary::before { transform: rotate(45deg); }
+    .inf summary b { font-size: 16.5px; color: var(--marino); }
+    .inf summary span { color: var(--suave); font-size: 14px; }
+    .inf summary:hover { background: var(--hielo); }
+    .inf summary:focus-visible { outline: 3px solid rgba(18,207,243,.5); outline-offset: -3px; }
+    .inf[open] summary { background: var(--hielo); border-radius: 0; }
+    .inf form { padding: 14px 18px 18px 44px; }
+  </style>
   <script is:inline>
+    // Abre el informe del enlace (#tipo) o el último usado
+    (() => {
+      const id = location.hash.slice(1) || (() => { try { return localStorage.getItem('nexo-informe'); } catch { return null; } })();
+      const d = id && document.getElementById(id); if (d) d.open = true; else document.querySelector('details.inf')?.setAttribute('open', '');
+      document.querySelectorAll('details.inf').forEach((x) => x.addEventListener('toggle', () => { if (x.open) try { localStorage.setItem('nexo-informe', x.id); } catch {} }));
+    })();
     // El selector de estudiante muestra solo los de la sección elegida
     document.querySelectorAll('.grid-inf form').forEach((f) => {
       const s = f.querySelector('.sel-seccion'); if (!s) return;

@@ -3,18 +3,13 @@ interface Props { titulo: string; sinMenu?: boolean }
 const { titulo, sinMenu = false } = Astro.props;
 const ruta = Astro.url.pathname;
 const { user, inst, instituciones } = Astro.locals;
-const menu: [string, string][] = [
-  ['/', 'Inicio'],
-  ['/secciones', 'Secciones'],
-  ['/estudiantes', 'Estudiantes'],
-  ['/asistencia', 'Asistencia'],
-  ['/evaluaciones', 'Evaluaciones'],
-  ['/notas', 'Calificaciones'],
-  ['/sea', 'Importar / exportar SEA'],
-  ['/anual', 'Nota anual'],
-  ['/informes', 'Informes'],
-  ['/comunicados', 'Comunicados'],
-  ['/alertas', 'Alerta temprana'],
+// Menú agrupado por lo que el docente va a hacer
+const grupos: [string, [string, string][]][] = [
+  ['', [['/', 'Inicio']]],
+  ['En el aula', [['/asistencia', 'Asistencia'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones']]],
+  ['Grupos', [['/secciones', 'Secciones'], ['/estudiantes', 'Estudiantes']]],
+  ['Resultados', [['/anual', 'Nota anual'], ['/informes', 'Informes'], ['/sea', 'Importar / exportar SEA']]],
+  ['Familias', [['/comunicados', 'Comunicados'], ['/alertas', 'Alerta temprana']]],
 ];
 const config: [string, string][] = [
   ['/indicadores', 'Indicadores'],
@@ -37,7 +32,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
   <title>{titulo} · Nexo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
   <style is:global>
     :root {
       /* Paleta de marca Nexo */
@@ -47,7 +42,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       --tinta: #13233f; --suave: #5a6b82; --linea: #dde6ef; --papel: var(--gris); --blanco: #fff;
       --verde: #137a52; --verde-claro: #e2f5ec; --rojo: #b3402f; --rojo-claro: #fbe9e5; --ambar: #a86b00; --ambar-claro: #fff3d6;
       --titulos: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: var(--tinta); background: var(--papel);
+      --texto: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', 'Segoe UI', system-ui, sans-serif;
+      font-family: var(--texto); font-size: 15px; line-height: 1.45; color: var(--tinta); background: var(--papel);
     }
     * { box-sizing: border-box; }
     body { margin: 0; }
@@ -72,7 +68,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     nav.lateral a.on { background: rgba(18,207,243,.16); color: #fff; border-left-color: var(--cian); font-weight: 600; }
     nav.lateral form button { margin: 16px 8px 0; background: transparent; border: 1px solid rgba(255,255,255,.28); color: #d4e4f7; width: calc(100% - 16px); font-weight: 400; }
     nav.lateral form button:hover { background: rgba(255,255,255,.08); }
-    nav.lateral .grupo { margin: 16px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--aqua); opacity: .85; font-weight: 600; }
+    nav.lateral .grupo { margin: 18px 12px 4px; font-size: 12.5px; color: #8fb3e0; font-weight: 600; }
     nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2); font-size: 13px; }
     nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #a9c4e6; }
     nav.lateral .quien a { display: inline; padding: 0; border: 0; color: #fff; text-decoration: underline; }
@@ -102,9 +98,10 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     button:focus-visible, .btn:focus-visible, a:focus-visible { outline: 3px solid rgba(18,207,243,.5); outline-offset: 2px; }
     table { border-collapse: collapse; width: 100%; background: #fff; font-size: 14px; }
     th, td { border-bottom: 1px solid var(--linea); padding: 7px 8px; text-align: left; vertical-align: middle; }
-    th { background: var(--hielo); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--teal); position: sticky; top: 0; }
+    th { background: var(--hielo); font-size: 13px; font-weight: 600; color: #3d5a73; position: sticky; top: 0; }
     tr:hover td { background: #f8fcfe; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    table { font-variant-numeric: tabular-nums; }
     td input { padding: 4px 6px; width: 100%; min-width: 60px; }
     td input[type=checkbox], td input[type=radio] { width: auto; min-width: 0; }
     .tabla { overflow-x: auto; border: 1px solid var(--linea); border-radius: 12px; }
@@ -132,6 +129,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     .acceso-tarjeta h1 { font-size: 20px; text-align: center; }
     .acceso-tarjeta .sub { text-align: center; }
     .acceso-tarjeta button { padding: 10px 14px; font-size: 15px; }
+
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
     /* Barra superior del teléfono (oculta en PC) */
     .barra-movil, .velo { display: none; }
@@ -168,7 +167,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       .tabla { -webkit-overflow-scrolling: touch; }
       table { font-size: 13px; }
       th, td { padding: 7px 6px; }
-      th { font-size: 11px; }
+      th { font-size: 12px; }
       td input { font-size: 15px; padding: 6px; }
       td textarea { min-width: 230px; }
       td b, td a { white-space: nowrap; }
@@ -203,11 +202,14 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
         <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
         <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
         {inst && <div class="colegio">{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div>}
-        {inst && menu.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
+        {inst && grupos.map(([g, items]) => (<>
+          {g && <div class="grupo">{g}</div>}
+          {items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
+        </>))}
         <div class="grupo">Configuración</div>
-        {config.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
+        {config.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
         {user?.rol === 'admin' && <div class="grupo">Administración</div>}
-        {user?.rol === 'admin' && admin.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''}>{t}</a>)}
+        {user?.rol === 'admin' && admin.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
         <form method="post" action="/login?salir=1"><button type="submit">Salir</button></form>
       </nav>
       <main><slot /></main>
