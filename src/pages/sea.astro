@@ -5,7 +5,7 @@ import Selector from '../components/Selector.astro';
 import { q, one, exec, transaccion, preparar, esquemaActual } from '../lib/db';
 import { seccion, calcularPeriodo } from '../lib/calc';
 import { str, fmt, parseCsv, etiquetaSeccion } from '../lib/util';
-import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes, guardarNotasSea, valorPrimeraPrueba, type NotaSea } from '../lib/sea';
+import { SEA, COLUMNAS_SEA, normalizar, numSea, leerNum, separarNombre, asegurarComponentes, guardarNotasSea, valorPrueba1, type NotaSea } from '../lib/sea';
 const { user } = Astro.locals;
 const U = user.id;
 const seccionId = Number(Astro.url.searchParams.get('seccion') ?? 0);
@@ -44,7 +44,8 @@ if (sec && per && Astro.request.method === 'POST') {
   } else if (accion === 'importar') {
     const archivo = f.get('archivo');
     const conNotas = str(f.get('modo')) !== 'estudiantes';
-    const primeraIndicada = Number(str(f.get('prueba1')).replace(',', '.')) || null;
+    // II periodo: la Prueba del archivo es solo la I prueba (se puede cambiar en el formulario)
+    const soloPrimera = (str(f.get('prueba')) || (per.numero === 2 ? 'primera' : 'ambas')) === 'primera';
     if (!(archivo instanceof File) || !archivo.size) errores.push('Elija el archivo .csv.');
     else if (/\.xlsx?$/i.test(archivo.name)) errores.push('El archivo es de Excel (.xlsx). En Excel use Archivo → Guardar como → «CSV UTF-8 (delimitado por comas)» y súbalo de nuevo.');
     else {
@@ -74,9 +75,12 @@ if (sec && per && Astro.request.method === 'POST') {
         });
         if (!datos.length && !errores.length) errores.push('El archivo no tiene estudiantes.');
         const iP = SEA.findIndex((s) => s.clave === 'prueba');
-        const maxP = Math.max(0, ...datos.map((d) => d.vals[iP] ?? 0));
-        if (conNotas && primeraIndicada !== null && maxP <= 25 && primeraIndicada < maxP)
-          errores.push(`La I prueba no puede valer ${primeraIndicada} %: hay notas de Prueba de hasta ${maxP}.`);
+        const p1 = soloPrimera ? valorPrueba1(compDe('prueba')) : null;
+        if (conNotas && soloPrimera && p1 === null)
+          errores.push(`No se puede tomar la Prueba como solo la I prueba: revise en Componentes (nivel ${sec.nivel}) cuánto vale la I prueba del II periodo.`);
+        else if (conNotas && p1 !== null) datos.forEach((d, i) => {
+          if ((d.vals[iP] ?? 0) > p1) errores.push(`Fila ${i + 2} (${d.nombre}): Prueba = ${d.vals[iP]}, pero la I prueba vale ${p1} % en el nivel ${sec.nivel}. Revise el valor en Componentes o elija «las dos pruebas».`);
+        });
         if (!errores.length) {
           const esquema = esquemaActual();
           let nuevos = 0, matriculados = 0, notas = 0, creadas: string[] = [];
@@ -103,7 +107,7 @@ if (sec && per && Astro.request.method === 'POST') {
               }
             }
             if (notasSea.length)
-              creadas = await guardarNotasSea(async (sql, p = []) => (await x(sql, p)).rows, U, sec, per.id, notasSea, primeraIndicada);
+              creadas = await guardarNotasSea(async (sql, p = []) => (await x(sql, p)).rows, U, sec, per.id, notasSea, soloPrimera);
           });
           msg = `Archivo importado: ${datos.length} estudiantes (${nuevos} nuevos, ${matriculados} agregados a ${etiquetaSeccion(sec)})` +
             (conNotas ? `, ${notas} calificaciones de ${per.nombre}.` : '. No se importaron calificaciones.') +
@@ -147,11 +151,14 @@ const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
             <label style="flex:1">Qué importar<select name="modo"><option value="notas">Estudiantes y calificaciones de {per.nombre}</option><option value="estudiantes">Solo estudiantes</option></select></label>
           </div>
           <div class="fila" style="margin-top:10px">
-            <label style="flex:2">Si la Prueba trae solo la I prueba (ninguna nota mayor a 25), esa prueba vale
-              <select name="prueba1"><option value="">Automático: 20 % si ninguna pasa de 20; si no, 25 %</option><option value="20">20 %</option><option value="25">25 %</option></select></label>
+            <label style="flex:2">La nota de Prueba del archivo es
+              <select name="prueba">
+                <option value="ambas" selected={per.numero !== 2}>La suma de las dos pruebas (todo el componente)</option>
+                <option value="primera" selected={per.numero === 2}>Solo la I prueba{valorPrueba1(compDe('prueba')) !== null ? ` (vale ${valorPrueba1(compDe('prueba'))} %)` : ''}</option>
+              </select></label>
             <button>Importar</button>
           </div>
-          <p class="muted" style="margin:8px 0 0">Las notas quedan como evaluaciones «(SEA)» en Evaluaciones. Si la Prueba es solo la I prueba, se crea además la II prueba sin calificar.</p>
+          <p class="muted" style="margin:8px 0 0">Las notas quedan como evaluaciones «(SEA)» en Evaluaciones. En el II periodo la Prueba es solo la I prueba (su valor se configura en Componentes) y se crea la II prueba sin calificar.</p>
         </form>
       </div>
       <h2>{per.nombre} · {etiquetaSeccion(sec)} <span class="muted" style="font-weight:400">({r.filas.length} estudiantes)</span></h2>

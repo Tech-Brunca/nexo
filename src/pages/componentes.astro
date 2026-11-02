@@ -2,8 +2,8 @@
 import Base from '../layouts/Base.astro';
 import { exec, q, one, transaccion, preparar, esquemaActual } from '../lib/db';
 import { num, str } from '../lib/util';
-import { SEA, asegurarComponentes } from '../lib/sea';
-let msg = '', error = '';
+import { SEA, asegurarComponentes, ajustarPruebasSea, PRUEBA1_DEFECTO } from '../lib/sea';
+let msg = '', error = '', avisos: string[] = [];
 const { user, inst } = Astro.locals;
 const U = user.id;
 const niveles = (await q<any>('SELECT DISTINCT nivel, length(nivel) FROM {S}.secciones WHERE usuario_id=? ORDER BY length(nivel), nivel', [U])).map((r) => r.nivel);
@@ -25,7 +25,23 @@ if (Astro.request.method === 'POST') {
         await exec(`UPDATE {S}.componentes SET porcentaje=?, tipo=CASE WHEN clave='asistencia' THEN 'asistencia' WHEN ? IN ('puntos','indicadores') THEN ? ELSE tipo END
           WHERE id=? AND usuario_id=?`, [Number(str(f.getAll('porcentaje')[i]).replace(',', '.')), tipo, tipo, num(ids[i]), U]);
       }
-      msg = 'Porcentajes guardados.';
+      // Valor de la I prueba del II periodo (el SEA trae solo esa nota); la II prueba es el resto
+      const idPrueba = num(f.get('prueba_id'));
+      if (idPrueba && str(f.get('prueba1')) !== '') {
+        const p1 = Number(str(f.get('prueba1')).replace(',', '.'));
+        const total = Number((await one<any>('SELECT porcentaje FROM {S}.componentes WHERE id=? AND usuario_id=?', [idPrueba, U]))?.porcentaje ?? 0);
+        // Notas de I prueba ya importadas en el II periodo que no cabrían en el nuevo valor
+        const choque = await one<any>(`SELECT s.nivel || '-' || s.nombre AS seccion, MAX(n.puntos) AS maximo FROM {S}.evaluaciones e
+          JOIN {S}.secciones s ON s.id=e.seccion_id JOIN {S}.periodos p ON p.id=e.periodo_id JOIN {S}.notas n ON n.evaluacion_id=e.id
+          WHERE e.componente_id=? AND e.origen='sea' AND p.numero=2 GROUP BY s.id HAVING MAX(n.puntos) > ? LIMIT 1`, [idPrueba, p1]);
+        if (!(p1 > 0 && p1 < total)) error = `La I prueba debe valer más de 0 y menos que la Prueba (${total} %).`;
+        else if (choque) error = `No se cambió el valor de la I prueba: en ${choque.seccion} hay notas importadas de hasta ${Number(choque.maximo)}, mayores que ${p1} %.`;
+        else {
+          await exec('UPDATE {S}.componentes SET prueba1=? WHERE id=? AND usuario_id=?', [p1, idPrueba, U]);
+          avisos = await ajustarPruebasSea(U, nivel);
+        }
+      }
+      msg = error ? 'Porcentajes guardados, excepto el valor de la I prueba.' : 'Porcentajes guardados.';
     }
   } else if (accion === 'copiar') {
     const destino = str(f.get('destino'));
@@ -63,6 +79,7 @@ const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)' };
   <h1>Componentes de evaluación</h1>
   <p class="sub">Son las columnas de la plantilla del SEA, por eso el nombre es fijo. Ajuste el porcentaje de cada uno para cada nivel en {inst!.nombre}; las evaluaciones se reparten ese porcentaje.</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  {avisos.length > 0 && <div class="msg aviso">{avisos.map((a) => <div>{a}</div>)}</div>}
   <form method="get" class="tarjeta fila">
     <label>Nivel
       <select name="nivel" onchange="this.form.submit()">
@@ -78,14 +95,23 @@ const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)' };
         <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="nivel" value={nivel} />
         <table>
           <tr><th>Componente (columna del SEA)</th><th class="n">Porcentaje</th><th>Se califica</th><th class="n">Evaluaciones</th></tr>
-          {fijos.map((c) => (
+          {fijos.map((c) => (<>
             <tr><td><input type="hidden" name="id" value={c.id} /><b>{c.nombre}</b></td>
               <td class="n"><input name="porcentaje" value={Number(c.porcentaje)} inputmode="decimal" style="width:80px;text-align:right" /></td>
               <td>{c.clave === 'asistencia'
                 ? <><input type="hidden" name="tipo" value="asistencia" /><span class="muted">Automático, según la asistencia</span></>
                 : <select name="tipo">{Object.entries(TIPOS).map(([k, v]) => <option value={k} selected={c.tipo === k}>{v}</option>)}</select>}</td>
               <td class="n">{c.evals}</td></tr>
-          ))}
+            {c.clave === 'prueba' && (
+              <tr><td colspan="4" style="background:var(--hielo)">
+                <input type="hidden" name="prueba_id" value={c.id} />
+                <label style="flex-direction:row;align-items:center;gap:8px;flex-wrap:wrap;color:var(--tinta);font-size:14px">
+                  En el II periodo, la I prueba vale
+                  <input name="prueba1" value={c.prueba1 !== null ? Number(c.prueba1) : PRUEBA1_DEFECTO} inputmode="decimal" style="width:70px;text-align:right" /> %
+                  <span class="muted">y la II (la que se exime) {Math.round((Number(c.porcentaje) - Number(c.prueba1 ?? PRUEBA1_DEFECTO)) * 100) / 100} %. El SEA trae solo la nota de la I prueba.</span>
+                </label></td></tr>
+            )}
+          </>))}
           <tr><th>Total</th><th class="n">{suma}%</th><th colspan="2"></th></tr>
         </table>
         <p style="padding:0 10px"><button>Guardar porcentajes</button></p>

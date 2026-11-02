@@ -195,3 +195,6 @@ END $$;
 -- componente sea por indicadores (las notas del SEA son puntos).
 ALTER TABLE __ESQUEMA__.evaluaciones ADD COLUMN IF NOT EXISTS tipo text CHECK (tipo IN ('puntos', 'indicadores'));
 ALTER TABLE __ESQUEMA__.evaluaciones ADD COLUMN IF NOT EXISTS origen text CHECK (origen IN ('sea', 'auto'));
+
+-- v3.6: valor de la I prueba del II periodo (el SEA trae solo esa nota); la II prueba es el resto del componente
+ALTER TABLE __ESQUEMA__.componentes ADD COLUMN IF NOT EXISTS prueba1 numeric(5,2);
