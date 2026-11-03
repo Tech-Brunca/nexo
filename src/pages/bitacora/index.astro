@@ -52,6 +52,10 @@ const inicioMes = fecha.slice(0, 8) + '01';
       </div>
 
       <h3 class="sub-t">Comunicados del día</h3>
+      <form class="fila com-uno" onsubmit={`event.preventDefault(); if (this.est.value) location.href = '/estudiantes/' + this.est.value + '?seccion=${sec.id}#hogar';`}>
+        <label>Comunicado a un estudiante<select name="est" onchange="this.form.requestSubmit()"><option value="">Elija…</option>
+          {ests.map((e) => <option value={e.id}>{e.nombre}</option>)}</select></label>
+      </form>
       {(dia?.comunicados ?? []).length === 0 ? <p class="muted">No se enviaron comunicados este día.</p> : (
         <ul class="comunicados">
           {dia!.comunicados.map((c) => (
@@ -96,5 +100,7 @@ const inicioMes = fecha.slice(0, 8) + '01';
     .comunicados li:first-child, .historial li:first-child { border-top: 0; }
     .msg-txt { flex-basis: 100%; color: var(--tinta); font-size: 14px; white-space: pre-wrap; }
     .imprimir { margin-top: 24px; }
+    .com-uno { margin-bottom: 10px; }
+    .com-uno select { width: auto; }
   </style>
 </Base>

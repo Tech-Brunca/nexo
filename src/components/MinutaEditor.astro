@@ -63,6 +63,7 @@ import { horaCorta as hora } from '../lib/bitacora';
   .minuta .m-voz[aria-pressed="true"] { background: var(--rojo); border-color: var(--rojo); color: #fff; }
   .minuta .m-voz:disabled { opacity: .55; cursor: not-allowed; }
   .minuta .m-aviso-voz { margin: 8px 0 0; font-size: 13.5px; }
+  .minuta .m-interino.m-error { color: var(--rojo); font-style: normal; }
   .minuta .m-interino { margin: 6px 0 0; font-style: italic; }
 </style>
 
@@ -191,23 +192,54 @@ import { horaCorta as hora } from '../lib/bitacora';
         const pos = (antes + sep + frase + ' ').length; ta.setSelectionRange(pos, pos);
         programar();
       };
-      const parar = () => { activo = false; voz.setAttribute('aria-pressed', 'false'); voz.querySelector('.m-voz-txt').textContent = 'Dictar'; interino.hidden = true; try { rec && rec.stop(); } catch {} };
-      const empezar = () => {
-        rec = new Rec(); rec.lang = 'es-CR'; rec.continuous = true; rec.interimResults = true;
+      // Mensajes claros por cada error del servicio (antes solo se avisaba si se negaba el micrófono y, ante
+      // cualquier otro error, se reintentaba en silencio: el botón quedaba «activo» sin escribir nada)
+      const ERRORES = {
+        'not-allowed': 'El navegador no tiene permiso para usar el micrófono. Tóquelo en el candado de la barra de direcciones y elija «Permitir».',
+        'service-not-allowed': 'Este navegador no permite el servicio de dictado. Use Chrome o Edge, o el dictado de Windows (tecla Windows + H).',
+        'network': 'El servicio de dictado no responde. Pasa en Brave, Opera o Chromium, o sin internet. Use Chrome o Edge, o el dictado de Windows (tecla Windows + H).',
+        'audio-capture': 'No se encontró un micrófono. Revise que esté conectado y elegido en la configuración de sonido.',
+        'language-not-supported': 'El dictado en español no está disponible en este navegador.',
+      };
+      let errores = 0, oido = false, ultimoError = '';
+      const parar = (msg) => {
+        activo = false; voz.setAttribute('aria-pressed', 'false'); voz.querySelector('.m-voz-txt').textContent = 'Dictar';
+        interino.hidden = !msg; interino.textContent = msg || ''; interino.classList.toggle('m-error', !!msg);
+        try { rec && rec.stop(); } catch {}
+      };
+      const empezar = (idioma = 'es-CR') => {
+        rec = new Rec(); rec.lang = idioma; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+        oido = false; ultimoError = '';
+        interino.classList.remove('m-error'); interino.textContent = 'Escuchando… hable cerca del micrófono.'; interino.hidden = false;
+        rec.onspeechstart = () => { oido = true; interino.textContent = 'Le escucho…'; };
         rec.onresult = (ev) => {
+          errores = 0; oido = true;
           let parcial = '';
           for (let i = ev.resultIndex; i < ev.results.length; i++) {
             if (ev.results[i].isFinal) insertar(ev.results[i][0].transcript); else parcial += ev.results[i][0].transcript;
           }
-          interino.textContent = parcial; interino.hidden = !parcial;
+          interino.textContent = parcial || 'Escuchando…'; interino.hidden = false;
         };
-        rec.onerror = (ev) => { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { estado.textContent = 'Permita el micrófono para dictar.'; parar(); } };
-        rec.onend = () => { if (activo) { try { rec.start(); } catch { parar(); } } };
+        rec.onerror = (ev) => {
+          ultimoError = ev.error;
+          if (ev.error === 'no-speech' || ev.error === 'aborted') return; // silencio: se sigue escuchando
+          if (ev.error === 'language-not-supported' && idioma !== 'es-ES') { activo = false; try { rec.abort(); } catch {} setTimeout(() => empezar('es-ES'), 50); return; }
+          parar(ERRORES[ev.error] || `El dictado se detuvo (${ev.error}). Pruebe de nuevo o use el dictado de Windows (tecla Windows + H).`);
+        };
+        rec.onend = () => {
+          if (!activo) return;
+          // Se reinicia tras una pausa, pero no indefinidamente si el servicio falla sin dar resultados
+          if (ultimoError && ultimoError !== 'no-speech') errores++;
+          if (errores >= 3) return parar(ERRORES.network);
+          try { rec.start(); } catch { parar(); }
+        };
         activo = true; voz.setAttribute('aria-pressed', 'true'); voz.querySelector('.m-voz-txt').textContent = 'Detener dictado';
-        ta.focus(); rec.start();
+        ta.focus();
+        try { rec.start(); } catch (e) { parar('No se pudo iniciar el dictado: ' + e.message); }
       };
       voz.onclick = () => {
         if (activo) return parar();
+        errores = 0;
         let visto = false; try { visto = localStorage.getItem('nexo-aviso-voz') === '1'; } catch {}
         if (!visto) { aviso.hidden = false; return; }
         empezar();
