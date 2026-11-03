@@ -164,7 +164,7 @@ if (sec) {
           tr.className = s.value ? `con-marca t-${s.value}` : '';
         }));
       </script>
-      {destinos.length > 0 && <EnviarWa destinos={destinos} tipo="ausencia" referencia={`asistencia:${seccionId}:${fecha}`} titulo={`Avisar ausencias y tardías del ${fecha}`} />}
+      {destinos.length > 0 && <EnviarWa destinos={destinos} tipo="ausencia" referencia={`asistencia:${seccionId}:${fecha}`} titulo={`Avisar ausencias y tardías del ${fecha}`} seccion={seccionId} />}
       <p class="muted">Totales de {per?.nombre ?? 'todo el curso'} al {fechaCorta} (lecciones).{lecciones === 0 && ' El % de ausentismo aparece cuando haya lecciones impartidas.'}</p>
       <h2>Registro del periodo</h2>
       <div class="tabla"><table>

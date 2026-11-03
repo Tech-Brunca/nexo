@@ -212,3 +212,29 @@ FROM (
   HAVING COUNT(*) = 2 AND bool_and(x.fecha_ini IS NULL AND x.fecha_fin IS NULL) AND array_agg(x.numero::int ORDER BY x.numero) = ARRAY[1, 2]
 ) a
 WHERE p.usuario_id = a.usuario_id;
+
+-- v3.9: bitácora del docente. Una minuta por sección y día (tipo 'minuta') y anotaciones sobre estudiantes
+-- (tipo 'estudiante'). La fecha es la del día en que se empezó y no cambia al editar.
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.bitacora (
+  id serial PRIMARY KEY,
+  usuario_id int NOT NULL REFERENCES general.usuarios(id) ON DELETE CASCADE,
+  seccion_id int NOT NULL REFERENCES __ESQUEMA__.secciones(id) ON DELETE CASCADE,
+  fecha date NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('minuta', 'estudiante')),
+  texto text NOT NULL DEFAULT '',
+  creado timestamptz NOT NULL DEFAULT now(),
+  actualizado timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS bitacora_minuta ON __ESQUEMA__.bitacora (seccion_id, fecha) WHERE tipo = 'minuta';
+CREATE INDEX IF NOT EXISTS bitacora_dia ON __ESQUEMA__.bitacora (seccion_id, fecha);
+-- Estudiantes mencionados (@) o elegidos en una anotación: así aparece también en su perfil
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.bitacora_estudiantes (
+  bitacora_id int NOT NULL REFERENCES __ESQUEMA__.bitacora(id) ON DELETE CASCADE,
+  estudiante_id int NOT NULL REFERENCES __ESQUEMA__.estudiantes(id) ON DELETE CASCADE,
+  PRIMARY KEY (bitacora_id, estudiante_id)
+);
+CREATE INDEX IF NOT EXISTS bitacora_estudiante ON __ESQUEMA__.bitacora_estudiantes (estudiante_id);
+-- Comunicados: por qué medio salió (WhatsApp, impreso para el cuaderno o ambos) y de qué sección
+ALTER TABLE __ESQUEMA__.comunicados ADD COLUMN IF NOT EXISTS medio text NOT NULL DEFAULT 'whatsapp' CHECK (medio IN ('whatsapp', 'impreso', 'ambos'));
+ALTER TABLE __ESQUEMA__.comunicados ADD COLUMN IF NOT EXISTS seccion_id int REFERENCES __ESQUEMA__.secciones(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS comunicados_estudiante ON __ESQUEMA__.comunicados (estudiante_id, creado);

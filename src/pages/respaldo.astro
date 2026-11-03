@@ -22,6 +22,9 @@ const TABLAS: { t: string; sql: string; fk: Record<string, string>; auto?: boole
   { t: 'asistencia', sql: 'SELECT a.* FROM {S}.asistencia a JOIN {S}.secciones s ON s.id=a.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true },
   { t: 'notas_importadas', sql: 'SELECT n.* FROM {S}.notas_importadas n JOIN {S}.secciones s ON s.id=n.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones', periodo_id: 'periodos' } },
   { t: 'convocatorias', sql: 'SELECT c.* FROM {S}.convocatorias c JOIN {S}.secciones s ON s.id=c.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' } },
+  { t: 'bitacora', sql: 'SELECT * FROM {S}.bitacora WHERE usuario_id=?', fk: { seccion_id: 'secciones' }, auto: true },
+  { t: 'bitacora_estudiantes', sql: 'SELECT be.* FROM {S}.bitacora_estudiantes be JOIN {S}.bitacora b ON b.id=be.bitacora_id WHERE b.usuario_id=?', fk: { bitacora_id: 'bitacora', estudiante_id: 'estudiantes' } },
+  { t: 'comunicados', sql: 'SELECT * FROM {S}.comunicados WHERE usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true, opcional: ['estudiante_id', 'seccion_id'] },
 ];
 const GENERALES = {
   ajustes: 'SELECT * FROM general.ajustes WHERE usuario_id=?',
@@ -29,6 +32,7 @@ const GENERALES = {
   plantillas: 'SELECT * FROM general.plantillas WHERE usuario_id=?',
   asignaturas: 'SELECT * FROM general.asignaturas WHERE usuario_id=?',
   indicadores: 'SELECT * FROM general.indicadores WHERE usuario_id=?',
+  plantillas_hogar: 'SELECT * FROM general.plantillas_hogar WHERE usuario_id=?',
 };
 
 let msg = '', error = '';
@@ -66,6 +70,11 @@ if (Astro.request.method === 'POST') {
             await c.query(`DELETE FROM general.${t} WHERE usuario_id=$1`, [U]);
             for (const r of json.data[t]) await ins(`general.${t}`, { ...r, usuario_id: U }, false);
           }
+          if (json.data.plantillas_hogar) {
+            await c.query('DELETE FROM general.plantillas_hogar WHERE usuario_id=$1', [U]);
+            for (const { id, ...r } of json.data.plantillas_hogar) await ins('general.plantillas_hogar', { ...r, usuario_id: U }, true);
+            await c.query(`INSERT INTO general.meta VALUES ($1, '1') ON CONFLICT (clave) DO NOTHING`, [`hogar:${U}`]);
+          }
           for (const r of json.data.asignaturas ?? []) {
             const ya = (await c.query('SELECT id FROM general.asignaturas WHERE usuario_id=$1 AND nombre=$2', [U, r.nombre])).rows[0];
             mapa.asignaturas.set(r.id, ya?.id ?? (await ins('general.asignaturas', { usuario_id: U, nombre: r.nombre }, true)));
@@ -78,7 +87,7 @@ if (Astro.request.method === 'POST') {
             mapa.indicadores.set(id, ya?.id ?? (await ins('general.indicadores', resto, true)));
           }
           // 2. Datos del colegio activo: se reemplazan (las tablas hijas caen en cascada)
-          for (const t of ['secciones', 'estudiantes', 'periodos', 'componentes'])
+          for (const t of ['comunicados', 'bitacora', 'secciones', 'estudiantes', 'periodos', 'componentes'])
             await c.query(preparar(`DELETE FROM {S}.${t} WHERE usuario_id=?`, esquema), [U]);
           for (const x of TABLAS) {
             mapa[x.t] = new Map();

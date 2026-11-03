@@ -92,3 +92,13 @@ CREATE TABLE IF NOT EXISTS general.colegio_logos (
   tipo text NOT NULL CHECK (tipo IN ('image/png', 'image/jpeg', 'image/webp')),
   actualizado timestamptz NOT NULL DEFAULT now()
 );
+
+-- v3.9: plantillas de «comunicado al hogar» de cada docente (se crean las predeterminadas la primera vez)
+CREATE TABLE IF NOT EXISTS general.plantillas_hogar (
+  id serial PRIMARY KEY,
+  usuario_id int NOT NULL REFERENCES general.usuarios(id) ON DELETE CASCADE,
+  nombre text NOT NULL,
+  texto text NOT NULL,
+  orden smallint NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS plantillas_hogar_usuario ON general.plantillas_hogar (usuario_id, orden);

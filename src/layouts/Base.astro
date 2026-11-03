@@ -17,7 +17,7 @@ const ICONOS: Record<string, string> = {
 };
 type Grupo = { clave: string; titulo: string; abierto?: boolean; items: [string, string][] };
 const grupos: Grupo[] = [
-  { clave: 'aula', titulo: 'En el aula', abierto: true, items: [['/asistencia', 'Asistencia'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones']] },
+  { clave: 'aula', titulo: 'En el aula', abierto: true, items: [['/bitacora', 'Bitácora'], ['/asistencia', 'Asistencia'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones']] },
   { clave: 'grupos', titulo: 'Grupos', items: [['/secciones', 'Secciones'], ['/estudiantes', 'Estudiantes']] },
   { clave: 'resultados', titulo: 'Resultados', items: [['/anual', 'Nota anual'], ['/informes', 'Informes'], ['/sea', 'Importar / exportar SEA']] },
   { clave: 'familias', titulo: 'Familias', items: [['/comunicados', 'Comunicados'], ['/alertas', 'Alerta temprana']] },

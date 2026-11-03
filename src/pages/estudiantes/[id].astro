@@ -1,0 +1,206 @@
+---
+// Perfil de un estudiante: datos, línea de tiempo (anotaciones de la bitácora, comunicados y asistencia),
+// nueva anotación y «Comunicado al hogar» por WhatsApp o impreso para el cuaderno de comunicaciones.
+import Base from '../../layouts/Base.astro';
+import MinutaEditor from '../../components/MinutaEditor.astro';
+import { q, one } from '../../lib/db';
+import { estudiantesDe } from '../../lib/calc';
+import { hoy, etiquetaSeccion, TIPOS_AUSENCIA } from '../../lib/util';
+import { historiaEstudiante, plantillasHogar, horaCorta } from '../../lib/bitacora';
+import { TIPOS, llenar, telefonoWa, fechaLarga } from '../../lib/whatsapp';
+import { logoColegio } from '../../lib/auth';
+const { user, inst } = Astro.locals;
+const id = Number(Astro.params.id);
+const est = Number.isFinite(id) ? await one<any>('SELECT * FROM {S}.estudiantes WHERE id=? AND usuario_id=?', [id, user.id]) : null;
+if (!est) return Astro.redirect('/estudiantes');
+const secciones = await q<any>(`SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura FROM {S}.matriculas m
+  JOIN {S}.secciones s ON s.id=m.seccion_id LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id
+  WHERE m.estudiante_id=? AND s.usuario_id=? ORDER BY s.nivel, s.nombre, s.subgrupo NULLS FIRST`, [est.id, user.id]);
+const sec = secciones.find((s) => s.id === Number(Astro.url.searchParams.get('seccion'))) ?? secciones[0];
+// Nombre en tipo título para los mensajes (el SEA lo trae en mayúsculas)
+const titulo = (t: string) => t.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, x, y) => x + y.toUpperCase());
+const nombre = titulo(`${est.nombre} ${est.apellidos}`);
+const fecha = hoy();
+const { notas, comunicados } = await historiaEstudiante(user.id, est.id);
+const asistencia = await q<any>(`SELECT a.fecha, a.tipo, a.lecciones, a.observacion, a.seccion_id FROM {S}.asistencia a JOIN {S}.secciones s ON s.id=a.seccion_id
+  WHERE a.estudiante_id=? AND s.usuario_id=? ORDER BY a.fecha DESC LIMIT 300`, [est.id, user.id]);
+// Etiquetas de todas las secciones del docente (una anotación o comunicado puede ser de una sección anterior)
+const todas = new Map((await q<any>('SELECT id, nivel, nombre, subgrupo FROM {S}.secciones WHERE usuario_id=?', [user.id])).map((s) => [s.id, etiquetaSeccion(s)]));
+type Item = { fecha: string; hora: string; clase: 'nota' | 'com' | 'asis'; titulo: string; texto: string; seccion?: number | null; extra?: string };
+const MEDIO: Record<string, string> = { whatsapp: 'WhatsApp', impreso: 'Impreso', ambos: 'WhatsApp e impreso' };
+const tipoTxt = (t: string) => TIPOS[t]?.titulo ?? (t === 'hogar' ? 'Comunicado al hogar' : t);
+const items: Item[] = [
+  ...notas.map((n) => ({ fecha: n.fecha, hora: n.creado?.slice(11) ?? '', clase: 'nota' as const, titulo: 'Anotación', texto: n.texto, seccion: n.seccion_id,
+    extra: n.estudiantes.length > 1 ? `Con ${n.estudiantes.filter((e) => e.id !== est.id).map((e) => e.nombre).join(', ')}` : '' })),
+  ...comunicados.map((c) => ({ fecha: c.fecha, hora: c.creado?.slice(11) ?? '', clase: 'com' as const, titulo: `${tipoTxt(c.tipo)} · ${MEDIO[c.medio] ?? c.medio}`, texto: c.mensaje, seccion: c.seccion_id })),
+  ...asistencia.map((a) => ({ fecha: a.fecha, hora: '', clase: 'asis' as const, titulo: `${TIPOS_AUSENCIA[a.tipo] ?? a.tipo}${a.tipo.startsWith('A') ? ` · ${a.lecciones} ${Number(a.lecciones) === 1 ? 'lección' : 'lecciones'}` : ''}`, texto: a.observacion, seccion: a.seccion_id })),
+].sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora));
+const fechaTexto = (f: string) => new Date(f + 'T12:00:00').toLocaleDateString('es-CR', { day: 'numeric', month: 'short', year: 'numeric' });
+const filtro = Astro.url.searchParams.get('ver') ?? 'todo';
+const visibles = filtro === 'todo' ? items : items.filter((i) => i.clase === filtro);
+const cuenta = { nota: notas.length, com: comunicados.length, asis: asistencia.length };
+// Comunicado al hogar
+const pl = await plantillasHogar(user.id);
+const vars = { encargado: est.encargado, docente: user.nombre, asignatura: sec?.asignatura ?? '', colegio: inst!.nombre, estudiante: nombre,
+  seccion: sec ? etiquetaSeccion(sec) : '', fecha: fechaLarga(fecha) };
+const plantillasLlenas = pl.map((p) => ({ nombre: p.nombre, texto: llenar(p.texto, vars) }));
+const tel = telefonoWa(est.telefono ?? '');
+const ests = sec ? (await estudiantesDe(sec.id)).map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}` })) : [];
+const logo = logoColegio(inst);
+const fechaBoleta = (() => { const t = fechaLarga(fecha); return t.charAt(0).toUpperCase() + t.slice(1); })();
+---
+<Base titulo={nombre}>
+  <p class="no-print"><a href="/estudiantes">← Estudiantes</a></p>
+  <div class="perfil-cab">
+    <div>
+      <h1>{est.apellidos} {est.nombre}</h1>
+      <p class="sub">{est.cedula && `Cédula ${est.cedula} · `}{secciones.map((s) => etiquetaSeccion(s)).join(', ') || 'Sin sección'}{!est.activo && ' · Inactivo'}</p>
+      <p class="muted">Encargado(a): {est.encargado || '—'}{est.telefono && ` · ${est.telefono}`} · <a href={`/estudiantes?editar=${est.id}`}>Editar datos</a></p>
+    </div>
+    {secciones.length > 1 && (
+      <form method="get" class="no-print"><label>Sección<select name="seccion" onchange="this.form.submit()">
+        {secciones.map((s) => <option value={s.id} selected={s.id === sec?.id}>{etiquetaSeccion(s)}{s.asignatura ? ` · ${s.asignatura}` : ''}</option>)}</select></label></form>
+    )}
+  </div>
+
+  {sec && (
+    <div class="perfil-acciones">
+      <section class="tarjeta">
+        <h2>Nueva anotación</h2>
+        <div id="nota-nueva">
+          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} preseleccion={[{ id: est.id, nombre }]} filas={3}
+            placeholder={`Anotación sobre ${est.nombre}. Queda en la bitácora de ${etiquetaSeccion(sec)} de hoy.`} />
+        </div>
+        <p id="nota-lista" class="muted" hidden>Anotación guardada en la bitácora. <a href={`/estudiantes/${est.id}?seccion=${sec.id}`}>Ver en la línea de tiempo o agregar otra</a></p>
+      </section>
+
+      <section class="tarjeta" id="hogar" data-est={est.id} data-seccion={sec.id} data-tel={tel ?? ''} data-telefono={est.telefono ?? ''}>
+        <h2>Comunicado al hogar</h2>
+        <label>Plantilla<select id="h-plantilla">
+          {plantillasLlenas.map((p, i) => <option value={i}>{p.nombre}</option>)}
+        </select></label>
+        <script type="application/json" id="h-textos" set:html={JSON.stringify(plantillasLlenas.map((p) => p.texto))}></script>
+        <label>Mensaje<textarea id="h-texto" rows="6">{plantillasLlenas[0]?.texto ?? ''}</textarea></label>
+        <div class="fila h-botones">
+          <button type="button" data-medio="whatsapp" disabled={!tel} title={tel ? '' : 'El estudiante no tiene teléfono del encargado'}>WhatsApp</button>
+          <button type="button" class="sec" data-medio="impreso">Imprimir para el cuaderno</button>
+          <button type="button" class="sec" data-medio="ambos" disabled={!tel}>Ambos</button>
+          <label class="h-copias">Copias<select id="h-copias"><option>1</option><option>2</option><option>3</option></select></label>
+        </div>
+        <p class="muted" id="h-estado" aria-live="polite">{tel ? 'Queda registrado en la bitácora y en esta línea de tiempo.' : 'Sin teléfono del encargado: solo puede imprimirse.'} <a href="/plantillas-hogar">Editar plantillas</a></p>
+      </section>
+    </div>
+  )}
+
+  <h2>Línea de tiempo</h2>
+  <nav class="filtros no-print" aria-label="Filtrar">
+    {[['todo', `Todo (${items.length})`], ['nota', `Anotaciones (${cuenta.nota})`], ['com', `Comunicados (${cuenta.com})`], ['asis', `Asistencia (${cuenta.asis})`]].map(([v, t]) => (
+      <a class={filtro === v ? 'activo' : ''} href={`?${sec ? `seccion=${sec.id}&` : ''}ver=${v}`}>{t}</a>
+    ))}
+  </nav>
+  {visibles.length === 0 ? <p class="muted">Aún no hay registros.</p> : (
+    <ol class="tiempo">
+      {visibles.map((i) => (
+        <li class={i.clase}>
+          <div class="t-fecha">{fechaTexto(i.fecha)}{i.hora && <span class="muted"> · {horaCorta(i.hora)}</span>}</div>
+          <div class="t-cuerpo">
+            <b>{i.titulo}</b>{i.seccion && todas.get(i.seccion) && <span class="muted"> · {todas.get(i.seccion)}</span>}
+            {i.clase === 'nota' && i.seccion && <a class="muted t-ir" href={`/bitacora?seccion=${i.seccion}&fecha=${i.fecha}`}>ver día</a>}
+            {i.clase === 'asis' && i.seccion && <a class="muted t-ir" href={`/asistencia/estudiante?seccion=${i.seccion}&id=${est.id}`}>ficha</a>}
+            {i.texto && <p>{i.texto}</p>}
+            {i.extra && <p class="muted">{i.extra}</p>}
+          </div>
+        </li>
+      ))}
+    </ol>
+  )}
+
+  {sec && (
+    <div id="boleta" aria-hidden="true">
+      <div class="boleta-copia">
+        <header>
+          {logo && <img src={logo} alt="" />}
+          <div><div class="mep">Ministerio de Educación Pública</div><b>{inst!.nombre}</b>
+            <div class="b-titulo">Comunicado al hogar</div></div>
+        </header>
+        <p class="b-datos"><span><b>Fecha:</b> {fechaBoleta}</span><span><b>Estudiante:</b> {nombre}</span><span><b>Sección:</b> {etiquetaSeccion(sec)}</span>{sec.asignatura && <span><b>Asignatura:</b> {sec.asignatura}</span>}</p>
+        <p class="b-texto"></p>
+        <div class="b-firmas"><div>{user.nombre}<br />Firma del docente</div><div>Recibido: firma del encargado(a)<br />Fecha: ____ / ____ / ______</div></div>
+      </div>
+    </div>
+  )}
+
+  <script is:inline>
+    (() => {
+      const caja = document.getElementById('hogar'); if (!caja) return;
+      const textos = JSON.parse(document.getElementById('h-textos').textContent);
+      const sel = document.getElementById('h-plantilla'), txt = document.getElementById('h-texto'), estado = document.getElementById('h-estado');
+      sel.addEventListener('change', () => { txt.value = textos[sel.value] ?? ''; });
+      const registrar = (medio) => fetch('/api/comunicado', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: 'hogar', medio, estudiante_id: Number(caja.dataset.est), seccion_id: Number(caja.dataset.seccion),
+          telefono: medio === 'impreso' ? '' : caja.dataset.telefono, referencia: `hogar:${sel.options[sel.selectedIndex]?.text ?? ''}`, mensaje: txt.value }) });
+      const imprimir = () => {
+        const b = document.getElementById('boleta'), copia = b.querySelector('.boleta-copia');
+        b.querySelectorAll('.boleta-copia.extra').forEach((c) => c.remove());
+        copia.querySelector('.b-texto').textContent = txt.value;
+        for (let i = 1; i < Number(document.getElementById('h-copias').value); i++) { const c = copia.cloneNode(true); c.classList.add('extra'); b.appendChild(c); }
+        document.documentElement.classList.add('imprimir-boleta');
+        print();
+      };
+      addEventListener('afterprint', () => document.documentElement.classList.remove('imprimir-boleta'));
+      caja.querySelectorAll('[data-medio]').forEach((btn) => btn.addEventListener('click', () => {
+        const medio = btn.dataset.medio;
+        if (!txt.value.trim()) { estado.textContent = 'Escriba el mensaje.'; return; }
+        if (medio !== 'impreso') window.open(`https://wa.me/${caja.dataset.tel}?text=${encodeURIComponent(txt.value)}`, '_blank', 'noopener');
+        registrar(medio).then((r) => { estado.textContent = r.ok ? `Registrado en la bitácora (${medio === 'ambos' ? 'WhatsApp e impreso' : medio === 'impreso' ? 'impreso' : 'WhatsApp'}). Recargue para verlo en la línea de tiempo.` : 'No se pudo registrar el comunicado.'; });
+        if (medio !== 'whatsapp') setTimeout(imprimir, 150);
+      }));
+      document.getElementById('nota-nueva')?.addEventListener('minuta:creada', () => { document.getElementById('nota-lista').hidden = false; });
+    })();
+  </script>
+  <style>
+    .perfil-cab { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    .perfil-cab h1 { margin-bottom: 2px; }
+    .perfil-cab .sub, .perfil-cab .muted { margin: 2px 0; }
+    .perfil-acciones { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0 8px; }
+    .perfil-acciones .tarjeta { margin: 0; }
+    .perfil-acciones h2 { margin-top: 0; font-size: 17px; }
+    #hogar label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    #hogar textarea { width: 100%; }
+    .h-botones { align-items: flex-end; }
+    #hogar .h-copias { margin: 0 0 0 auto; flex-direction: row; align-items: center; }
+    .h-copias select { width: auto; }
+    .filtros { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .filtros a { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--linea); background: #fff; text-decoration: none; font-size: 14px; color: var(--tinta); }
+    .filtros a.activo { background: var(--marino); color: #fff; border-color: var(--marino); }
+    .tiempo { list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .tiempo li { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--linea); border-left: 4px solid var(--linea); }
+    .tiempo li:first-child { border-top: 0; }
+    .tiempo li.nota { border-left-color: var(--cian); }
+    .tiempo li.com { border-left-color: var(--teal); }
+    .tiempo li.asis { border-left-color: var(--ambar); }
+    .t-fecha { font-size: 14px; }
+    .t-cuerpo p { margin: 4px 0 0; white-space: pre-wrap; }
+    .t-ir { margin-left: 8px; font-size: 13px; }
+    #boleta { display: none; }
+    @media (max-width: 800px) {
+      .perfil-acciones { grid-template-columns: 1fr; }
+      .tiempo li { grid-template-columns: 1fr; gap: 2px; }
+    }
+    @media print {
+      html.imprimir-boleta body * { visibility: hidden; }
+      html.imprimir-boleta #boleta, html.imprimir-boleta #boleta * { visibility: visible; }
+      html.imprimir-boleta #boleta { display: block; position: absolute; inset: 0 0 auto 0; }
+      .boleta-copia { border: 1px solid #555; border-radius: 6px; padding: 14px 18px; margin-bottom: 18px; font-size: 13px; break-inside: avoid; }
+      .boleta-copia + .boleta-copia { border-top-style: dashed; }
+      .boleta-copia header { display: flex; gap: 12px; align-items: center; }
+      .boleta-copia img { width: 54px; height: 54px; object-fit: contain; }
+      .boleta-copia .mep { font-weight: 700; font-size: 12px; }
+      .b-titulo { font-size: 16px; font-weight: 700; margin-top: 2px; }
+      .b-datos { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 10px 0 6px; }
+      .b-texto { white-space: pre-wrap; line-height: 1.5; margin: 6px 0 14px; }
+      .b-firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 28px; }
+      .b-firmas div { border-top: 1px solid #333; padding-top: 4px; font-size: 12px; }
+    }
+  </style>
+</Base>

@@ -1,0 +1,55 @@
+---
+// Resumen imprimible de la bitácora de una sección entre dos fechas (con el escudo del colegio)
+import Base from '../../layouts/Base.astro';
+import EncabezadoImpreso from '../../components/EncabezadoImpreso.astro';
+import { seccion } from '../../lib/calc';
+import { hoy, etiquetaSeccion } from '../../lib/util';
+import { bitacoraRango, horaCorta } from '../../lib/bitacora';
+const { user } = Astro.locals;
+const sp = Astro.url.searchParams;
+const sec = await seccion(user.id, Number(sp.get('seccion') ?? 0));
+if (!sec) return Astro.redirect('/bitacora');
+const F = /^\d{4}-\d{2}-\d{2}$/;
+const hasta = F.test(sp.get('hasta') ?? '') ? sp.get('hasta')! : hoy();
+const desde = F.test(sp.get('desde') ?? '') ? sp.get('desde')! : hasta.slice(0, 8) + '01';
+const dias = (await bitacoraRango(user.id, sec.id, desde, hasta)).reverse();
+const fechaTexto = (f: string) => { const t = new Date(f + 'T12:00:00').toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); return t.charAt(0).toUpperCase() + t.slice(1); };
+const corta = (f: string) => f.split('-').reverse().join('/');
+const MEDIO: Record<string, string> = { whatsapp: 'WhatsApp', impreso: 'impreso', ambos: 'WhatsApp e impreso' };
+---
+<Base titulo={`Bitácora ${etiquetaSeccion(sec)}`}>
+  <p class="no-print"><a href={`/bitacora?seccion=${sec.id}`}>← Bitácora</a></p>
+  <div class="no-print fila" style="margin-bottom:12px"><button onclick="print()">Imprimir o guardar PDF</button></div>
+  <EncabezadoImpreso titulo={`Bitácora · ${etiquetaSeccion(sec)}`} detalle={`${sec.asignatura ?? ''} · Del ${corta(desde)} al ${corta(hasta)} · Docente: ${user.nombre}`} />
+  <h1 class="no-print">Bitácora · {etiquetaSeccion(sec)}</h1>
+  <p class="sub no-print">{sec.asignatura ?? ''} · Del {corta(desde)} al {corta(hasta)}</p>
+  {dias.length === 0 ? <p class="muted">No hay registros en ese rango.</p> : (
+    <article class="resumen-bit">
+      {dias.map((d) => (
+        <section>
+          <h2>{fechaTexto(d.fecha)}</h2>
+          {d.minuta?.texto && <p class="minuta-txt">{d.minuta.texto}</p>}
+          {d.notas.length > 0 && (
+            <ul>{d.notas.map((n) => <li><b>{n.estudiantes.map((e) => e.nombre).join(', ') || 'Estudiantes'}:</b> {n.texto}</li>)}</ul>
+          )}
+          {d.comunicados.length > 0 && (
+            <ul class="com">{d.comunicados.map((c) => <li>Comunicado {MEDIO[c.medio] ?? c.medio} a {c.estudiante ?? 'el grupo'} ({horaCorta(c.creado)}): {c.mensaje}</li>)}</ul>
+          )}
+        </section>
+      ))}
+    </article>
+  )}
+  <div class="firma-doc">Firma del docente: ______________________________</div>
+  <style>
+    .resumen-bit { background: #fff; border: 1px solid var(--linea); border-radius: 12px; padding: 18px 24px; max-width: 900px; }
+    .resumen-bit section { padding: 10px 0 12px; border-top: 1px solid var(--linea); break-inside: avoid; }
+    .resumen-bit section:first-child { border-top: 0; }
+    .resumen-bit h2 { font-size: 15.5px; margin: 0 0 6px; }
+    .minuta-txt { white-space: pre-wrap; margin: 0 0 6px; line-height: 1.55; }
+    .resumen-bit ul { margin: 4px 0 0; padding-left: 20px; }
+    .resumen-bit li { margin: 3px 0; white-space: pre-wrap; }
+    .resumen-bit ul.com li { color: var(--suave); font-size: 13.5px; }
+    .firma-doc { margin-top: 36px; font-size: 14px; }
+    @media print { .resumen-bit { border: 0; padding: 0; max-width: none; } }
+  </style>
+</Base>

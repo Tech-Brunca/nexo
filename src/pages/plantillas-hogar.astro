@@ -1,0 +1,70 @@
+---
+// Plantillas de «Comunicado al hogar» (perfil del estudiante): se pueden agregar, editar, quitar y ordenar.
+import Base from '../layouts/Base.astro';
+import { exec, q, transaccion } from '../lib/db';
+import { str, num } from '../lib/util';
+import { plantillasHogar, PLANTILLAS_HOGAR } from '../lib/bitacora';
+const { user } = Astro.locals;
+const U = user.id;
+let msg = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion')), id = num(f.get('id'));
+  const nombre = str(f.get('nombre')).slice(0, 80), texto = str(f.get('texto')).slice(0, 2000);
+  if (accion === 'agregar' && nombre && texto) {
+    await exec('INSERT INTO general.plantillas_hogar (usuario_id, nombre, texto, orden) VALUES (?,?,?, COALESCE((SELECT MAX(orden) FROM general.plantillas_hogar WHERE usuario_id=?), 0) + 1)', [U, nombre, texto, U]);
+    msg = `Plantilla «${nombre}» agregada.`;
+  } else if (accion === 'guardar' && nombre && texto) {
+    await exec('UPDATE general.plantillas_hogar SET nombre=?, texto=? WHERE id=? AND usuario_id=?', [nombre, texto, id, U]);
+    msg = `Plantilla «${nombre}» guardada.`;
+  } else if (accion === 'quitar') {
+    await exec('DELETE FROM general.plantillas_hogar WHERE id=? AND usuario_id=?', [id, U]);
+    msg = 'Plantilla eliminada.';
+  } else if (accion === 'subir' || accion === 'bajar') {
+    const lista = await plantillasHogar(U);
+    const i = lista.findIndex((p) => p.id === id), j = accion === 'subir' ? i - 1 : i + 1;
+    if (i >= 0 && j >= 0 && j < lista.length) {
+      [lista[i], lista[j]] = [lista[j], lista[i]];
+      await transaccion(async (c) => { for (const [k, p] of lista.entries()) await c.query('UPDATE general.plantillas_hogar SET orden=$1 WHERE id=$2 AND usuario_id=$3', [k + 1, p.id, U]); });
+    }
+  } else if (accion === 'predeterminadas') {
+    const ya = new Set((await q<any>('SELECT nombre FROM general.plantillas_hogar WHERE usuario_id=?', [U])).map((p) => p.nombre));
+    let n = 0;
+    for (const [nom, t] of PLANTILLAS_HOGAR) if (!ya.has(nom)) { await exec('INSERT INTO general.plantillas_hogar (usuario_id, nombre, texto, orden) VALUES (?,?,?,100)', [U, nom, t]); n++; }
+    msg = n ? `Se agregaron ${n} plantillas predeterminadas.` : 'Ya tiene todas las plantillas predeterminadas.';
+  } else if (accion === 'agregar' || accion === 'guardar') msg = 'Escriba el nombre y el texto.';
+}
+const lista = await plantillasHogar(U);
+---
+<Base titulo="Comunicados al hogar">
+  <h1>Plantillas de comunicados al hogar</h1>
+  <p class="sub">Se usan en el perfil de cada estudiante para enviar por WhatsApp o imprimir para el cuaderno de comunicaciones.
+    Variables: <code>{'{encargado}'}</code> <code>{'{estudiante}'}</code> <code>{'{seccion}'}</code> <code>{'{asignatura}'}</code> <code>{'{docente}'}</code> <code>{'{colegio}'}</code> <code>{'{fecha}'}</code></p>
+  {msg && <div class="msg ok">{msg}</div>}
+  {lista.map((p, i) => (
+    <form method="post" class="tarjeta plantilla">
+      <input type="hidden" name="id" value={p.id} />
+      <div class="fila p-cab">
+        <label style="flex:1">Nombre<input name="nombre" value={p.nombre} maxlength="80" /></label>
+        <button class="mini sec" name="accion" value="subir" disabled={i === 0} title="Subir" aria-label="Subir">↑</button>
+        <button class="mini sec" name="accion" value="bajar" disabled={i === lista.length - 1} title="Bajar" aria-label="Bajar">↓</button>
+      </div>
+      <label>Texto<textarea name="texto" rows="3">{p.texto}</textarea></label>
+      <div class="fila"><button name="accion" value="guardar">Guardar</button>
+        <button class="mini peligro" name="accion" value="quitar" onclick="return confirm('¿Eliminar esta plantilla?')">Eliminar</button></div>
+    </form>
+  ))}
+  {lista.length === 0 && <p class="muted">No tiene plantillas. Agregue una o recupere las predeterminadas.</p>}
+  <form method="post" class="tarjeta">
+    <h2 style="margin-top:0">Nueva plantilla</h2>
+    <label>Nombre<input name="nombre" maxlength="80" placeholder="Por ejemplo: Material para la próxima clase" /></label>
+    <label>Texto<textarea name="texto" rows="3">Estimado(a) {'{encargado}'}: le saluda {'{docente}'}, docente de {'{asignatura}'} en {'{colegio}'}. </textarea></label>
+    <button name="accion" value="agregar">Agregar</button>
+  </form>
+  <form method="post"><button class="sec" name="accion" value="predeterminadas">Recuperar las predeterminadas que faltan</button></form>
+  <style>
+    .plantilla label, form.tarjeta > label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .plantilla textarea, form.tarjeta textarea { width: 100%; }
+    .p-cab { align-items: flex-end; }
+  </style>
+</Base>

@@ -1,0 +1,100 @@
+---
+// Bitácora de una sección: minuta del día, anotaciones sobre estudiantes, comunicados enviados
+// (registrados solos) e historial. Solo la ve el docente que la escribe.
+import Base from '../../layouts/Base.astro';
+import MinutaEditor from '../../components/MinutaEditor.astro';
+import { q } from '../../lib/db';
+import { estudiantesDe } from '../../lib/calc';
+import { hoy, etiquetaSeccion } from '../../lib/util';
+import { bitacoraRango, horaCorta } from '../../lib/bitacora';
+const { user } = Astro.locals;
+const sp = Astro.url.searchParams;
+const secciones = await q<any>(`SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura FROM {S}.secciones s
+  LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id WHERE s.usuario_id=? ORDER BY length(s.nivel), s.nivel, s.nombre, s.subgrupo NULLS FIRST`, [user.id]);
+const pedida = Number(sp.get('seccion') ?? Astro.cookies.get('rd_bit')?.value ?? 0);
+const sec = secciones.find((s) => s.id === pedida) ?? secciones[0];
+const fecha = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('fecha') ?? '') ? sp.get('fecha')! : hoy();
+if (sec) Astro.cookies.set('rd_bit', String(sec.id), { path: '/', sameSite: 'lax', maxAge: 400 * 86400 });
+const dia = sec ? (await bitacoraRango(user.id, sec.id, fecha, fecha))[0] : undefined;
+const ests = sec ? (await estudiantesDe(sec.id)).map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}` })) : [];
+// Historial: días con algo registrado en los últimos 60 días
+const desde60 = new Date(new Date(fecha + 'T12:00:00').getTime() - 60 * 86400000).toISOString().slice(0, 10);
+const historial = sec ? (await bitacoraRango(user.id, sec.id, desde60, hoy())).filter((d) => d.fecha !== fecha) : [];
+const fechaTexto = (f: string) => { const t = new Date(f + 'T12:00:00').toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); };
+const MEDIO: Record<string, string> = { whatsapp: 'WhatsApp', impreso: 'Impreso', ambos: 'WhatsApp e impreso' };
+const TIPO: Record<string, string> = { ausencia: 'Ausencia', tardia: 'Tardía', no_entrego: 'No entregó', alerta: 'Alerta de ausentismo', eximido: 'Eximido', libre: 'Mensaje general', hogar: 'Comunicado al hogar' };
+const extracto = (t: string, n = 140) => (t.length > n ? t.slice(0, n).trimEnd() + '…' : t);
+const inicioMes = fecha.slice(0, 8) + '01';
+---
+<Base titulo="Bitácora">
+  <h1>Bitácora</h1>
+  <p class="sub">Minuta de cada clase y anotaciones sobre estudiantes. Se guarda sola; los comunicados enviados quedan registrados aquí.</p>
+  {!sec ? <div class="msg aviso">Primero cree una sección.</div> : (
+    <>
+      <form method="get" class="tarjeta fila">
+        <label>Sección<select name="seccion" onchange="this.form.submit()">{secciones.map((s) => <option value={s.id} selected={s.id === sec.id}>{etiquetaSeccion(s)}{s.asignatura ? ` · ${s.asignatura}` : ''}</option>)}</select></label>
+        <label>Día<input type="date" name="fecha" value={fecha} max={hoy()} onchange="this.form.submit()" /></label>
+        {fecha !== hoy() && <a class="btn sec" href={`?seccion=${sec.id}`}>Ir a hoy</a>}
+      </form>
+
+      <h2>{fechaTexto(fecha)}</h2>
+      <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="minuta" titulo="Minuta de la clase" anotacion={dia?.minuta ?? null} estudiantes={ests} filas={6} />
+
+      <h3 class="sub-t">Anotaciones sobre estudiantes</h3>
+      <div class="notas">
+        {(dia?.notas ?? []).map((n) => (
+          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" anotacion={n} estudiantes={ests} filas={2} borrable titulo={n.estudiantes.map((e) => e.nombre).join(', ') || 'Sin estudiante'} />
+        ))}
+        <div id="nueva-nota">
+          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} filas={2} titulo="Nueva anotación" placeholder="Anotación sobre uno o varios estudiantes. Elíjalos con «+ Estudiante» o escriba @." />
+        </div>
+        <p id="otra" hidden><a class="btn sec" href={`?seccion=${sec.id}&fecha=${fecha}`}>Agregar otra anotación</a></p>
+      </div>
+
+      <h3 class="sub-t">Comunicados del día</h3>
+      {(dia?.comunicados ?? []).length === 0 ? <p class="muted">No se enviaron comunicados este día.</p> : (
+        <ul class="comunicados">
+          {dia!.comunicados.map((c) => (
+            <li><span class={`chip ${c.medio === 'whatsapp' ? 'ok' : 'aviso'}`}>{MEDIO[c.medio] ?? c.medio}</span>
+              <b>{c.estudiante ? <a href={`/estudiantes/${c.estudiante_id}`}>{c.estudiante}</a> : 'Grupo'}</b>
+              <span class="muted">{TIPO[c.tipo] ?? c.tipo} · {horaCorta(c.creado)}</span>
+              <div class="msg-txt">{extracto(c.mensaje, 220)}</div></li>
+          ))}
+        </ul>
+      )}
+
+      <div class="tarjeta imprimir">
+        <h3 style="margin-top:0">Imprimir resumen</h3>
+        <form method="get" action="/bitacora/imprimir" class="fila">
+          <input type="hidden" name="seccion" value={sec.id} />
+          <label>Desde<input type="date" name="desde" value={inicioMes} /></label>
+          <label>Hasta<input type="date" name="hasta" value={fecha} /></label>
+          <button>Ver resumen</button>
+        </form>
+      </div>
+
+      <h3 class="sub-t">Días anteriores</h3>
+      {historial.length === 0 ? <p class="muted">Aún no hay días anteriores con registros (últimos 60 días).</p> : (
+        <ul class="historial">
+          {historial.map((d) => (
+            <li><a href={`?seccion=${sec.id}&fecha=${d.fecha}`}><b>{fechaTexto(d.fecha)}</b></a>
+              <span class="muted">{[d.minuta?.texto ? 'minuta' : '', d.notas.length ? `${d.notas.length} ${d.notas.length === 1 ? 'anotación' : 'anotaciones'}` : '', d.comunicados.length ? `${d.comunicados.length} ${d.comunicados.length === 1 ? 'comunicado' : 'comunicados'}` : ''].filter(Boolean).join(' · ')}</span>
+              {d.minuta?.texto && <div class="msg-txt">{extracto(d.minuta.texto)}</div>}</li>
+          ))}
+        </ul>
+      )}
+    </>
+  )}
+  <script is:inline>
+    // Al guardarse la «Nueva anotación» queda creada: se ofrece agregar otra
+    document.getElementById('nueva-nota')?.addEventListener('minuta:creada', () => { document.getElementById('otra').hidden = false; });
+  </script>
+  <style>
+    .sub-t { font-size: 16px; color: var(--marino); margin: 26px 0 10px; }
+    .comunicados, .historial { list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .comunicados li, .historial li { padding: 10px 14px; border-top: 1px solid var(--linea); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+    .comunicados li:first-child, .historial li:first-child { border-top: 0; }
+    .msg-txt { flex-basis: 100%; color: var(--tinta); font-size: 14px; white-space: pre-wrap; }
+    .imprimir { margin-top: 24px; }
+  </style>
+</Base>

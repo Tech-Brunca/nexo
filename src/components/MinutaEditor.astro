@@ -1,0 +1,222 @@
+---
+// Editor de la bitácora: minuta del día de una sección o anotación sobre estudiantes.
+// Guarda solo (unos segundos después de escribir, al salir del campo y al cerrar la página), con copia en el
+// navegador si no hay conexión. @ menciona a un estudiante de la sección; los chips ligan la anotación a su perfil.
+// 🎤 dicta con el reconocimiento de voz del navegador (si no lo soporta, el botón queda deshabilitado).
+interface Est { id: number; nombre: string }
+interface Props {
+  seccionId: number; fecha: string; tipo: 'minuta' | 'estudiante';
+  anotacion?: { id: number; texto: string; actualizado?: string; estudiantes: Est[] } | null;
+  estudiantes: Est[]; preseleccion?: Est[]; titulo?: string; placeholder?: string; filas?: number; borrable?: boolean;
+}
+const { seccionId, fecha, tipo, anotacion = null, estudiantes, preseleccion = [], titulo, placeholder, filas = 5, borrable = false } = Astro.props;
+// Nombres en tipo título para leerlos mejor en el texto («@Valeria Mora Solís»)
+const tituloNombre = (s: string) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+const lista = estudiantes.map((e) => ({ id: e.id, nombre: tituloNombre(e.nombre) }));
+const elegidos = (anotacion?.estudiantes ?? preseleccion).map((e) => ({ id: e.id, nombre: tituloNombre(e.nombre) }));
+import { horaCorta as hora } from '../lib/bitacora';
+---
+<div class="minuta" data-seccion={seccionId} data-fecha={fecha} data-tipo={tipo} data-id={anotacion?.id ?? ''}
+  data-estudiantes={JSON.stringify(lista)} data-elegidos={JSON.stringify(elegidos)}>
+  <div class="m-cab">
+    {titulo && <b class="m-titulo">{titulo}</b>}
+    <span class="m-estado muted" aria-live="polite">{anotacion?.actualizado ? `Guardado ${hora(anotacion.actualizado)}` : ''}</span>
+    {borrable && anotacion && <button type="button" class="mini peligro m-borrar" title="Eliminar anotación">Eliminar</button>}
+  </div>
+  <div class="m-caja">
+    <textarea class="m-texto" rows={filas} placeholder={placeholder ?? 'Lo que pasó hoy en la clase. Escriba @ para mencionar a un estudiante.'}>{anotacion?.texto ?? ''}</textarea>
+    <ul class="m-sugerencias" role="listbox" hidden></ul>
+  </div>
+  <div class="m-pie">
+    <button type="button" class="sec m-voz" aria-pressed="false"><span class="m-voz-ico" aria-hidden="true">🎤</span> <span class="m-voz-txt">Dictar</span></button>
+    <div class="m-chips" aria-label="Estudiantes relacionados"></div>
+    <select class="m-agregar" aria-label="Agregar estudiante">
+      <option value="">+ Estudiante</option>
+      {lista.map((e) => <option value={e.id}>{e.nombre}</option>)}
+    </select>
+  </div>
+  <div class="m-aviso-voz msg aviso" hidden>
+    El dictado usa el servicio de reconocimiento de voz del navegador (en Chrome, de Google): el audio se envía a sus servidores para convertirlo en texto.
+    <button type="button" class="mini m-voz-ok">Entendido, dictar</button>
+  </div>
+  <p class="m-interino muted" hidden></p>
+</div>
+
+<style is:global>
+  .minuta { background: #fff; border: 1px solid var(--linea); border-radius: 12px; padding: 12px 14px; }
+  .minuta + .minuta { margin-top: 12px; }
+  .minuta .m-cab { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; min-height: 22px; }
+  .minuta .m-titulo { color: var(--marino); }
+  .minuta .m-estado { margin-left: auto; font-size: 12.5px; }
+  .minuta .m-caja { position: relative; }
+  .minuta .m-texto { width: 100%; resize: vertical; font-size: 15px; line-height: 1.5; }
+  .minuta .m-sugerencias { position: absolute; z-index: 20; left: 8px; right: 8px; top: 100%; margin: 2px 0 0; padding: 4px; list-style: none; background: #fff;
+    border: 1px solid #c6d4e3; border-radius: 10px; box-shadow: 0 8px 22px rgba(10,61,145,.15); max-height: 220px; overflow: auto; }
+  .minuta .m-sugerencias li { padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+  .minuta .m-sugerencias li[aria-selected="true"], .minuta .m-sugerencias li:hover { background: var(--hielo); color: var(--marino); }
+  .minuta .m-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  .minuta .m-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .minuta .chip-est { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 10px; border-radius: 99px; background: var(--hielo);
+    color: var(--marino); font-size: 13px; font-weight: 600; border: 1px solid #cdeaf3; }
+  .minuta .chip-est button { border: 0; background: none; color: var(--suave); padding: 0 4px; font-size: 15px; line-height: 1; cursor: pointer; }
+  .minuta .m-agregar { width: auto; font-size: 14px; padding: 6px 8px; color: var(--teal); }
+  .minuta .m-voz[aria-pressed="true"] { background: var(--rojo); border-color: var(--rojo); color: #fff; }
+  .minuta .m-voz:disabled { opacity: .55; cursor: not-allowed; }
+  .minuta .m-aviso-voz { margin: 8px 0 0; font-size: 13.5px; }
+  .minuta .m-interino { margin: 6px 0 0; font-style: italic; }
+</style>
+
+<script is:inline>
+  (() => {
+    if (window.__minutaLista) return; window.__minutaLista = true;
+    const norm = (t) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const horaAhora = () => new Date().toLocaleTimeString('es-CR', { hour: 'numeric', minute: '2-digit' });
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    const iniciar = (caja) => {
+      const ta = caja.querySelector('.m-texto'), estado = caja.querySelector('.m-estado'), sug = caja.querySelector('.m-sugerencias');
+      const chips = caja.querySelector('.m-chips'), agregar = caja.querySelector('.m-agregar');
+      const todos = JSON.parse(caja.dataset.estudiantes || '[]');
+      let elegidos = JSON.parse(caja.dataset.elegidos || '[]');
+      const clave = () => `nexo-bitacora:${caja.dataset.seccion}:${caja.dataset.fecha}:${caja.dataset.tipo}:${caja.dataset.id || 'nuevo'}`;
+      let ultimo = JSON.stringify([ta.value, elegidos.map((e) => e.id)]), espera = null, guardando = false, pendiente = false;
+
+      // ── Chips de estudiantes ──
+      const pintar = () => {
+        chips.innerHTML = '';
+        for (const e of elegidos) {
+          const c = document.createElement('span'); c.className = 'chip-est'; c.textContent = e.nombre;
+          const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', `Quitar a ${e.nombre}`);
+          x.onclick = () => { elegidos = elegidos.filter((y) => y.id !== e.id); pintar(); programar(400); };
+          c.append(x); chips.append(c);
+        }
+      };
+      const ligar = (e) => { if (!elegidos.some((y) => y.id === e.id)) { elegidos.push(e); pintar(); } };
+      agregar.onchange = () => { const e = todos.find((y) => y.id === Number(agregar.value)); agregar.value = ''; if (e) { ligar(e); programar(400); } };
+      pintar();
+
+      // ── Guardado automático ──
+      const datos = () => ({ id: Number(caja.dataset.id) || undefined, seccion_id: Number(caja.dataset.seccion), fecha: caja.dataset.fecha,
+        tipo: caja.dataset.tipo, texto: ta.value, estudiantes: elegidos.map((e) => e.id) });
+      const vacio = () => !ta.value.trim() && !elegidos.length && !caja.dataset.id;
+      const guardar = async () => {
+        clearTimeout(espera);
+        const firma = JSON.stringify([ta.value, elegidos.map((e) => e.id)]);
+        if (firma === ultimo || vacio()) return;
+        if (guardando) { pendiente = true; return; }
+        guardando = true; estado.textContent = 'Guardando…';
+        try {
+          const r = await fetch('/api/bitacora', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos()) });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || 'Error');
+          try { localStorage.removeItem(clave()); } catch {}
+          if (!caja.dataset.id) { caja.dataset.id = j.id; caja.dispatchEvent(new CustomEvent('minuta:creada', { bubbles: true, detail: j })); }
+          ultimo = firma; estado.textContent = `Guardado ${horaAhora()}`;
+        } catch {
+          try { localStorage.setItem(clave(), JSON.stringify({ texto: ta.value, elegidos, cuando: Date.now() })); } catch {}
+          estado.textContent = 'Sin conexión: guardado en este equipo; se subirá al volver';
+        } finally {
+          guardando = false;
+          if (pendiente) { pendiente = false; guardar(); }
+        }
+      };
+      const programar = (ms = 1500) => { clearTimeout(espera); espera = setTimeout(guardar, ms); };
+      ta.addEventListener('input', () => { programar(); buscarMencion(); });
+      ta.addEventListener('blur', () => setTimeout(() => { sug.hidden = true; guardar(); }, 150));
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') guardar(); });
+      window.addEventListener('pagehide', () => {
+        const firma = JSON.stringify([ta.value, elegidos.map((e) => e.id)]);
+        if (firma !== ultimo && !vacio()) navigator.sendBeacon('/api/bitacora', new Blob([JSON.stringify(datos())], { type: 'application/json' }));
+      });
+      window.addEventListener('online', guardar);
+      // Copia del navegador que no alcanzó a subirse
+      try {
+        const copia = JSON.parse(localStorage.getItem(clave()) || 'null');
+        if (copia && copia.texto !== ta.value) { ta.value = copia.texto; elegidos = copia.elegidos || elegidos; pintar(); estado.textContent = 'Recuperado de este equipo…'; programar(300); }
+      } catch {}
+
+      // ── Menciones con @ ──
+      let opciones = [], sel = 0, desde = -1;
+      const buscarMencion = () => {
+        const antes = ta.value.slice(0, ta.selectionStart);
+        const m = antes.match(/(^|\s)@([^\s@]{0,25})$/);
+        if (!m) { sug.hidden = true; return; }
+        desde = antes.length - m[2].length - 1;
+        const qv = norm(m[2]);
+        opciones = todos.filter((e) => norm(e.nombre).split(' ').some((p) => p.startsWith(qv)) || norm(e.nombre).includes(qv)).slice(0, 8);
+        if (!opciones.length) { sug.hidden = true; return; }
+        sel = 0;
+        sug.innerHTML = opciones.map((e, i) => `<li role="option" data-i="${i}" aria-selected="${i === 0}">${e.nombre.replace(/[<>&]/g, '')}</li>`).join('');
+        sug.hidden = false;
+      };
+      const elegir = (i) => {
+        const e = opciones[i]; if (!e) return;
+        const fin = ta.selectionStart, texto = '@' + e.nombre + ' ';
+        ta.value = ta.value.slice(0, desde) + texto + ta.value.slice(fin);
+        const pos = desde + texto.length; ta.setSelectionRange(pos, pos); ta.focus();
+        sug.hidden = true; ligar(e); programar(600);
+      };
+      sug.addEventListener('mousedown', (ev) => { const li = ev.target.closest('li'); if (li) { ev.preventDefault(); elegir(Number(li.dataset.i)); } });
+      ta.addEventListener('keydown', (ev) => {
+        if (sug.hidden) return;
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          ev.preventDefault(); sel = (sel + (ev.key === 'ArrowDown' ? 1 : opciones.length - 1)) % opciones.length;
+          sug.querySelectorAll('li').forEach((li, i) => li.setAttribute('aria-selected', String(i === sel)));
+        } else if (ev.key === 'Enter' || ev.key === 'Tab') { ev.preventDefault(); elegir(sel); }
+        else if (ev.key === 'Escape') sug.hidden = true;
+      });
+
+      // ── Eliminar (solo anotaciones sobre estudiantes) ──
+      const borrar = caja.querySelector('.m-borrar');
+      if (borrar) borrar.onclick = async () => {
+        if (!confirm('¿Eliminar esta anotación?')) return;
+        await fetch('/api/bitacora?id=' + caja.dataset.id, { method: 'DELETE' });
+        caja.remove();
+      };
+
+      // ── Dictado por voz ──
+      const voz = caja.querySelector('.m-voz'), aviso = caja.querySelector('.m-aviso-voz'), interino = caja.querySelector('.m-interino');
+      if (!Rec) {
+        voz.disabled = true;
+        voz.title = 'Su navegador no permite dictar. Use Chrome o Edge, o el micrófono del teclado del teléfono.';
+        voz.querySelector('.m-voz-txt').textContent = 'Dictar (no disponible en este navegador)';
+        return;
+      }
+      let rec = null, activo = false;
+      const insertar = (t) => {
+        const i = ta.selectionStart ?? ta.value.length, antes = ta.value.slice(0, i);
+        const sep = antes && !/\s$/.test(antes) ? ' ' : '';
+        const frase = (/[.!?]\s*$|^\s*$/.test(antes) ? t.charAt(0).toUpperCase() + t.slice(1) : t).trim();
+        ta.value = antes + sep + frase + ' ' + ta.value.slice(i);
+        const pos = (antes + sep + frase + ' ').length; ta.setSelectionRange(pos, pos);
+        programar();
+      };
+      const parar = () => { activo = false; voz.setAttribute('aria-pressed', 'false'); voz.querySelector('.m-voz-txt').textContent = 'Dictar'; interino.hidden = true; try { rec && rec.stop(); } catch {} };
+      const empezar = () => {
+        rec = new Rec(); rec.lang = 'es-CR'; rec.continuous = true; rec.interimResults = true;
+        rec.onresult = (ev) => {
+          let parcial = '';
+          for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            if (ev.results[i].isFinal) insertar(ev.results[i][0].transcript); else parcial += ev.results[i][0].transcript;
+          }
+          interino.textContent = parcial; interino.hidden = !parcial;
+        };
+        rec.onerror = (ev) => { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { estado.textContent = 'Permita el micrófono para dictar.'; parar(); } };
+        rec.onend = () => { if (activo) { try { rec.start(); } catch { parar(); } } };
+        activo = true; voz.setAttribute('aria-pressed', 'true'); voz.querySelector('.m-voz-txt').textContent = 'Detener dictado';
+        ta.focus(); rec.start();
+      };
+      voz.onclick = () => {
+        if (activo) return parar();
+        let visto = false; try { visto = localStorage.getItem('nexo-aviso-voz') === '1'; } catch {}
+        if (!visto) { aviso.hidden = false; return; }
+        empezar();
+      };
+      caja.querySelector('.m-voz-ok').onclick = () => { try { localStorage.setItem('nexo-aviso-voz', '1'); } catch {} aviso.hidden = true; empezar(); };
+
+    };
+    const todas = () => document.querySelectorAll('.minuta:not([data-lista])').forEach((c) => { c.dataset.lista = '1'; iniciar(c); });
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', todas); else todas();
+    window.__minutaIniciar = todas;
+  })();
+</script>

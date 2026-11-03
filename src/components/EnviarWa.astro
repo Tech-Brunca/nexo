@@ -2,11 +2,11 @@
 // Lista de destinatarios con botón «Abrir WhatsApp» por estudiante y un modo «enviar uno tras otro».
 // Al abrir cada enlace se registra en la bitácora de comunicados (POST /api/comunicado).
 export interface Destino { estudiante_id: number; nombre: string; encargado: string; telefono: string; mensaje: string; enlace: string | null; enviado?: string | null }
-interface Props { destinos: Destino[]; tipo: string; referencia: string; titulo?: string }
-const { destinos, tipo, referencia, titulo = 'Avisar por WhatsApp' } = Astro.props;
+interface Props { destinos: Destino[]; tipo: string; referencia: string; titulo?: string; seccion?: number | null }
+const { destinos, tipo, referencia, titulo = 'Avisar por WhatsApp', seccion = null } = Astro.props;
 const conTel = destinos.filter((d) => d.enlace).length;
 ---
-<div class="tarjeta wa-lista" data-tipo={tipo} data-ref={referencia}>
+<div class="tarjeta wa-lista" data-tipo={tipo} data-ref={referencia} data-seccion={seccion ?? ''}>
   <div class="fila" style="justify-content:space-between;align-items:center">
     <h2 style="margin:0">{titulo} <span class="muted">({destinos.length})</span></h2>
     {conTel > 1 && <button type="button" class="sec wa-sig">Enviar uno tras otro ▶</button>}
@@ -16,7 +16,7 @@ const conTel = destinos.filter((d) => d.enlace).length;
       <tr><th>Estudiante</th><th>Encargado(a)</th><th>Mensaje</th><th></th></tr>
       {destinos.map((d) => (
         <tr data-est={d.estudiante_id}>
-          <td><b>{d.nombre}</b></td>
+          <td><b><a href={`/estudiantes/${d.estudiante_id}`}>{d.nombre}</a></b></td>
           <td>{d.encargado || '—'}<br /><span class="muted">{d.telefono || 'sin teléfono'}</span></td>
           <td><textarea class="wa-msg" rows="3" style="width:100%;min-width:260px;font-size:13px">{d.mensaje}</textarea></td>
           <td style="white-space:nowrap">
@@ -33,7 +33,7 @@ const conTel = destinos.filter((d) => d.enlace).length;
 </div>
 <script is:inline>
   document.querySelectorAll('.wa-lista').forEach((caja) => {
-    const tipo = caja.dataset.tipo, ref = caja.dataset.ref;
+    const tipo = caja.dataset.tipo, ref = caja.dataset.ref, seccion = Number(caja.dataset.seccion) || null;
     const armar = (fila) => {
       const a = fila.querySelector('.wa-btn'); if (!a) return null;
       const n = new URL(a.href).pathname.slice(1);
@@ -43,7 +43,7 @@ const conTel = destinos.filter((d) => d.enlace).length;
     const registrar = (fila) => {
       const a = fila.querySelector('.wa-btn');
       fetch('/api/comunicado', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo, referencia: ref, estudiante_id: Number(fila.dataset.est), telefono: a.dataset.tel, mensaje: fila.querySelector('.wa-msg').value }) });
+        body: JSON.stringify({ tipo, referencia: ref, seccion_id: seccion, medio: 'whatsapp', estudiante_id: Number(fila.dataset.est), telefono: a.dataset.tel, mensaje: fila.querySelector('.wa-msg').value }) });
       fila.querySelector('.wa-estado').textContent = 'Abierto ahora';
       fila.dataset.hecho = '1'; fila.style.opacity = '.55';
     };

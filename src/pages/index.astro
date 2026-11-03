@@ -4,7 +4,9 @@
 import Base from '../layouts/Base.astro';
 import { q, one, getAjustes } from '../lib/db';
 import { hoy, etiquetaSeccion } from '../lib/util';
-import { periodosDe, periodoDeFecha } from '../lib/calc';
+import { periodosDe, periodoDeFecha, estudiantesDe } from '../lib/calc';
+import MinutaEditor from '../components/MinutaEditor.astro';
+import { bitacoraRango } from '../lib/bitacora';
 const { user, inst } = Astro.locals;
 const aj = await getAjustes(user.id);
 const fecha = hoy();
@@ -35,6 +37,10 @@ const alertas = await q<any>(
   [user.id, fecha, aj.alerta_dias, fecha, aj.alerta_ausencias]);
 const alertaDe = (id: number) => Number(alertas.find((a) => a.seccion_id === id)?.n ?? 0);
 const pendientesUsuarios = user.rol === 'admin' ? Number((await one<any>(`SELECT COUNT(*) AS n FROM general.usuarios WHERE estado='pendiente'`)).n) : 0;
+// Bitácora de hoy: la sección elegida la última vez (cookie), o la primera
+const bitSec = secciones.find((s) => s.id === Number(Astro.cookies.get('rd_bit')?.value ?? 0)) ?? secciones[0];
+const bitHoy = bitSec ? (await bitacoraRango(user.id, bitSec.id, fecha, fecha))[0] : undefined;
+const bitEsts = bitSec ? (await estudiantesDe(bitSec.id)).map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}` })) : [];
 const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
 ---
 <Base titulo="Inicio">
@@ -53,6 +59,21 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
       </div>
     ) : (
       <>
+        {bitSec && (
+          <section class="bitacora-hoy" aria-labelledby="bit-titulo">
+            <div class="bh-cab">
+              <h2 id="bit-titulo">Bitácora de hoy</h2>
+              <select aria-label="Sección de la bitácora" onchange="document.cookie = 'rd_bit=' + this.value + '; path=/; max-age=34560000; samesite=lax'; location.reload()">
+                {secciones.map((s) => <option value={s.id} selected={s.id === bitSec.id}>{etiquetaSeccion(s)}{s.asignatura ? ` · ${s.asignatura}` : ''}</option>)}
+              </select>
+              <a class="bh-ver" href={`/bitacora?seccion=${bitSec.id}`}>Abrir bitácora</a>
+            </div>
+            <MinutaEditor seccionId={bitSec.id} fecha={fecha} tipo="minuta" anotacion={bitHoy?.minuta ?? null} estudiantes={bitEsts} filas={4} />
+            {bitHoy && (bitHoy.notas.length > 0 || bitHoy.comunicados.length > 0) && (
+              <p class="muted bh-resumen">Hoy en {etiquetaSeccion(bitSec)}: {bitHoy.notas.length > 0 && `${bitHoy.notas.length} ${bitHoy.notas.length === 1 ? 'anotación sobre estudiantes' : 'anotaciones sobre estudiantes'}`}{bitHoy.notas.length > 0 && bitHoy.comunicados.length > 0 && ' · '}{bitHoy.comunicados.length > 0 && `${bitHoy.comunicados.length} ${bitHoy.comunicados.length === 1 ? 'comunicado' : 'comunicados'}`}. <a href={`/bitacora?seccion=${bitSec.id}`}>Ver el día completo</a></p>
+            )}
+          </section>
+        )}
         <p class="resumen">{totalSinLista === 0 ? 'Ya pasó lista hoy en todas sus secciones.' : totalSinLista === secciones.length ? `Hoy aún no ha pasado lista.` : `Falta pasar lista en ${totalSinLista} de ${secciones.length} secciones.`}</p>
         <ul class="secciones-hoy">
           {secciones.map((s) => {
@@ -86,6 +107,12 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
   </div>
   <style>
     .hoy-enc { margin-bottom: 6px; }
+    .bitacora-hoy { margin: 4px 0 22px; }
+    .bh-cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .bh-cab h2 { margin: 0; font-size: 18px; }
+    .bh-cab select { width: auto; font-weight: 600; }
+    .bh-ver { margin-left: auto; font-size: 14px; }
+    .bh-resumen { margin: 8px 2px 0; }
     .resumen { font-size: 16px; margin: 4px 0 14px; color: var(--tinta); }
     .secciones-hoy { list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
     .secciones-hoy li { display: grid; grid-template-columns: minmax(170px, 1.1fr) 2fr auto; gap: 8px 20px; align-items: center; padding: 14px 18px; border-top: 1px solid var(--linea); border-left: 4px solid var(--cian); }

@@ -158,7 +158,7 @@ const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
       <a class="btn sec" href={`/informes/indicadores?evaluacion=${id}`} style={porInd ? '' : 'display:none'}>Informe de indicadores</a></p>
   </form>
 
-  {noEntregaron.length > 0 && <div class="no-print"><EnviarWa destinos={destinos} tipo="no_entrego" referencia={`evaluacion:${id}`} titulo="Avisar a quienes no entregaron" /></div>}
+  {noEntregaron.length > 0 && <div class="no-print"><EnviarWa destinos={destinos} tipo="no_entrego" referencia={`evaluacion:${id}`} titulo="Avisar a quienes no entregaron" seccion={ev.seccion_id} /></div>}
 
   <style>
     .barra-masiva { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: sticky; top: 0; z-index: 2; }

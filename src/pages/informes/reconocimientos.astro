@@ -85,7 +85,7 @@ const conHoja = (n: number) => `?${new URLSearchParams([...[...p].filter(([k]) =
         ))}
       </div>
       <div class="no-print" style="margin-top:18px">
-        <EnviarWa destinos={destinos} tipo="eximido" referencia={`eximidos:${sec!.id}:${fecha}`} titulo="Avisar a los encargados por WhatsApp" />
+        <EnviarWa destinos={destinos} tipo="eximido" referencia={`eximidos:${sec!.id}:${fecha}`} titulo="Avisar a los encargados por WhatsApp" seccion={sec!.id} />
         <p class="muted">WhatsApp se abre con el mensaje listo; para enviar el reconocimiento, adjunte el PDF guardado. El texto se edita en <a href="/plantillas">Mensajes WhatsApp</a>.</p>
       </div>
     </>

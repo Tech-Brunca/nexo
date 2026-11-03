@@ -90,7 +90,7 @@ const filtros = `q=${encodeURIComponent(buscar)}${seccion ? `&seccion=${encodeUR
         </form>
       </td></tr>
     ) : (
-      <tr class="fila-est" data-b={`${e.cedula} ${e.apellidos} ${e.nombre} ${e.nombre} ${e.apellidos} ${e.encargado ?? ''} ${e.telefono ?? ''}`}><td>{e.cedula}</td><td class="nom">{e.apellidos} {e.nombre}</td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
+      <tr class="fila-est" data-b={`${e.cedula} ${e.apellidos} ${e.nombre} ${e.nombre} ${e.apellidos} ${e.encargado ?? ''} ${e.telefono ?? ''}`}><td>{e.cedula}</td><td class="nom"><a href={`/estudiantes/${e.id}`}>{e.apellidos} {e.nombre}</a></td><td>{e.secciones ?? '—'}</td><td>{e.encargado}</td><td>{e.telefono}</td>
         <td>{e.activo ? <span class="chip ok">Activo</span> : <span class="chip mal">Inactivo</span>}</td>
         <td><a class="editar" href={`?${filtros}&editar=${e.id}`}>Editar</a></td></tr>
     ))}
