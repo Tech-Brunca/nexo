@@ -3,6 +3,7 @@
 // (registrados solos) e historial. Solo la ve el docente que la escribe.
 import Base from '../../layouts/Base.astro';
 import MinutaEditor from '../../components/MinutaEditor.astro';
+import BuscarEstudiante from '../../components/BuscarEstudiante.astro';
 import { q } from '../../lib/db';
 import { estudiantesDe } from '../../lib/calc';
 import { hoy, etiquetaSeccion } from '../../lib/util';
@@ -24,6 +25,7 @@ const fechaTexto = (f: string) => { const t = new Date(f + 'T12:00:00').toLocale
 const MEDIO: Record<string, string> = { whatsapp: 'WhatsApp', impreso: 'Impreso', ambos: 'WhatsApp e impreso' };
 const TIPO: Record<string, string> = { ausencia: 'Ausencia', tardia: 'Tardía', no_entrego: 'No entregó', alerta: 'Alerta de ausentismo', eximido: 'Eximido', libre: 'Mensaje general', hogar: 'Comunicado al hogar' };
 const extracto = (t: string, n = 140) => (t.length > n ? t.slice(0, n).trimEnd() + '…' : t);
+const titulo = (t: string) => t.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, x, y) => x + y.toUpperCase());
 const inicioMes = fecha.slice(0, 8) + '01';
 ---
 <Base titulo="Bitácora">
@@ -42,20 +44,26 @@ const inicioMes = fecha.slice(0, 8) + '01';
 
       <h3 class="sub-t">Anotaciones sobre estudiantes</h3>
       <div class="notas">
+        {(dia?.notas ?? []).length === 0 && <p class="muted">Sin anotaciones este día.</p>}
         {(dia?.notas ?? []).map((n) => (
-          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" anotacion={n} estudiantes={ests} filas={2} borrable titulo={n.estudiantes.map((e) => e.nombre).join(', ') || 'Sin estudiante'} />
+          <details class="nota" data-contenedor>
+            <summary>
+              <b>{n.estudiantes.map((e) => titulo(e.nombre)).join(', ') || 'Sin estudiante'}</b>
+              <span class="n-extracto muted">{extracto(n.texto, 90)}</span>
+              <span class="n-hora muted">{horaCorta(n.actualizado)}</span>
+            </summary>
+            <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" anotacion={n} estudiantes={ests} filas={3} borrable />
+          </details>
         ))}
-        <div id="nueva-nota">
-          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} filas={2} titulo="Nueva anotación" placeholder="Anotación sobre uno o varios estudiantes. Elíjalos con «+ Estudiante» o escriba @." />
-        </div>
+        <details class="nota nueva" id="nueva-nota">
+          <summary class="btn sec">+ Nueva anotación</summary>
+          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} filas={3} placeholder="Anotación sobre uno o varios estudiantes. Elíjalos con «+ Estudiante» o escriba @." />
+        </details>
         <p id="otra" hidden><a class="btn sec" href={`?seccion=${sec.id}&fecha=${fecha}`}>Agregar otra anotación</a></p>
       </div>
 
       <h3 class="sub-t">Comunicados del día</h3>
-      <form class="fila com-uno" onsubmit={`event.preventDefault(); if (this.est.value) location.href = '/estudiantes/' + this.est.value + '?seccion=${sec.id}#hogar';`}>
-        <label>Comunicado a un estudiante<select name="est" onchange="this.form.requestSubmit()"><option value="">Elija…</option>
-          {ests.map((e) => <option value={e.id}>{e.nombre}</option>)}</select></label>
-      </form>
+      <div class="com-uno"><BuscarEstudiante etiqueta="Comunicado a un estudiante" placeholder="Escriba el nombre del estudiante" estudiantes={ests.map((e) => ({ id: e.id, nombre: e.nombre, sid: sec.id, seccion: etiquetaSeccion(sec) }))} /></div>
       {(dia?.comunicados ?? []).length === 0 ? <p class="muted">No se enviaron comunicados este día.</p> : (
         <ul class="comunicados">
           {dia!.comunicados.map((c) => (
@@ -92,6 +100,8 @@ const inicioMes = fecha.slice(0, 8) + '01';
   <script is:inline>
     // Al guardarse la «Nueva anotación» queda creada: se ofrece agregar otra
     document.getElementById('nueva-nota')?.addEventListener('minuta:creada', () => { document.getElementById('otra').hidden = false; });
+    // Al abrir una anotación, el cursor queda al final del texto
+    document.querySelectorAll('details.nota').forEach((d) => d.addEventListener('toggle', () => { if (d.open) { const t = d.querySelector('.m-texto'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }));
   </script>
   <style>
     .sub-t { font-size: 16px; color: var(--marino); margin: 26px 0 10px; }
@@ -101,6 +111,19 @@ const inicioMes = fecha.slice(0, 8) + '01';
     .msg-txt { flex-basis: 100%; color: var(--tinta); font-size: 14px; white-space: pre-wrap; }
     .imprimir { margin-top: 24px; }
     .com-uno { margin-bottom: 10px; }
-    .com-uno select { width: auto; }
+    .notas { display: flex; flex-direction: column; gap: 8px; }
+    details.nota:not(.nueva) { background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    details.nota:not(.nueva) > summary { display: flex; gap: 12px; align-items: baseline; padding: 11px 16px; cursor: pointer; list-style: none; }
+    details.nota > summary::-webkit-details-marker { display: none; }
+    details.nota:not(.nueva) > summary::before { content: '▸'; color: var(--teal); flex: none; }
+    details.nota[open]:not(.nueva) > summary::before { content: '▾'; }
+    details.nota:not(.nueva) > summary b { flex: none; color: var(--marino); }
+    .n-extracto { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    details.nota[open] .n-extracto { visibility: hidden; }
+    .n-hora { flex: none; font-size: 13px; }
+    details.nota:not(.nueva) > :global(.minuta) { border: 0; margin: 0; padding: 0 16px 14px; }
+    details.nota.nueva > summary { list-style: none; display: inline-block; cursor: pointer; }
+    details.nota.nueva[open] > summary { margin-bottom: 8px; }
+    @media (max-width: 700px) { details.nota:not(.nueva) > summary { flex-wrap: wrap; } .n-extracto { flex-basis: 100%; order: 3; } }
   </style>
 </Base>

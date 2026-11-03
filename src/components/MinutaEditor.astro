@@ -46,6 +46,7 @@ import { horaCorta as hora } from '../lib/bitacora';
   .minuta { background: #fff; border: 1px solid var(--linea); border-radius: 12px; padding: 12px 14px; }
   .minuta + .minuta { margin-top: 12px; }
   .minuta .m-cab { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; min-height: 22px; }
+  .minuta .m-cab:not(:has(.m-titulo, .m-borrar)) { min-height: 0; margin-bottom: 2px; justify-content: flex-end; font-size: 13px; }
   .minuta .m-titulo { color: var(--marino); }
   .minuta .m-estado { margin-left: auto; font-size: 12.5px; }
   .minuta .m-caja { position: relative; }
@@ -172,7 +173,7 @@ import { horaCorta as hora } from '../lib/bitacora';
       if (borrar) borrar.onclick = async () => {
         if (!confirm('¿Eliminar esta anotación?')) return;
         await fetch('/api/bitacora?id=' + caja.dataset.id, { method: 'DELETE' });
-        caja.remove();
+        (caja.closest('[data-contenedor]') ?? caja).remove();
       };
 
       // ── Dictado por voz ──

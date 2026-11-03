@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import Selector from '../components/Selector.astro';
 import EnviarWa from '../components/EnviarWa.astro';
+import BuscarEstudiante from '../components/BuscarEstudiante.astro';
 import { q } from '../lib/db';
 import { estudiantesDe, seccion } from '../lib/calc';
 import { str, csv, etiquetaSeccion } from '../lib/util';
@@ -32,24 +33,17 @@ if (Astro.url.searchParams.get('csv')) {
 }
 const sinTel = destinos.filter((d) => !d.enlace).length;
 // Para «Comunicado a un solo estudiante»: todos sus estudiantes activos, agrupados por sección
-const todos = await q<any>(`SELECT e.id, e.apellidos, e.nombre, s.id AS sid, s.nivel, s.nombre AS snombre, s.subgrupo FROM {S}.matriculas m
+const todos = await q<any>(`SELECT e.id, e.apellidos, e.nombre, e.cedula, s.id AS sid, s.nivel, s.nombre AS snombre, s.subgrupo FROM {S}.matriculas m
   JOIN {S}.estudiantes e ON e.id=m.estudiante_id JOIN {S}.secciones s ON s.id=m.seccion_id
   WHERE s.usuario_id=? AND e.activo=1 ORDER BY length(s.nivel), s.nivel, s.nombre, s.subgrupo NULLS FIRST, e.apellidos, e.nombre`, [user.id]);
-const grupos = new Map<number, { etiqueta: string; ests: any[] }>();
-for (const r of todos) (grupos.get(r.sid) ?? grupos.set(r.sid, { etiqueta: etiquetaSeccion({ nivel: r.nivel, nombre: r.snombre, subgrupo: r.subgrupo }), ests: [] }).get(r.sid)!).ests.push(r);
 ---
 <Base titulo="Comunicados">
   <h1>Comunicados</h1>
-  <form class="tarjeta un-est" id="un-estudiante" onsubmit="event.preventDefault(); const v = this.est.value; if (v) location.href = '/estudiantes/' + v.split(':')[0] + '?seccion=' + v.split(':')[1] + '#hogar';">
+  <section class="tarjeta" id="un-estudiante">
     <h2 style="margin-top:0">A un solo estudiante</h2>
-    <p class="muted">Abre su perfil con el «Comunicado al hogar»: plantilla, envío por WhatsApp o impreso para el cuaderno de comunicaciones. Queda en la bitácora.</p>
-    <div class="fila">
-      <label style="flex:1">Estudiante<select name="est" required onchange="this.form.requestSubmit()"><option value="">Elija un estudiante…</option>
-        {[...grupos.entries()].map(([sid, g]) => <optgroup label={g.etiqueta}>{g.ests.map((e) => <option value={`${e.id}:${sid}`}>{e.apellidos} {e.nombre}</option>)}</optgroup>)}
-      </select></label>
-      <button>Abrir</button>
-    </div>
-  </form>
+    <p class="muted">Escriba el nombre y elíjalo: se abre su perfil con el «Comunicado al hogar» (WhatsApp o impreso para el cuaderno de comunicaciones). Queda en la bitácora.</p>
+    <BuscarEstudiante estudiantes={todos.map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}`, cedula: e.cedula, sid: e.sid, seccion: etiquetaSeccion({ nivel: e.nivel, nombre: e.snombre, subgrupo: e.subgrupo }) }))} />
+  </section>
   <h2>A todo un grupo</h2>
   <p class="sub">Envíe un mensaje a los encargados de un grupo por WhatsApp. Los avisos de ausencia y de «no entregó» también aparecen en Asistencia y en cada evaluación.</p>
   <Selector seccionId={seccionId} />

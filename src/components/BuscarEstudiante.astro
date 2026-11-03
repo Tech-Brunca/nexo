@@ -1,0 +1,61 @@
+---
+// Buscador de estudiantes: filtra mientras se escribe (sin tildes ni mayúsculas, por nombre, apellidos o cédula)
+// y abre el perfil del elegido en «Comunicado al hogar». Enter abre el primero; flechas para moverse.
+interface E { id: number; nombre: string; seccion: string; sid: number; cedula?: string }
+interface Props { estudiantes: E[]; etiqueta?: string; placeholder?: string }
+const { estudiantes, etiqueta = 'Estudiante', placeholder = 'Escriba el nombre, apellido o cédula' } = Astro.props;
+const tituloNombre = (s: string) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+const lista = estudiantes.map((e) => ({ ...e, nombre: tituloNombre(e.nombre) }));
+---
+<div class="buscar-est" data-lista={JSON.stringify(lista)}>
+  <label>{etiqueta}<input type="search" class="be-q" autocomplete="off" placeholder={placeholder} role="combobox" aria-expanded="false" aria-autocomplete="list" /></label>
+  <ul class="be-res" role="listbox" hidden></ul>
+  <p class="be-vacio muted" hidden>Ningún estudiante coincide.</p>
+</div>
+<style is:global>
+  .buscar-est { position: relative; max-width: 560px; }
+  .buscar-est label { display: flex; flex-direction: column; gap: 4px; }
+  .buscar-est .be-res { list-style: none; margin: 4px 0 0; padding: 4px; background: #fff; border: 1px solid var(--linea); border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(10, 61, 145, .12); position: absolute; left: 0; right: 0; z-index: 20; max-height: 320px; overflow: auto; }
+  .buscar-est .be-res a { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 7px; text-decoration: none; color: var(--tinta); }
+  .buscar-est .be-res a .muted { font-size: 13px; }
+  .buscar-est .be-res a.sel, .buscar-est .be-res a:hover { background: var(--hielo); }
+  .buscar-est .be-vacio { margin: 6px 0 0; }
+</style>
+<script is:inline>
+  (() => {
+    if (window.__buscarEst) return; window.__buscarEst = true;
+    const norm = (t) => (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    document.querySelectorAll('.buscar-est').forEach((caja) => {
+      const datos = JSON.parse(caja.dataset.lista).map((e) => ({ ...e, b: norm(`${e.nombre} ${e.cedula || ''} ${e.seccion}`) }));
+      const q = caja.querySelector('.be-q'), res = caja.querySelector('.be-res'), vacio = caja.querySelector('.be-vacio');
+      let sel = 0, vistos = [];
+      const url = (e) => `/estudiantes/${e.id}?seccion=${e.sid}#hogar`;
+      const pintar = () => {
+        const partes = norm(q.value).split(/\s+/).filter(Boolean);
+        vistos = partes.length ? datos.filter((e) => partes.every((p) => e.b.includes(p))).slice(0, 12) : [];
+        sel = 0;
+        res.innerHTML = '';
+        vistos.forEach((e, i) => {
+          const li = document.createElement('li'), a = document.createElement('a');
+          a.href = url(e); a.role = 'option'; if (i === 0) a.className = 'sel';
+          const n = document.createElement('span'); n.textContent = e.nombre;
+          const s = document.createElement('span'); s.className = 'muted'; s.textContent = e.seccion;
+          a.append(n, s); li.append(a); res.append(li);
+        });
+        res.hidden = !vistos.length; vacio.hidden = !(partes.length && !vistos.length);
+        q.setAttribute('aria-expanded', String(!res.hidden));
+      };
+      const marcar = () => res.querySelectorAll('a').forEach((a, i) => { a.classList.toggle('sel', i === sel); if (i === sel) a.scrollIntoView({ block: 'nearest' }); });
+      q.addEventListener('input', pintar);
+      q.addEventListener('focus', pintar);
+      q.addEventListener('keydown', (ev) => {
+        if (ev.key === 'ArrowDown' && vistos.length) { sel = (sel + 1) % vistos.length; marcar(); ev.preventDefault(); }
+        else if (ev.key === 'ArrowUp' && vistos.length) { sel = (sel - 1 + vistos.length) % vistos.length; marcar(); ev.preventDefault(); }
+        else if (ev.key === 'Enter') { ev.preventDefault(); if (vistos[sel]) location.href = url(vistos[sel]); }
+        else if (ev.key === 'Escape') { res.hidden = true; }
+      });
+      document.addEventListener('click', (ev) => { if (!caja.contains(ev.target)) res.hidden = true; });
+    });
+  })();
+</script>
