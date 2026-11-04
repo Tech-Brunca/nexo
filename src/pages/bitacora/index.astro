@@ -56,7 +56,7 @@ const inicioMes = fecha.slice(0, 8) + '01';
           </details>
         ))}
         <details class="nota nueva" id="nueva-nota">
-          <summary class="btn sec">+ Nueva anotación</summary>
+          <summary class="btn">+ Nueva anotación</summary>
           <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} filas={3} placeholder="Anotación sobre uno o varios estudiantes. Elíjalos con «+ Estudiante» o escriba @." />
         </details>
         <p id="otra" hidden><a class="btn sec" href={`?seccion=${sec.id}&fecha=${fecha}`}>Agregar otra anotación</a></p>

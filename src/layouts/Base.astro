@@ -113,8 +113,9 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     input, select, textarea { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid #c6d4e3; border-radius: 8px; background: #fff; color: var(--tinta); }
     input:focus, select:focus, textarea:focus { outline: none; border-color: var(--cian); box-shadow: 0 0 0 3px rgba(18,207,243,.22); }
     textarea { min-height: 70px; }
-    button, .btn { font: inherit; font-size: 14px; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--aqua); background: var(--aqua); color: var(--marino); cursor: pointer; text-decoration: none; display: inline-block; transition: background .15s, border-color .15s; }
-    button:hover, .btn:hover { background: var(--cian); border-color: var(--cian); color: var(--marino); }
+    button, .btn { font: inherit; font-size: 14px; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--marino); background: var(--marino); color: #fff; cursor: pointer; text-decoration: none; display: inline-block; transition: background .15s, border-color .15s; }
+    button:hover, .btn:hover { background: var(--marino-osc); border-color: var(--marino-osc); color: #fff; }
+    button:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
     button.sec, .btn.sec { background: #fff; color: var(--marino); border-color: #c6d4e3; }
     button.sec:hover, .btn.sec:hover { background: var(--hielo); border-color: var(--cian); }
     button.peligro { background: #fff; color: var(--rojo); border-color: var(--rojo); }
