@@ -4,7 +4,7 @@ import Base from '../../layouts/Base.astro';
 import { q, one, exec, transaccion, preparar, esquemaActual } from '../../lib/db';
 import { str, num, hoy, etiquetaSeccion } from '../../lib/util';
 import { periodosDe } from '../../lib/calc';
-import { planPropio, temasDe, seccionesDePlan, avanceDe, estadoPlan, revisarAtrasos, adivinar, interpretar, CAMPOS, type Tabla } from '../../lib/plan';
+import { planPropio, temasDe, seccionesDePlan, avanceDe, estadoPlan, revisarAtrasos, adivinar, interpretar, cuadricula, tablaSugerida, CAMPOS, type Tabla } from '../../lib/plan';
 const { user } = Astro.locals;
 const U = user.id;
 const id = Number(Astro.params.id);
@@ -20,12 +20,14 @@ let msg = '', error = '';
 
 // Columnas elegidas (de la URL al previsualizar o del formulario al aplicar)
 const leerMapeo = (g: (k: string) => string | null, tablas: Tabla[]) => {
-  const t = Math.min(Math.max(0, Number(g('t') ?? NaN) || 0), tablas.length - 1);
+  const t = g('t') !== null ? Math.min(Math.max(0, Number(g('t')) || 0), tablas.length - 1) : tablaSugerida(tablas, plan!.asignatura);
   const tabla = tablas[t];
   const auto = adivinar(tabla.filas);
   const cab = g('cab') !== null ? Math.max(0, Number(g('cab'))) : auto.cab;
   const campos = tabla.filas[0].map((_, i) => (g(`c${i}`) !== null ? String(g(`c${i}`)) : auto.campos[i] ?? ''));
-  return { t, tabla, cab, campos };
+  // Formato de cuadrícula por semanas del MEP: se lee solo (salvo que pida elegir columnas a mano)
+  const grid = g('manual') === '1' ? null : cuadricula(tabla.filas, plan!.anio);
+  return { t, tabla, cab, campos, grid };
 };
 
 if (Astro.request.method === 'POST') {
@@ -41,8 +43,8 @@ if (Astro.request.method === 'POST') {
     }
     if (b?.borrador) {
       const m = leerMapeo((k) => (f.get(k) === null ? null : String(f.get(k))), b.borrador);
-      const temas = interpretar(m.tabla.filas, m.cab, m.campos, plan.anio, inicioCurso);
-      if (!m.campos.includes('tema') && !m.campos.includes('unidad')) error = 'Indique al menos qué columna tiene los temas o las unidades.';
+      const temas = m.grid ?? interpretar(m.tabla.filas, m.cab, m.campos, plan.anio, inicioCurso);
+      if (!m.grid && !m.campos.includes('tema') && !m.campos.includes('unidad')) error = 'Indique al menos qué columna tiene los temas o las unidades.';
       else if (!temas.length) error = 'Con esas columnas no quedó ningún tema. Revise la fila de encabezados.';
       else {
         await transaccion(async (c) => {
@@ -104,7 +106,7 @@ let mapeo: ReturnType<typeof leerMapeo> | null = null, tablas: Tabla[] = [], vis
 if (plan.hay_borrador) {
   tablas = (await one<any>('SELECT borrador FROM {S}.planes WHERE id=?', [id]))!.borrador;
   mapeo = leerMapeo((k) => sp.get(k), tablas);
-  vista = interpretar(mapeo.tabla.filas, mapeo.cab, mapeo.campos, plan.anio, inicioCurso);
+  vista = mapeo.grid ?? interpretar(mapeo.tabla.filas, mapeo.cab, mapeo.campos, plan.anio, inicioCurso);
 }
 
 // ── Plan cargado: Gantt y avance por sección ──
@@ -143,18 +145,23 @@ const cargado = sp.get('cargado');
 
   {mapeo ? (
     <section>
-      <p class="sub">Indique qué tiene cada columna de <b>{plan.archivo_nombre}</b>. Nexo intentó adivinarlo; revise la vista previa antes de aplicar.</p>
+      <p class="sub">{tablas.length > 1 ? 'Elija la hoja de esta subárea y revise' : 'Revise'} cómo Nexo leyó <b>{plan.archivo_nombre}</b> antes de aplicar.</p>
       <form method="get" class="tarjeta" id="f-mapeo">
+        {sp.get('manual') === '1' && <input type="hidden" name="manual" value="1" />}
         <div class="fila">
           {tablas.length > 1 && <label>{plan.archivo_nombre?.toLowerCase().endsWith('.docx') ? 'Tabla' : 'Hoja'}<select name="t" onchange="this.form.querySelectorAll('[name^=c]').forEach((s) => s.disabled = true); this.form.submit()">
             {tablas.map((t, i) => <option value={i} selected={i === mapeo!.t}>{t.nombre} ({t.filas.length} filas)</option>)}</select></label>}
-          <label>Fila de encabezados<select name="cab" onchange="this.form.submit()">
-            {mapeo.tabla.filas.slice(0, 15).map((_, i) => <option value={i} selected={i === mapeo!.cab}>Fila {i + 1}</option>)}</select></label>
+          {!mapeo.grid && <label>Fila de encabezados<select name="cab" onchange="this.form.submit()">
+            {mapeo.tabla.filas.slice(0, 15).map((_, i) => <option value={i} selected={i === mapeo!.cab}>Fila {i + 1}</option>)}</select></label>}
         </div>
+        {mapeo.grid ? (
+          <p class="msg ok">Se reconoció el formato del plan anual del MEP (cuadrícula por semanas): cada RA toma las semanas marcadas. <a href={`?t=${mapeo.t}&manual=1`}>Elegir las columnas a mano</a></p>
+        ) : (
         <div class="tabla mapa"><table>
           <tr>{mapeo.campos.map((c, i) => <th><select name={`c${i}`} onchange="this.form.submit()" class={c ? 'usado' : ''}>{CAMPOS.map(([v, t]) => <option value={v} selected={v === c}>{t}</option>)}</select></th>)}</tr>
           {mapeo.tabla.filas.slice(mapeo.cab, mapeo.cab + 8).map((f, i) => <tr class={i === 0 ? 'cab' : ''}>{f.map((c) => <td>{c.length > 90 ? c.slice(0, 90) + '…' : c}</td>)}</tr>)}
         </table></div>
+        )}
       </form>
       <h2>Vista previa: {vista.length} temas{vista.some((t) => !t.inicio) && <span class="aviso-txt"> · {vista.filter((t) => !t.inicio).length} sin fechas</span>}</h2>
       <div class="tabla"><table>
@@ -164,6 +171,7 @@ const cargado = sp.get('cargado');
       </table></div>
       <form method="post" class="fila acciones-mapa">
         <input type="hidden" name="t" value={mapeo.t} /><input type="hidden" name="cab" value={mapeo.cab} />
+        {!mapeo.grid && sp.get('manual') === '1' && <input type="hidden" name="manual" value="1" />}
         {mapeo.campos.map((c, i) => <input type="hidden" name={`c${i}`} value={c} />)}
         <button name="accion" value="aplicar">Aplicar y guardar el plan</button>
         <button class="sec" name="accion" value="cancelar" formnovalidate>Cancelar</button>
@@ -177,7 +185,7 @@ const cargado = sp.get('cargado');
           {secciones.map((s) => <option value={s.id} selected={s.id === sec?.id}>{etiquetaSeccion(s)}</option>)}</select></label></form>}
         {temas.length > 0 && sec && (
           <p class="resumen">
-            {est.debe.length ? <>Debería estar en <b>{est.debe.map((t) => t.tema).join(' · ')}</b>.</> : est.proximo ? <>Próximo tema: <b>{est.proximo.tema}</b> (desde el {corta(est.proximo.inicio)}).</> : null}
+            {est.debe.length ? <>Debería estar en <b>{est.debe.map((t) => t.tema.replace(/\.+$/, '')).join(' · ')}</b>.</> : est.proximo ? <>Próximo tema: <b>{est.proximo.tema}</b> (desde el {corta(est.proximo.inicio)}).</> : null}
             {' '}{est.atrasados.length ? <span class="mal-txt">{etiquetaSeccion(sec)} tiene {est.atrasados.length} {est.atrasados.length === 1 ? 'tema atrasado' : 'temas atrasados'}.</span> : <span class="ok-txt">{etiquetaSeccion(sec)} va al día.</span>}
             {' '}<span class="muted">{est.vistos} de {est.total} temas vistos.</span>
           </p>
@@ -196,7 +204,7 @@ const cargado = sp.get('cargado');
                 return (
                   <div class={`g-fila e-${e}`}>
                     <label class="g-check" title={sec ? `Visto en ${etiquetaSeccion(sec)}` : ''}><input type="checkbox" data-tema={t.id} checked={avance.has(t.id)} disabled={!sec} aria-label={`Visto: ${t.tema}`} /></label>
-                    <span class="g-nombre" title={t.tema}>{t.tema}<small class="muted">{corta(t.inicio)} – {corta(t.fin)}{avance.has(t.id) && ` · visto ${corta(avance.get(t.id)!)}`}</small></span>
+                    <span class="g-nombre" title={t.tema}><span class="g-txt">{t.tema}</span><small class="muted">{corta(t.inicio)} – {corta(t.fin)}{avance.has(t.id) && ` · visto ${corta(avance.get(t.id)!)}`}</small></span>
                     <div class="g-pista">{t.inicio && t.fin && desdeG && <span class="g-barra" title={`${ETQ[e]} · ${corta(t.inicio)} a ${corta(t.fin)}`} style={`left:${pos(t.inicio)}%;width:${Math.max(0.8, pos(t.fin) - pos(t.inicio) + 100 / total)}%`}></span>}</div>
                   </div>
                 );
@@ -287,6 +295,7 @@ const cargado = sp.get('cargado');
     .g-unidad { font-family: var(--titulos); font-weight: 700; color: var(--marino); font-size: 14px; padding: 12px 0 4px 34px; }
     .g-nombre { font-size: 14px; line-height: 1.25; overflow: hidden; }
     .g-nombre small { display: block; font-size: 12px; }
+    .g-txt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .g-pista { position: relative; height: 22px; }
     .gantt[style*="--hoy"] .g-pista::after { content: ''; position: absolute; top: -6px; bottom: -6px; left: var(--hoy); border-left: 2px solid var(--rojo); opacity: .55; }
     .g-meses .g-pista { height: 20px; }

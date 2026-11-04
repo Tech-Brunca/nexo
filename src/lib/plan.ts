@@ -28,7 +28,7 @@ export async function tablasExcel(datos: ArrayBuffer): Promise<Tabla[]> {
   await wb.xlsx.load(datos);
   return wb.worksheets.map((ws) => {
     const filas: string[][] = [];
-    const ancho = Math.min(ws.columnCount, 30);
+    const ancho = Math.min(ws.columnCount, 80);
     ws.eachRow({ includeEmpty: false }, (row) => {
       const r: string[] = [];
       for (let i = 1; i <= ancho; i++) r.push(textoCelda(row.getCell(i).value).replace(/\s+/g, ' ').trim());
@@ -139,6 +139,66 @@ function fechasEn(t: string, anio: number): string[] {
     out.push(iso(new Date(Date.UTC(a, mes, d))));
   }
   return out;
+}
+
+/**
+ * Formato de cuadrícula del MEP (plantilla de Educación Técnica): una fila con los meses (celdas combinadas),
+ * debajo los números de semana de cada mes, y cada RA marcado con 1 (o 0.5) en las semanas que se trabaja.
+ * Devuelve null si la tabla no tiene ese formato.
+ */
+export function cuadricula(filas: string[][], anio: number) {
+  // Fila de meses: la que tiene más columnas con nombre de mes
+  let fm = -1, mejor = 0;
+  filas.slice(0, 25).forEach((f, i) => { const n = f.filter((c) => c && mesDe(c) >= 0 && c.length <= 12).length; if (n > mejor) { mejor = n; fm = i; } });
+  if (fm < 0 || mejor < 4 || !filas[fm + 1]) return null;
+  // Mes y número de semana de cada columna (el mes se arrastra si la celda combinada viene vacía)
+  const semanas = new Map<number, { mes: number; sem: number }>();
+  let mes = -1;
+  filas[fm].forEach((c, j) => {
+    const m = c && c.length <= 12 ? mesDe(c) : -1;
+    if (m >= 0) mes = m;
+    const sem = Number(filas[fm + 1][j]);
+    if (mes >= 0 && Number.isInteger(sem) && sem >= 1 && sem <= 5) semanas.set(j, { mes, sem });
+  });
+  if (semanas.size < 8) return null;
+  const primerLunes = (m: number) => { const d = new Date(Date.UTC(anio, m, 1)); d.setUTCDate(1 + ((8 - d.getUTCDay()) % 7)); return iso(d); };
+  const inicioSem = (x: { mes: number; sem: number }) => sumar(primerLunes(x.mes), (x.sem - 1) * 7);
+  const colsSem = [...semanas.keys()];
+  const primeraSem = Math.min(...colsSem);
+  // Columna de texto: la que más texto largo tiene antes de las semanas
+  const cuerpo = filas.slice(fm + 2);
+  let ct = 0, maxTxt = 0;
+  for (let j = 0; j < primeraSem; j++) { const n = cuerpo.filter((f) => (f[j] ?? '').length > 15).length; if (n > maxTxt) { maxTxt = n; ct = j; } }
+  const temas: { unidad: string; tema: string; inicio: string | null; fin: string | null; horas: number | null }[] = [];
+  let unidad = '';
+  for (const f of cuerpo) {
+    const texto = (f[ct] ?? '').trim();
+    if (!texto) continue;
+    if (/^total/i.test(sinTildes(texto))) break;
+    const marcadas = colsSem.filter((j) => Number((f[j] ?? '').replace(',', '.')) > 0).sort((a, b) => a - b);
+    if (/^unidad\b/i.test(sinTildes(texto)) && !marcadas.length) { unidad = texto.split('\n')[0].replace(/\s+\d+\s*horas?\b.*$/i, '').trim(); continue; }
+    if (!marcadas.length) continue;
+    const horasTxt = f.slice(Math.max(...colsSem) + 1).find((c) => /\d+\s*horas?/i.test(c)) ?? '';
+    const h = Number(horasTxt.match(/(\d+(?:[.,]\d+)?)\s*horas?/i)?.[1]?.replace(',', '.'));
+    temas.push({ unidad, tema: texto.replace(/\s*\n\s*/g, ' '), inicio: inicioSem(semanas.get(marcadas[0])!),
+      fin: sumar(inicioSem(semanas.get(marcadas[marcadas.length - 1])!), 4), horas: Number.isFinite(h) && h > 0 ? h : null });
+  }
+  return temas.length ? temas : null;
+}
+
+/** Hoja o tabla que más se parece al plan de esa subárea (por el nombre que aparece en el encabezado) */
+export function tablaSugerida(tablas: Tabla[], asignatura: string | null) {
+  const palabras = sinTildes(asignatura ?? '').split(/[^a-z]+/).filter((w) => w.length > 3);
+  let mejor = 0, puntos = -1;
+  tablas.forEach((t, i) => {
+    const enc = sinTildes(t.nombre + ' ' + t.filas.slice(0, 9).flat().join(' '));
+    // La fila «Subárea:» pesa más que el resto del encabezado; una hoja con cuadrícula de semanas suma
+    const sub = sinTildes(t.filas.slice(0, 12).find((f) => f.some((c) => /subarea/i.test(sinTildes(c))))?.join(' ') ?? '');
+    const p = palabras.filter((w) => sub.includes(w)).length * 20 + palabras.filter((w) => enc.includes(w)).length * 5
+      + (cuadricula(t.filas, 2026) ? 3 : 0) + (t.filas.length > 5 ? 1 : 0);
+    if (p > puntos) { puntos = p; mejor = i; }
+  });
+  return mejor;
 }
 
 /** Fila de la tabla + columnas elegidas → tema con fechas (o sin fechas si no se pudieron leer) */
