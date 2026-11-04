@@ -23,9 +23,30 @@ function textoCelda(v: any): string {
 }
 
 /** Todas las hojas de un .xlsx (las celdas combinadas repiten el valor; las fechas quedan AAAA-MM-DD) */
+/**
+ * Quita comentarios (notas) y dibujos de un .xlsx: algunos programas (LibreOffice, Google Sheets, Python) los guardan
+ * en rutas que ExcelJS no entiende y la lectura falla. Para el plan no hacen falta.
+ */
+async function sinComentarios(datos: ArrayBuffer) {
+  const zip = await JSZip.loadAsync(datos);
+  for (const n of Object.keys(zip.files)) if (/(^|\/)(comments[^/]*\.xml|[^/]*\.vml|threadedComments\/.*|persons\/.*)$/i.test(n) || /^xl\/(comments|drawings)\//i.test(n)) zip.remove(n);
+  for (const n of Object.keys(zip.files).filter((n) => /^xl\/worksheets\/_rels\/.*\.rels$/.test(n))) {
+    const xml = await zip.file(n)!.async('string');
+    zip.file(n, xml.replace(/<Relationship\b[^>]*(comments|vmlDrawing|drawing|threadedComment)[^>]*\/>/gi, ''));
+  }
+  for (const n of Object.keys(zip.files).filter((n) => /^xl\/worksheets\/[^/]+\.xml$/.test(n))) {
+    const xml = await zip.file(n)!.async('string');
+    zip.file(n, xml.replace(/<(legacyDrawing|drawing)\b[^>]*\/>/g, ''));
+  }
+  const ct = await zip.file('[Content_Types].xml')?.async('string');
+  if (ct) zip.file('[Content_Types].xml', ct.replace(/<Override\b[^>]*(comments|vml|drawing|threadedComment|person)[^>]*\/>/gi, ''));
+  return zip.generateAsync({ type: 'arraybuffer' });
+}
+
 export async function tablasExcel(datos: ArrayBuffer): Promise<Tabla[]> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(datos);
+  let wb = new ExcelJS.Workbook();
+  try { await wb.xlsx.load(datos); }
+  catch { wb = new ExcelJS.Workbook(); await wb.xlsx.load(await sinComentarios(datos)); }
   return wb.worksheets.map((ws) => {
     const filas: string[][] = [];
     const ancho = Math.min(ws.columnCount, 80);
