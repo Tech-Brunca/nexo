@@ -251,6 +251,18 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       <main><slot /></main>
     </div>
   )}
+  {inst && <script is:inline>
+    // Ctrl + H: nueva anotación en la bitácora (desde cualquier pantalla)
+    addEventListener('keydown', (ev) => {
+      if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.shiftKey || ev.key.toLowerCase() !== 'h') return;
+      ev.preventDefault();
+      const n = document.getElementById('nueva-nota');
+      // Si la «Nueva anotación» de esta página ya se guardó, se recarga para empezar otra
+      if (n && n.querySelector('.minuta')?.dataset.id) { const u = new URL(location.href); u.searchParams.set('nueva', '1'); location.href = u; }
+      else if (n) { n.open = true; const t = n.querySelector('.m-texto'); t?.focus(); n.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      else location.href = '/bitacora?nueva=1';
+    });
+  </script>}
   <script is:inline>
     // Grupos del menú: recordar cuáles dejó abiertos (el de la página actual siempre abierto)
     (() => {
