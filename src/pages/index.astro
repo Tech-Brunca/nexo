@@ -7,6 +7,7 @@ import { hoy, etiquetaSeccion } from '../lib/util';
 import { periodosDe, periodoDeFecha, estudiantesDe } from '../lib/calc';
 import MinutaEditor from '../components/MinutaEditor.astro';
 import { bitacoraRango } from '../lib/bitacora';
+import { revisarAtrasos, resumenPlanes } from '../lib/plan';
 const { user, inst } = Astro.locals;
 const aj = await getAjustes(user.id);
 const fecha = hoy();
@@ -41,6 +42,8 @@ const pendientesUsuarios = user.rol === 'admin' ? Number((await one<any>(`SELECT
 const bitSec = secciones.find((s) => s.id === Number(Astro.cookies.get('rd_bit')?.value ?? 0)) ?? secciones[0];
 const bitHoy = bitSec ? (await bitacoraRango(user.id, bitSec.id, fecha, fecha))[0] : undefined;
 const bitEsts = bitSec ? (await estudiantesDe(bitSec.id)).map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}` })) : [];
+await revisarAtrasos(user.id, fecha);
+const planes = await resumenPlanes(user.id, fecha);
 const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
 ---
 <Base titulo="Inicio">
@@ -90,6 +93,9 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
                     : <span class="muted">Sin lista de hoy</span>}
                   {pend.length > 0 && <a class="aviso-txt" href={pend.length === 1 ? `/evaluaciones/${pend[0].id}` : `/evaluaciones?seccion=${s.id}${per ? `&periodo=${per.id}` : ''}`}>
                     {pend.length === 1 ? `«${pend[0].nombre}» sin calificar (${pend[0].calificados}/${pend[0].n})` : `${pend.length} evaluaciones sin calificar`}</a>}
+                  {planes.get(s.id) && (() => { const p = planes.get(s.id)!; return p.atrasados
+                    ? <a class="mal-txt" href={`/plan/${p.plan}?seccion=${s.id}`}>Plan anual: {p.atrasados} {p.atrasados === 1 ? 'tema atrasado' : 'temas atrasados'}</a>
+                    : <a class="plan-txt" href={`/plan/${p.plan}?seccion=${s.id}`}>Plan al día{p.debe && ` · ahora: ${p.debe}`}</a>; })()}
                   {al > 0 && <a class="mal-txt" href="/alertas">{al === 1 ? 'Un estudiante en alerta de ausentismo' : `${al} estudiantes en alerta de ausentismo`}</a>}
                 </div>
                 <div class="acciones">
@@ -126,6 +132,8 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
     .ok-txt { color: var(--verde); }
     .aviso-txt { color: var(--ambar); }
     .mal-txt { color: var(--rojo); }
+    .plan-txt { color: var(--teal); text-decoration: none; }
+    .plan-txt:hover { text-decoration: underline; }
     .acciones { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
     .vacio { max-width: 560px; }
     .vacio h2 { margin-top: 0; }

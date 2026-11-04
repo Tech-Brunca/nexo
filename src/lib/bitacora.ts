@@ -2,7 +2,7 @@
 // vistas, los comunicados enviados (WhatsApp o impresos). Todo es solo del docente que lo escribe.
 import { q, one, exec, transaccion, preparar, esquemaActual } from './db';
 
-export type Anotacion = { id: number; seccion_id: number; fecha: string; tipo: 'minuta' | 'estudiante'; texto: string; creado: string; actualizado: string;
+export type Anotacion = { id: number; seccion_id: number; fecha: string; tipo: 'minuta' | 'estudiante' | 'plan'; texto: string; creado: string; actualizado: string;
   estudiantes: { id: number; nombre: string }[] };
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -13,11 +13,11 @@ export const seccionPropia = (uid: number, id: number) => one<any>('SELECT id, n
  * Crea o actualiza una anotación. La minuta es única por sección y día; una anotación existente conserva
  * su fecha (la del día en que se empezó). Solo se ligan estudiantes matriculados en esa sección.
  */
-export async function guardarAnotacion(uid: number, d: { id?: number; seccion_id: number; fecha: string; tipo: 'minuta' | 'estudiante'; texto: string; estudiantes: number[] }) {
+export async function guardarAnotacion(uid: number, d: { id?: number; seccion_id: number; fecha: string; tipo: 'minuta' | 'estudiante' | 'plan'; texto: string; estudiantes: number[] }) {
   const sec = await seccionPropia(uid, d.seccion_id);
   if (!sec) throw new Error('Sección no encontrada');
   if (!FECHA.test(d.fecha)) throw new Error('Fecha no válida');
-  if (!['minuta', 'estudiante'].includes(d.tipo)) throw new Error('Tipo no válido');
+  if (!['minuta', 'estudiante', 'plan'].includes(d.tipo) || (d.tipo === 'plan' && !d.id)) throw new Error('Tipo no válido');
   const texto = String(d.texto ?? '').slice(0, 20000);
   const validos = new Set((await q<any>('SELECT estudiante_id FROM {S}.matriculas WHERE seccion_id=?', [sec.id])).map((r) => r.estudiante_id));
   const ests = [...new Set(d.estudiantes.map(Number))].filter((e) => validos.has(e));
@@ -67,11 +67,16 @@ export async function bitacoraRango(uid: number, seccionId: number, desde: strin
   const filas = await conEstudiantes(await q<any>(`SELECT id, seccion_id, fecha, tipo, texto, to_char(creado AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD HH24:MI') AS creado, to_char(actualizado AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD HH24:MI') AS actualizado FROM {S}.bitacora
     WHERE usuario_id=? AND seccion_id=? AND fecha BETWEEN ?::date AND ?::date ORDER BY fecha DESC, tipo, creado`, [uid, seccionId, desde, hasta]));
   const com = await comunicadosDe(uid, seccionId, desde, hasta);
-  const dias = [...new Set([...filas.map((f) => f.fecha), ...com.map((c) => c.fecha)])].sort().reverse();
+  // Temas del plan anual marcados como vistos ese día
+  const temas = await q<any>(`SELECT a.fecha, t.id, t.unidad, t.tema FROM {S}.plan_avance a JOIN {S}.plan_temas t ON t.id=a.tema_id
+    WHERE a.seccion_id=? AND a.fecha BETWEEN ?::date AND ?::date ORDER BY t.orden, t.id`, [seccionId, desde, hasta]);
+  const dias = [...new Set([...filas.map((f) => f.fecha), ...com.map((c) => c.fecha), ...temas.map((t) => t.fecha)])].sort().reverse();
   return dias.map((fecha) => ({
     fecha,
     minuta: filas.find((f) => f.fecha === fecha && f.tipo === 'minuta') ?? null,
     notas: filas.filter((f) => f.fecha === fecha && f.tipo === 'estudiante'),
+    plan: filas.filter((f) => f.fecha === fecha && f.tipo === 'plan'),
+    temas: temas.filter((t) => t.fecha === fecha),
     comunicados: com.filter((c) => c.fecha === fecha),
   }));
 }

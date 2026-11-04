@@ -1,0 +1,313 @@
+---
+// Un plan anual: elegir columnas del archivo subido, Gantt con el avance de cada sección, marcar temas vistos y editar.
+import Base from '../../layouts/Base.astro';
+import { q, one, exec, transaccion, preparar, esquemaActual } from '../../lib/db';
+import { str, num, hoy, etiquetaSeccion } from '../../lib/util';
+import { periodosDe } from '../../lib/calc';
+import { planPropio, temasDe, seccionesDePlan, avanceDe, estadoPlan, revisarAtrasos, adivinar, interpretar, CAMPOS, type Tabla } from '../../lib/plan';
+const { user } = Astro.locals;
+const U = user.id;
+const id = Number(Astro.params.id);
+let plan = await planPropio(U, id);
+if (!plan) return Astro.redirect('/plan');
+const sp = Astro.url.searchParams;
+const hoyF = hoy();
+const periodos = await periodosDe(U);
+const inicioCurso = periodos.map((p) => p.fecha_ini).filter(Boolean).sort()[0] ?? `${plan.anio}-02-01`;
+const F = /^\d{4}-\d{2}-\d{2}$/;
+const fechaOk = (v: string) => (F.test(v) ? v : null);
+let msg = '', error = '';
+
+// Columnas elegidas (de la URL al previsualizar o del formulario al aplicar)
+const leerMapeo = (g: (k: string) => string | null, tablas: Tabla[]) => {
+  const t = Math.min(Math.max(0, Number(g('t') ?? NaN) || 0), tablas.length - 1);
+  const tabla = tablas[t];
+  const auto = adivinar(tabla.filas);
+  const cab = g('cab') !== null ? Math.max(0, Number(g('cab'))) : auto.cab;
+  const campos = tabla.filas[0].map((_, i) => (g(`c${i}`) !== null ? String(g(`c${i}`)) : auto.campos[i] ?? ''));
+  return { t, tabla, cab, campos };
+};
+
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  const esquema = esquemaActual();
+  if (accion === 'aplicar' || accion === 'cancelar') {
+    const b = await one<any>('SELECT borrador FROM {S}.planes WHERE id=?', [id]);
+    if (accion === 'cancelar') {
+      const n = Number((await one<any>('SELECT COUNT(*) AS n FROM {S}.plan_temas WHERE plan_id=?', [id]))!.n);
+      if (n) await exec('UPDATE {S}.planes SET borrador=NULL WHERE id=?', [id]); else await exec('DELETE FROM {S}.planes WHERE id=?', [id]);
+      return Astro.redirect(n ? `/plan/${id}` : '/plan');
+    }
+    if (b?.borrador) {
+      const m = leerMapeo((k) => (f.get(k) === null ? null : String(f.get(k))), b.borrador);
+      const temas = interpretar(m.tabla.filas, m.cab, m.campos, plan.anio, inicioCurso);
+      if (!m.campos.includes('tema') && !m.campos.includes('unidad')) error = 'Indique al menos qué columna tiene los temas o las unidades.';
+      else if (!temas.length) error = 'Con esas columnas no quedó ningún tema. Revise la fila de encabezados.';
+      else {
+        await transaccion(async (c) => {
+          const x = (sql: string, p: unknown[]) => c.query(preparar(sql, esquema), p);
+          await x('DELETE FROM {S}.plan_temas WHERE plan_id=?', [id]);
+          for (const [i, t] of temas.entries())
+            await x('INSERT INTO {S}.plan_temas (plan_id, orden, unidad, tema, inicio, fin, horas) VALUES (?,?,?,?,?,?,?)', [id, i + 1, t.unidad, t.tema, t.inicio, t.fin, t.horas]);
+          await x('UPDATE {S}.planes SET borrador=NULL, seguimiento_desde=CURRENT_DATE WHERE id=?', [id]);
+        });
+        const sin = temas.filter((t) => !t.inicio).length;
+        return Astro.redirect(`/plan/${id}?cargado=${temas.length}&sinfecha=${sin}`);
+      }
+    }
+  } else if (accion === 'guardar') {
+    const ids = f.getAll('tid').map((v) => num(v)), un = f.getAll('unidad').map(String), te = f.getAll('tema').map(String);
+    const ini = f.getAll('inicio').map(String), fin = f.getAll('fin').map(String), hr = f.getAll('horas').map(String);
+    const borrar = new Set(f.getAll('borrar').map((v) => num(v)));
+    await transaccion(async (c) => {
+      const x = (sql: string, p: unknown[]) => c.query(preparar(sql, esquema), p);
+      let orden = 0;
+      for (let i = 0; i < te.length; i++) {
+        const tema = te[i].trim().slice(0, 500), unidad = un[i].trim().slice(0, 300);
+        const h = Number(hr[i].replace(',', '.'));
+        const fila = [unidad, tema, fechaOk(ini[i]), fechaOk(fin[i]), hr[i].trim() && Number.isFinite(h) ? h : null];
+        if (ids[i] && (borrar.has(ids[i]) || (!tema && !unidad))) { await x('DELETE FROM {S}.plan_temas WHERE id=? AND plan_id=?', [ids[i], id]); continue; }
+        if (!tema && !unidad) continue;
+        orden++;
+        if (ids[i]) await x('UPDATE {S}.plan_temas SET unidad=?, tema=?, inicio=?, fin=?, horas=?, orden=? WHERE id=? AND plan_id=?', [...fila, orden, ids[i], id]);
+        else await x('INSERT INTO {S}.plan_temas (unidad, tema, inicio, fin, horas, orden, plan_id) VALUES (?,?,?,?,?,?,?)', [...fila, orden, id]);
+      }
+    });
+    msg = 'Temas guardados.';
+  } else if (accion === 'ajustes') {
+    await exec('UPDATE {S}.planes SET tolerancia=?, seguimiento_desde=COALESCE(?::date, seguimiento_desde) WHERE id=?',
+      [Math.min(60, Math.max(0, num(f.get('tolerancia')))), fechaOk(str(f.get('desde'))), id]);
+    msg = 'Ajustes guardados.';
+  } else if (accion === 'hasta') {
+    // Puesta al día rápida: todo lo previsto hasta una fecha queda como visto en la sección
+    const sec = num(f.get('seccion')), hasta = fechaOk(str(f.get('hasta')));
+    const valida = (await seccionesDePlan(U, plan)).some((s) => s.id === sec);
+    if (valida && hasta) {
+      await exec(`INSERT INTO {S}.plan_avance (seccion_id, tema_id, fecha) SELECT ?, id, fin FROM {S}.plan_temas
+        WHERE plan_id=? AND fin <= ?::date ON CONFLICT DO NOTHING`, [sec, id, hasta]);
+      msg = 'Temas marcados como vistos.';
+    }
+  } else if (accion === 'eliminar' && str(f.get('confirmar')) === 'ELIMINAR') {
+    await exec('DELETE FROM {S}.planes WHERE id=?', [id]);
+    return Astro.redirect('/plan');
+  }
+  plan = (await planPropio(U, id))!;
+}
+
+const nivelTxt = (n: string) => (/^\d+$/.test(n) ? `${n}.°` : n);
+const titulo = `${plan.asignatura ?? 'Sin subárea'} · ${nivelTxt(plan.nivel)}`;
+const corta = (f: string | null) => (f ? f.split('-').reverse().slice(0, 2).join('/') : '—');
+
+// ── Paso 1: elegir columnas del archivo ──
+let mapeo: ReturnType<typeof leerMapeo> | null = null, tablas: Tabla[] = [], vista: ReturnType<typeof interpretar> = [];
+if (plan.hay_borrador) {
+  tablas = (await one<any>('SELECT borrador FROM {S}.planes WHERE id=?', [id]))!.borrador;
+  mapeo = leerMapeo((k) => sp.get(k), tablas);
+  vista = interpretar(mapeo.tabla.filas, mapeo.cab, mapeo.campos, plan.anio, inicioCurso);
+}
+
+// ── Plan cargado: Gantt y avance por sección ──
+await revisarAtrasos(U, hoyF);
+const temas = plan.hay_borrador ? [] : await temasDe(id);
+const secciones = await seccionesDePlan(U, plan);
+const sec = secciones.find((s) => s.id === Number(sp.get('seccion'))) ?? secciones[0];
+const avance = sec ? await avanceDe(sec.id) : new Map<number, string>();
+const est = estadoPlan(temas, avance, hoyF, plan.tolerancia);
+const conFecha = temas.filter((t) => t.inicio && t.fin);
+const desdeG = conFecha.length ? conFecha.map((t) => t.inicio!).sort()[0].slice(0, 8) + '01' : null;
+const hastaG = conFecha.length ? (() => { const m = conFecha.map((t) => t.fin!).sort().pop()!; const d = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)); return d.toISOString().slice(0, 10); })() : null;
+const dia = (f: string) => Date.parse(f + 'T00:00:00Z') / 86400000;
+const total = desdeG && hastaG ? dia(hastaG) - dia(desdeG) + 1 : 1;
+const pos = (f: string) => ((dia(f) - dia(desdeG!)) / total) * 100;
+const meses: { nombre: string; left: number; width: number }[] = [];
+if (desdeG && hastaG) {
+  for (let d = new Date(desdeG + 'T00:00:00Z'); d.toISOString().slice(0, 10) <= hastaG; d.setUTCMonth(d.getUTCMonth() + 1)) {
+    const ini = d.toISOString().slice(0, 10), finM = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    const n = d.toLocaleDateString('es-CR', { month: 'short', timeZone: 'UTC' }).replace('.', '');
+    meses.push({ nombre: n.charAt(0).toUpperCase() + n.slice(1, 3), left: pos(ini), width: pos(finM) - pos(ini) + 100 / total });
+  }
+}
+const hoyPos = desdeG && hoyF >= desdeG && hoyF <= hastaG! ? pos(hoyF) : null;
+const grupos: { unidad: string; temas: typeof temas }[] = [];
+for (const t of temas) { const g = grupos[grupos.length - 1]; if (g && g.unidad === t.unidad) g.temas.push(t); else grupos.push({ unidad: t.unidad, temas: [t] }); }
+const ETQ: Record<string, string> = { visto: 'Visto', atrasado: 'Pasó su fecha', encurso: 'En curso', pendiente: 'Pendiente', sinfecha: 'Sin fechas' };
+const editar = sp.get('editar') === '1' || temas.length === 0;
+const cargado = sp.get('cargado');
+---
+<Base titulo={`Plan ${titulo}`}>
+  <p class="no-print"><a href="/plan">← Plan anual</a></p>
+  <h1>Plan anual · {titulo}</h1>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  {cargado && <div class="msg ok">Se cargaron {cargado} temas.{Number(sp.get('sinfecha')) > 0 && ` ${sp.get('sinfecha')} quedaron sin fechas: complételas en «Editar temas».`} Si una sección ya va adelantada, use «Poner al día» abajo.</div>}
+
+  {mapeo ? (
+    <section>
+      <p class="sub">Indique qué tiene cada columna de <b>{plan.archivo_nombre}</b>. Nexo intentó adivinarlo; revise la vista previa antes de aplicar.</p>
+      <form method="get" class="tarjeta" id="f-mapeo">
+        <div class="fila">
+          {tablas.length > 1 && <label>{plan.archivo_nombre?.toLowerCase().endsWith('.docx') ? 'Tabla' : 'Hoja'}<select name="t" onchange="this.form.querySelectorAll('[name^=c]').forEach((s) => s.disabled = true); this.form.submit()">
+            {tablas.map((t, i) => <option value={i} selected={i === mapeo!.t}>{t.nombre} ({t.filas.length} filas)</option>)}</select></label>}
+          <label>Fila de encabezados<select name="cab" onchange="this.form.submit()">
+            {mapeo.tabla.filas.slice(0, 15).map((_, i) => <option value={i} selected={i === mapeo!.cab}>Fila {i + 1}</option>)}</select></label>
+        </div>
+        <div class="tabla mapa"><table>
+          <tr>{mapeo.campos.map((c, i) => <th><select name={`c${i}`} onchange="this.form.submit()" class={c ? 'usado' : ''}>{CAMPOS.map(([v, t]) => <option value={v} selected={v === c}>{t}</option>)}</select></th>)}</tr>
+          {mapeo.tabla.filas.slice(mapeo.cab, mapeo.cab + 8).map((f, i) => <tr class={i === 0 ? 'cab' : ''}>{f.map((c) => <td>{c.length > 90 ? c.slice(0, 90) + '…' : c}</td>)}</tr>)}
+        </table></div>
+      </form>
+      <h2>Vista previa: {vista.length} temas{vista.some((t) => !t.inicio) && <span class="aviso-txt"> · {vista.filter((t) => !t.inicio).length} sin fechas</span>}</h2>
+      <div class="tabla"><table>
+        <tr><th>Unidad / RA</th><th>Tema</th><th>Inicio</th><th>Fin</th><th>Horas</th></tr>
+        {vista.slice(0, 40).map((t) => <tr><td>{t.unidad}</td><td>{t.tema}</td><td class={t.inicio ? '' : 'falta'}>{corta(t.inicio)}</td><td class={t.fin ? '' : 'falta'}>{corta(t.fin)}</td><td>{t.horas ?? ''}</td></tr>)}
+        {vista.length > 40 && <tr><td colspan="5" class="muted">… y {vista.length - 40} más</td></tr>}
+      </table></div>
+      <form method="post" class="fila acciones-mapa">
+        <input type="hidden" name="t" value={mapeo.t} /><input type="hidden" name="cab" value={mapeo.cab} />
+        {mapeo.campos.map((c, i) => <input type="hidden" name={`c${i}`} value={c} />)}
+        <button name="accion" value="aplicar">Aplicar y guardar el plan</button>
+        <button class="sec" name="accion" value="cancelar" formnovalidate>Cancelar</button>
+        <span class="muted">Después puede corregir cualquier tema o fecha a mano.</span>
+      </form>
+    </section>
+  ) : (
+    <>
+      <div class="fila cab-plan no-print">
+        {secciones.length > 0 && <form method="get"><label>Avance de la sección<select name="seccion" onchange="this.form.submit()">
+          {secciones.map((s) => <option value={s.id} selected={s.id === sec?.id}>{etiquetaSeccion(s)}</option>)}</select></label></form>}
+        {temas.length > 0 && sec && (
+          <p class="resumen">
+            {est.debe.length ? <>Debería estar en <b>{est.debe.map((t) => t.tema).join(' · ')}</b>.</> : est.proximo ? <>Próximo tema: <b>{est.proximo.tema}</b> (desde el {corta(est.proximo.inicio)}).</> : null}
+            {' '}{est.atrasados.length ? <span class="mal-txt">{etiquetaSeccion(sec)} tiene {est.atrasados.length} {est.atrasados.length === 1 ? 'tema atrasado' : 'temas atrasados'}.</span> : <span class="ok-txt">{etiquetaSeccion(sec)} va al día.</span>}
+            {' '}<span class="muted">{est.vistos} de {est.total} temas vistos.</span>
+          </p>
+        )}
+      </div>
+
+      {temas.length > 0 && (
+        <div class="gantt" style={hoyPos !== null ? `--hoy:${hoyPos}%` : ''} data-seccion={sec?.id ?? ''}>
+          <div class="g-fila g-meses"><span></span><span class="g-nombre muted">Tema</span>
+            <div class="g-pista">{meses.map((m) => <span class="g-mes" style={`left:${m.left}%;width:${m.width}%`}>{m.nombre}</span>)}{hoyPos !== null && <span class="g-hoy-etq">hoy</span>}</div></div>
+          {grupos.map((g) => (
+            <>
+              {g.unidad && <div class="g-unidad">{g.unidad}</div>}
+              {g.temas.map((t) => {
+                const e = est.estado.get(t.id)!;
+                return (
+                  <div class={`g-fila e-${e}`}>
+                    <label class="g-check" title={sec ? `Visto en ${etiquetaSeccion(sec)}` : ''}><input type="checkbox" data-tema={t.id} checked={avance.has(t.id)} disabled={!sec} aria-label={`Visto: ${t.tema}`} /></label>
+                    <span class="g-nombre" title={t.tema}>{t.tema}<small class="muted">{corta(t.inicio)} – {corta(t.fin)}{avance.has(t.id) && ` · visto ${corta(avance.get(t.id)!)}`}</small></span>
+                    <div class="g-pista">{t.inicio && t.fin && desdeG && <span class="g-barra" title={`${ETQ[e]} · ${corta(t.inicio)} a ${corta(t.fin)}`} style={`left:${pos(t.inicio)}%;width:${Math.max(0.8, pos(t.fin) - pos(t.inicio) + 100 / total)}%`}></span>}</div>
+                  </div>
+                );
+              })}
+            </>
+          ))}
+          <p class="g-leyenda">{['visto', 'encurso', 'atrasado', 'pendiente'].map((e) => <span class={`e-${e}`}><i></i>{ETQ[e]}</span>)}<span class="muted">Marque la casilla cuando vea el tema; también puede hacerlo desde la Bitácora.</span></p>
+        </div>
+      )}
+
+      <details class="tarjeta editor" open={editar}>
+        <summary><b>Editar temas</b> <span class="muted">({temas.length})</span></summary>
+        <form method="post">
+          <input type="hidden" name="accion" value="guardar" />
+          <div class="tabla"><table class="editor-t">
+            <tr><th>Unidad / RA</th><th>Tema / saberes</th><th>Inicio</th><th>Fin</th><th>Horas</th><th title="Eliminar">✕</th></tr>
+            {[...temas, ...Array(temas.length ? 3 : 8).fill(null)].map((t) => (
+              <tr><td><input type="hidden" name="tid" value={t?.id ?? ''} /><input name="unidad" value={t?.unidad ?? ''} /></td>
+                <td><input name="tema" value={t?.tema ?? ''} /></td>
+                <td><input type="date" name="inicio" value={t?.inicio ?? ''} /></td><td><input type="date" name="fin" value={t?.fin ?? ''} /></td>
+                <td><input name="horas" value={t?.horas ?? ''} size="3" inputmode="decimal" /></td>
+                <td>{t && <input type="checkbox" name="borrar" value={t.id} aria-label="Eliminar tema" />}</td></tr>
+            ))}
+          </table></div>
+          <p class="fila"><button>Guardar temas</button><span class="muted">Para agregar más filas, guarde y aparecerán otras vacías.</span></p>
+        </form>
+      </details>
+
+      {sec && temas.length > 0 && (
+        <form method="post" class="tarjeta fila">
+          <input type="hidden" name="accion" value="hasta" /><input type="hidden" name="seccion" value={sec.id} />
+          <label>Poner al día {etiquetaSeccion(sec)}: marcar como visto todo lo previsto hasta<input type="date" name="hasta" value={hoyF} /></label>
+          <button class="sec">Marcar</button>
+        </form>
+      )}
+
+      <details class="tarjeta">
+        <summary><b>Ajustes del plan</b></summary>
+        <form method="post" class="fila">
+          <input type="hidden" name="accion" value="ajustes" />
+          <label>Días de gracia antes de avisar un atraso<input type="number" name="tolerancia" min="0" max="60" value={plan.tolerancia} /></label>
+          <label>Avisar atrasos de temas que terminan desde<input type="date" name="desde" value={plan.seguimiento_desde} /></label>
+          <button>Guardar</button>
+        </form>
+        <p class="muted">Cuando un tema pasa su fecha de fin más los días de gracia sin marcarse como visto, queda una anotación en la bitácora de la sección para que escriba la causa. Al ponerse al día queda otra.</p>
+        <p class="fila">
+          {plan.archivo_nombre && <a class="btn sec" href={`/plan/archivo/${id}`}>Descargar original ({plan.archivo_nombre})</a>}
+        </p>
+        <form method="post" enctype="multipart/form-data" action="/plan" class="fila">
+          <input type="hidden" name="asignatura_id" value={plan.asignatura_id ?? 0} /><input type="hidden" name="nivel" value={plan.nivel} />
+          <label>Reemplazar con otro archivo<input type="file" name="archivo" accept=".xlsx,.xlsm,.docx" required /></label>
+          <button class="sec" name="accion" value="subir" onclick="return confirm('Los temas actuales se reemplazan y se pierden las marcas de visto. ¿Continuar?')">Cargar</button>
+        </form>
+        <form method="post" class="fila">
+          <input type="hidden" name="accion" value="eliminar" />
+          <label>Escriba ELIMINAR para borrar el plan<input name="confirmar" autocomplete="off" /></label>
+          <button class="peligro">Eliminar plan</button>
+        </form>
+      </details>
+    </>
+  )}
+
+  <script is:inline>
+    document.querySelectorAll('.gantt input[data-tema]').forEach((c) => c.addEventListener('change', async () => {
+      const g = c.closest('.gantt');
+      const r = await fetch('/api/plan-avance', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seccion_id: Number(g.dataset.seccion), tema_id: Number(c.dataset.tema), visto: c.checked }) });
+      if (!r.ok) { c.checked = !c.checked; alert('No se pudo guardar.'); return; }
+      const f = c.closest('.g-fila');
+      if (c.checked) f.className = 'g-fila e-visto'; else location.reload();
+    }));
+  </script>
+  <style>
+    .sub-t { font-size: 16px; }
+    .cab-plan { align-items: flex-end; margin-bottom: 12px; }
+    .cab-plan select { width: auto; }
+    .resumen { margin: 0; flex: 1; min-width: 260px; }
+    .ok-txt { color: var(--verde); } .mal-txt { color: var(--rojo); } .aviso-txt { color: var(--ambar); }
+    .mapa th select { min-width: 130px; font-size: 13px; }
+    .mapa th select.usado { border-color: var(--marino); font-weight: 600; }
+    .mapa td { font-size: 13px; vertical-align: top; max-width: 260px; }
+    .mapa tr.cab td { font-weight: 700; background: var(--hielo); }
+    td.falta { color: var(--ambar); }
+    .acciones-mapa { margin: 14px 0; align-items: center; }
+    .gantt { background: #fff; border: 1px solid var(--linea); border-radius: 12px; padding: 8px 14px 12px; overflow-x: auto; margin-bottom: 16px; }
+    .g-fila { display: grid; grid-template-columns: 26px minmax(200px, 30%) minmax(480px, 1fr); align-items: center; gap: 8px; min-height: 34px; border-top: 1px solid #eef2f6; }
+    .g-meses { border-top: 0; margin-top: 12px; position: sticky; top: 0; background: #fff; z-index: 1; font-size: 12.5px; }
+    .g-unidad { font-family: var(--titulos); font-weight: 700; color: var(--marino); font-size: 14px; padding: 12px 0 4px 34px; }
+    .g-nombre { font-size: 14px; line-height: 1.25; overflow: hidden; }
+    .g-nombre small { display: block; font-size: 12px; }
+    .g-pista { position: relative; height: 22px; }
+    .gantt[style*="--hoy"] .g-pista::after { content: ''; position: absolute; top: -6px; bottom: -6px; left: var(--hoy); border-left: 2px solid var(--rojo); opacity: .55; }
+    .g-meses .g-pista { height: 20px; }
+    .g-mes { position: absolute; top: 2px; border-left: 1px solid var(--linea); padding-left: 4px; color: var(--suave); white-space: nowrap; overflow: hidden; }
+    .g-hoy-etq { position: absolute; left: var(--hoy); top: -14px; transform: translateX(-50%); background: var(--rojo); color: #fff; font-size: 11px; padding: 0 5px; border-radius: 4px; z-index: 2; }
+    .g-barra { position: absolute; top: 4px; height: 14px; border-radius: 4px; background: #c9d4e1; }
+    .e-visto .g-barra { background: var(--teal); }
+    .e-encurso .g-barra { background: var(--marino); }
+    .e-atrasado .g-barra { background: var(--rojo); }
+    .e-atrasado .g-nombre { color: var(--rojo); }
+    .e-visto .g-nombre { color: var(--suave); }
+    .g-check input { width: 18px; height: 18px; }
+    .g-leyenda { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 0; font-size: 13px; align-items: center; }
+    .g-leyenda i { display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 5px; background: #c9d4e1; }
+    .g-leyenda .e-visto i { background: var(--teal); } .g-leyenda .e-encurso i { background: var(--marino); } .g-leyenda .e-atrasado i { background: var(--rojo); }
+    .editor summary, details.tarjeta summary { cursor: pointer; }
+    .editor-t input { width: 100%; min-width: 0; font-size: 13.5px; padding: 5px 7px; }
+    .editor-t td:nth-child(1) { width: 26%; } .editor-t td:nth-child(2) { width: 40%; }
+    .editor-t input[type=date] { width: 140px; }
+    .editor-t input[type=checkbox] { width: auto; }
+    details.tarjeta form { margin-top: 12px; }
+    details.tarjeta label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  </style>
+</Base>

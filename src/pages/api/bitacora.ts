@@ -9,7 +9,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   try {
     const r = await guardarAnotacion(locals.user.id, {
       id: Number(b.id) || undefined, seccion_id: Number(b.seccion_id), fecha: String(b.fecha ?? ''),
-      tipo: b.tipo === 'estudiante' ? 'estudiante' : 'minuta', texto: String(b.texto ?? ''),
+      tipo: b.tipo === 'estudiante' || b.tipo === 'plan' ? b.tipo : 'minuta', texto: String(b.texto ?? ''),
       estudiantes: Array.isArray(b.estudiantes) ? b.estudiantes.map(Number).filter(Boolean) : [],
     });
     return Response.json(r);

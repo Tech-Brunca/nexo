@@ -1,0 +1,108 @@
+---
+// Plan anual: uno por subárea y nivel (lo comparten sus secciones). Se carga desde Excel, Word o la plantilla de Nexo.
+import Base from '../../layouts/Base.astro';
+import { q, one, getAjustes } from '../../lib/db';
+import { str, num, hoy, etiquetaSeccion } from '../../lib/util';
+import { leerPlan, temasDe, seccionesDePlan, avanceDe, estadoPlan, revisarAtrasos } from '../../lib/plan';
+const { user } = Astro.locals;
+const U = user.id;
+const anio = (await getAjustes(U)).curso_lectivo || new Date().getFullYear();
+const MAX = 5 * 1024 * 1024;
+let error = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const asig = num(f.get('asignatura_id')) || null, nivel = str(f.get('nivel'));
+  const valido = await one<any>('SELECT 1 FROM {S}.secciones WHERE usuario_id=? AND COALESCE(asignatura_id,0)=? AND nivel=? AND anio=?', [U, asig ?? 0, nivel, anio]);
+  const a = f.get('archivo');
+  if (!valido) error = 'Elija una subárea y nivel de sus secciones.';
+  else if (str(f.get('accion')) === 'vacio') {
+    const p = await one<any>(`INSERT INTO {S}.planes (usuario_id, asignatura_id, nivel, anio) VALUES (?,?,?,?)
+      ON CONFLICT DO NOTHING RETURNING id`, [U, asig, nivel, anio]);
+    if (p) return Astro.redirect(`/plan/${p.id}?editar=1`);
+    error = 'Ya existe un plan para esa subárea y nivel.';
+  } else if (!(a instanceof File) || !a.size) error = 'Elija el archivo del plan.';
+  else if (a.size > MAX) error = 'El archivo pasa de 5 MB. Si tiene imágenes, quítelas o use la plantilla.';
+  else {
+    try {
+      const datos = await a.arrayBuffer();
+      const tablas = await leerPlan(a.name, datos);
+      if (!tablas.length) throw new Error('No se encontró ninguna tabla en el archivo. Use la plantilla de Nexo.');
+      const ya = await one<any>('SELECT id FROM {S}.planes WHERE usuario_id=? AND COALESCE(asignatura_id,0)=? AND nivel=? AND anio=?', [U, asig ?? 0, nivel, anio]);
+      const p = ya
+        ? await one<any>('UPDATE {S}.planes SET archivo_nombre=?, archivo_tipo=?, archivo=?, borrador=?::jsonb WHERE id=? RETURNING id', [a.name, a.type, Buffer.from(datos), JSON.stringify(tablas), ya.id])
+        : await one<any>('INSERT INTO {S}.planes (usuario_id, asignatura_id, nivel, anio, archivo_nombre, archivo_tipo, archivo, borrador) VALUES (?,?,?,?,?,?,?,?::jsonb) RETURNING id',
+          [U, asig, nivel, anio, a.name, a.type, Buffer.from(datos), JSON.stringify(tablas)]);
+      return Astro.redirect(`/plan/${p!.id}`);
+    } catch (e: any) { error = e.message; }
+  }
+}
+await revisarAtrasos(U, hoy());
+// Combinaciones subárea + nivel de sus secciones de este año, con su plan si lo tiene
+const combos = await q<any>(`SELECT COALESCE(s.asignatura_id,0) AS asig, s.nivel, a.nombre AS asignatura, p.id AS plan_id, p.borrador IS NOT NULL AS borrador, p.tolerancia,
+    (SELECT COUNT(*) FROM {S}.plan_temas t WHERE t.plan_id=p.id) AS temas
+  FROM {S}.secciones s LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id
+  LEFT JOIN {S}.planes p ON p.usuario_id=s.usuario_id AND COALESCE(p.asignatura_id,0)=COALESCE(s.asignatura_id,0) AND p.nivel=s.nivel AND p.anio=s.anio
+  WHERE s.usuario_id=? AND s.anio=? GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY length(s.nivel), s.nivel, a.nombre`, [U, anio]);
+const hoyF = hoy();
+const resumen = new Map<number, { s: any; e: ReturnType<typeof estadoPlan> }[]>();
+for (const c of combos.filter((c) => c.plan_id && !c.borrador)) {
+  const temas = await temasDe(c.plan_id);
+  const secs = await seccionesDePlan(U, { asignatura_id: c.asig || null, nivel: c.nivel, anio });
+  resumen.set(c.plan_id, await Promise.all(secs.map(async (s) => ({ s, e: estadoPlan(temas, await avanceDe(s.id), hoyF, c.tolerancia) }))));
+}
+const nivelTxt = (n: string) => (/^\d+$/.test(n) ? `${n}.°` : n);
+---
+<Base titulo="Plan anual">
+  <h1>Plan anual</h1>
+  <p class="sub">Un plan por subárea y nivel, para todas sus secciones. Nexo muestra por dónde debería ir cada sección y deja en la bitácora los atrasos.</p>
+  {error && <div class="msg mal">{error}</div>}
+  {combos.length === 0 && <div class="msg aviso">Primero cree sus secciones del curso lectivo {anio}.</div>}
+  <div class="planes">
+    {combos.map((c) => (
+      <section class="tarjeta plan">
+        <h2>{c.asignatura ?? 'Sin subárea'} <span class="muted">· {nivelTxt(c.nivel)}</span></h2>
+        {c.plan_id && !c.borrador ? (
+          <>
+            <p class="muted">{c.temas} {Number(c.temas) === 1 ? 'tema' : 'temas'}</p>
+            <ul class="estado-secs">
+              {(resumen.get(c.plan_id) ?? []).map(({ s, e }) => (
+                <li><a href={`/plan/${c.plan_id}?seccion=${s.id}`}><b>{etiquetaSeccion(s)}</b></a>
+                  {e.total === 0 ? <span class="muted">sin temas</span>
+                    : e.atrasados.length ? <span class="mal-txt">{e.atrasados.length} {e.atrasados.length === 1 ? 'tema atrasado' : 'temas atrasados'}</span>
+                    : <span class="ok-txt">al día</span>}
+                  <span class="muted">{e.vistos}/{e.total} vistos{e.debe[0] && ` · ahora: ${e.debe[0].tema}`}</span></li>
+              ))}
+            </ul>
+            <a class="btn" href={`/plan/${c.plan_id}`}>Ver plan</a>
+          </>
+        ) : c.plan_id ? (
+          <><p class="aviso-txt">Archivo cargado; falta elegir las columnas.</p><a class="btn" href={`/plan/${c.plan_id}`}>Continuar</a></>
+        ) : (
+          <form method="post" enctype="multipart/form-data" class="cargar">
+            <input type="hidden" name="asignatura_id" value={c.asig} /><input type="hidden" name="nivel" value={c.nivel} />
+            <label>Archivo del plan (Excel o Word)<input type="file" name="archivo" accept=".xlsx,.xlsm,.docx" required /></label>
+            <div class="fila"><button name="accion" value="subir">Cargar plan</button>
+              <button class="sec" name="accion" value="vacio" formnovalidate>Escribirlo en Nexo</button></div>
+          </form>
+        )}
+      </section>
+    ))}
+  </div>
+  <div class="tarjeta ayuda">
+    <h2>¿Su plan no se lee bien?</h2>
+    <p>Descargue la <a href="/plan/plantilla.xlsx">plantilla de Nexo</a> (unidad o RA, tema, fecha de inicio, fecha de fin y horas), pegue su plan y súbala. También puede escribirlo o corregirlo directamente en Nexo.</p>
+  </div>
+  <style>
+    .planes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .plan { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+    .plan h2 { margin: 0; font-size: 18px; }
+    .plan > .btn { align-self: flex-start; margin-top: auto; }
+    .estado-secs { list-style: none; margin: 4px 0 10px; padding: 0; }
+    .estado-secs li { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 6px 0; border-top: 1px solid var(--linea); font-size: 14px; }
+    .estado-secs li .muted { flex-basis: 100%; font-size: 13px; }
+    .ok-txt { color: var(--verde); } .mal-txt { color: var(--rojo); } .aviso-txt { color: var(--ambar); }
+    .cargar label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 14px; }
+    .ayuda { margin-top: 20px; }
+    .ayuda h2 { margin-top: 0; font-size: 17px; }
+  </style>
+</Base>

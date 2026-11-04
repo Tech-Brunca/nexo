@@ -5,7 +5,7 @@
 // 🎤 dicta con el reconocimiento de voz del navegador (si no lo soporta, el botón queda deshabilitado).
 interface Est { id: number; nombre: string }
 interface Props {
-  seccionId: number; fecha: string; tipo: 'minuta' | 'estudiante';
+  seccionId: number; fecha: string; tipo: 'minuta' | 'estudiante' | 'plan';
   anotacion?: { id: number; texto: string; actualizado?: string; estudiantes: Est[] } | null;
   estudiantes: Est[]; preseleccion?: Est[]; titulo?: string; placeholder?: string; filas?: number; borrable?: boolean; ayudaVoz?: boolean;
 }

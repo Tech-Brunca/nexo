@@ -32,6 +32,8 @@ const MEDIO: Record<string, string> = { whatsapp: 'WhatsApp', impreso: 'impreso'
           {d.notas.length > 0 && (
             <ul>{d.notas.map((n) => <li><b>{n.estudiantes.map((e) => e.nombre).join(', ') || 'Estudiantes'}:</b> {n.texto}</li>)}</ul>
           )}
+          {d.temas.length > 0 && <p class="temas-txt"><b>Temas del plan vistos:</b> {d.temas.map((t) => t.tema).join('; ')}.</p>}
+          {d.plan.length > 0 && <ul>{d.plan.map((n) => <li class="plan-txt">{n.texto}</li>)}</ul>}
           {d.comunicados.length > 0 && (
             <ul class="com">{d.comunicados.map((c) => <li>Comunicado {MEDIO[c.medio] ?? c.medio} a {c.estudiante ?? 'el grupo'} ({horaCorta(c.creado)}): {c.mensaje}</li>)}</ul>
           )}
@@ -49,6 +51,8 @@ const MEDIO: Record<string, string> = { whatsapp: 'WhatsApp', impreso: 'impreso'
     .resumen-bit ul { margin: 4px 0 0; padding-left: 20px; }
     .resumen-bit li { margin: 3px 0; white-space: pre-wrap; }
     .resumen-bit ul.com li { color: var(--suave); font-size: 13.5px; }
+    .temas-txt { margin: 4px 0; font-size: 14px; }
+    .resumen-bit li.plan-txt { list-style: none; margin-left: -20px; padding: 6px 10px; border-left: 3px solid var(--rojo); background: #fdf3f3; }
     .firma-doc { margin-top: 36px; font-size: 14px; }
     @media print { .resumen-bit { border: 0; padding: 0; max-width: none; } }
   </style>

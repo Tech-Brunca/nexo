@@ -1,7 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import { q, one, transaccion, esquemaActual, preparar } from '../lib/db';
-import { str } from '../lib/util';
+import { str, hoy } from '../lib/util';
 const { user, inst } = Astro.locals;
 const U = user.id;
 
@@ -25,6 +25,10 @@ const TABLAS: { t: string; sql: string; fk: Record<string, string>; auto?: boole
   { t: 'bitacora', sql: 'SELECT * FROM {S}.bitacora WHERE usuario_id=?', fk: { seccion_id: 'secciones' }, auto: true },
   { t: 'bitacora_estudiantes', sql: 'SELECT be.* FROM {S}.bitacora_estudiantes be JOIN {S}.bitacora b ON b.id=be.bitacora_id WHERE b.usuario_id=?', fk: { bitacora_id: 'bitacora', estudiante_id: 'estudiantes' } },
   { t: 'comunicados', sql: 'SELECT * FROM {S}.comunicados WHERE usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true, opcional: ['estudiante_id', 'seccion_id'] },
+  { t: 'planes', sql: 'SELECT id, usuario_id, asignatura_id, nivel, anio, tolerancia, seguimiento_desde, archivo_nombre, creado FROM {S}.planes WHERE usuario_id=? AND borrador IS NULL', fk: { asignatura_id: 'asignaturas' }, auto: true, opcional: ['asignatura_id'] },
+  { t: 'plan_temas', sql: 'SELECT t.* FROM {S}.plan_temas t JOIN {S}.planes p ON p.id=t.plan_id WHERE p.usuario_id=? AND p.borrador IS NULL', fk: { plan_id: 'planes' }, auto: true },
+  { t: 'plan_avance', sql: 'SELECT a.* FROM {S}.plan_avance a JOIN {S}.secciones s ON s.id=a.seccion_id WHERE s.usuario_id=?', fk: { seccion_id: 'secciones', tema_id: 'plan_temas' } },
+  { t: 'plan_alertas', sql: 'SELECT a.* FROM {S}.plan_alertas a JOIN {S}.secciones s ON s.id=a.seccion_id WHERE s.usuario_id=?', fk: { seccion_id: 'secciones', tema_id: 'plan_temas', bitacora_id: 'bitacora' }, opcional: ['bitacora_id'] },
 ];
 const GENERALES = {
   ajustes: 'SELECT * FROM general.ajustes WHERE usuario_id=?',
@@ -40,7 +44,7 @@ if (Astro.url.searchParams.get('descargar')) {
   const data: Record<string, any[]> = {};
   for (const [t, sql] of Object.entries(GENERALES)) data[t] = await q(sql, [U]);
   for (const x of TABLAS) data[x.t] = await q(x.sql, [U]);
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = hoy();
   return new Response(JSON.stringify({ app: 'nexo', version: 3, fecha, colegio: inst!.nombre, data }), {
     headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="respaldo-nexo-${inst!.codigo || inst!.id}-${fecha}.json"` },
   });
@@ -87,7 +91,7 @@ if (Astro.request.method === 'POST') {
             mapa.indicadores.set(id, ya?.id ?? (await ins('general.indicadores', resto, true)));
           }
           // 2. Datos del colegio activo: se reemplazan (las tablas hijas caen en cascada)
-          for (const t of ['comunicados', 'bitacora', 'secciones', 'estudiantes', 'periodos', 'componentes'])
+          for (const t of ['comunicados', 'bitacora', 'planes', 'secciones', 'estudiantes', 'periodos', 'componentes'])
             await c.query(preparar(`DELETE FROM {S}.${t} WHERE usuario_id=?`, esquema), [U]);
           for (const x of TABLAS) {
             mapa[x.t] = new Map();

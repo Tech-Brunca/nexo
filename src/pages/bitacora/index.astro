@@ -8,6 +8,7 @@ import { q } from '../../lib/db';
 import { estudiantesDe } from '../../lib/calc';
 import { hoy, etiquetaSeccion } from '../../lib/util';
 import { bitacoraRango, horaCorta } from '../../lib/bitacora';
+import { planDeSeccion, temasDe, avanceDe, estadoPlan, revisarAtrasos } from '../../lib/plan';
 const { user } = Astro.locals;
 const sp = Astro.url.searchParams;
 const secciones = await q<any>(`SELECT s.id, s.nivel, s.nombre, s.subgrupo, a.nombre AS asignatura FROM {S}.secciones s
@@ -16,6 +17,17 @@ const pedida = Number(sp.get('seccion') ?? Astro.cookies.get('rd_bit')?.value ??
 const sec = secciones.find((s) => s.id === pedida) ?? secciones[0];
 const fecha = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('fecha') ?? '') ? sp.get('fecha')! : hoy();
 if (sec) Astro.cookies.set('rd_bit', String(sec.id), { path: '/', sameSite: 'lax', maxAge: 400 * 86400 });
+// Plan anual de la sección: revisa atrasos (quedan en la bitácora) antes de leer el día
+if (sec) await revisarAtrasos(user.id, hoy());
+const plan = sec ? await planDeSeccion(user.id, sec.id) : undefined;
+const planTemas = plan ? await temasDe(plan.id) : [];
+const planAvance = sec && plan ? await avanceDe(sec.id) : new Map<number, string>();
+const planEst = estadoPlan(planTemas, planAvance, fecha, plan?.tolerancia ?? 7);
+// Temas para marcar: atrasados, los que corresponden a este día, los vistos este día y el siguiente
+const marcables = planTemas.filter((t) => {
+  const e = planEst.estado.get(t.id);
+  return e === 'atrasado' || e === 'encurso' || planAvance.get(t.id) === fecha || t.id === planEst.proximo?.id;
+}).slice(0, 12);
 const dia = sec ? (await bitacoraRango(user.id, sec.id, fecha, fecha))[0] : undefined;
 const ests = sec ? (await estudiantesDe(sec.id)).map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}` })) : [];
 // Historial: días con algo registrado en los últimos 60 días
@@ -41,6 +53,28 @@ const inicioMes = fecha.slice(0, 8) + '01';
 
       <h2>{fechaTexto(fecha)}</h2>
       <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="minuta" titulo="Minuta de la clase" anotacion={dia?.minuta ?? null} estudiantes={ests} filas={6} />
+
+      {plan && planTemas.length > 0 && (
+        <section class="plan-dia" data-seccion={sec.id} data-fecha={fecha}>
+          <div class="pd-cab">
+            <h3>Plan anual</h3>
+            <span class={planEst.atrasados.length ? 'mal-txt' : 'ok-txt'}>{planEst.atrasados.length ? `${planEst.atrasados.length} ${planEst.atrasados.length === 1 ? 'tema atrasado' : 'temas atrasados'}` : 'Al día'}</span>
+            <span class="muted">{planEst.vistos}/{planEst.total} vistos</span>
+            <a class="pd-ver" href={`/plan/${plan.id}?seccion=${sec.id}`}>Ver plan</a>
+          </div>
+          <p class="muted pd-ayuda">Marque los temas que vio en esta clase:</p>
+          <ul class="pd-temas">
+            {marcables.map((t) => {
+              const e = planEst.estado.get(t.id);
+              return <li class={`e-${e}`}><label><input type="checkbox" data-tema={t.id} checked={planAvance.has(t.id)} />
+                <span>{t.tema}<small class="muted">{t.unidad && `${t.unidad} · `}{e === 'atrasado' ? 'pasó su fecha' : e === 'encurso' ? 'corresponde ahora' : e === 'visto' ? 'visto' : 'siguiente'}</small></span></label></li>;
+            })}
+          </ul>
+          {[...(dia?.plan ?? [])].sort((a, b) => a.id - b.id).map((n) => (
+            <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="plan" anotacion={n} estudiantes={ests} filas={6} titulo={n.texto.startsWith('Se recuperó') ? 'Plan al día' : 'Atraso en el plan: escriba la causa'} />
+          ))}
+        </section>
+      )}
 
       <h3 class="sub-t">Anotaciones sobre estudiantes</h3>
       <div class="notas">
@@ -90,7 +124,7 @@ const inicioMes = fecha.slice(0, 8) + '01';
         <ul class="historial">
           {historial.map((d) => (
             <li><a href={`?seccion=${sec.id}&fecha=${d.fecha}`}><b>{fechaTexto(d.fecha)}</b></a>
-              <span class="muted">{[d.minuta?.texto ? 'minuta' : '', d.notas.length ? `${d.notas.length} ${d.notas.length === 1 ? 'anotación' : 'anotaciones'}` : '', d.comunicados.length ? `${d.comunicados.length} ${d.comunicados.length === 1 ? 'comunicado' : 'comunicados'}` : ''].filter(Boolean).join(' · ')}</span>
+              <span class="muted">{[d.minuta?.texto ? 'minuta' : '', d.notas.length ? `${d.notas.length} ${d.notas.length === 1 ? 'anotación' : 'anotaciones'}` : '', d.comunicados.length ? `${d.comunicados.length} ${d.comunicados.length === 1 ? 'comunicado' : 'comunicados'}` : '', d.temas.length ? `${d.temas.length} ${d.temas.length === 1 ? 'tema del plan' : 'temas del plan'}` : '', d.plan.length ? 'plan anual' : ''].filter(Boolean).join(' · ')}</span>
               {d.minuta?.texto && <div class="msg-txt">{extracto(d.minuta.texto)}</div>}</li>
           ))}
         </ul>
@@ -100,6 +134,13 @@ const inicioMes = fecha.slice(0, 8) + '01';
   <script is:inline>
     // Al guardarse la «Nueva anotación» queda creada: se ofrece agregar otra
     document.getElementById('nueva-nota')?.addEventListener('minuta:creada', () => { document.getElementById('otra').hidden = false; });
+    // Temas del plan vistos en esta clase
+    document.querySelectorAll('.plan-dia input[data-tema]').forEach((c) => c.addEventListener('change', async () => {
+      const caja = c.closest('.plan-dia');
+      const r = await fetch('/api/plan-avance', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seccion_id: Number(caja.dataset.seccion), tema_id: Number(c.dataset.tema), visto: c.checked, fecha: caja.dataset.fecha }) });
+      if (!r.ok) { c.checked = !c.checked; alert('No se pudo guardar.'); }
+    }));
     // Al abrir una anotación, el cursor queda al final del texto
     document.querySelectorAll('details.nota').forEach((d) => d.addEventListener('toggle', () => { if (d.open) { const t = d.querySelector('.m-texto'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }));
   </script>
@@ -111,6 +152,18 @@ const inicioMes = fecha.slice(0, 8) + '01';
     .msg-txt { flex-basis: 100%; color: var(--tinta); font-size: 14px; white-space: pre-wrap; }
     .imprimir { margin-top: 24px; }
     .com-uno { margin-bottom: 10px; }
+    .plan-dia { background: #fff; border: 1px solid var(--linea); border-left: 4px solid var(--marino); border-radius: 12px; padding: 12px 16px; margin-top: 16px; }
+    .pd-cab { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+    .pd-cab h3 { margin: 0; font-size: 16px; color: var(--marino); }
+    .pd-ver { margin-left: auto; font-size: 14px; }
+    .pd-ayuda { margin: 6px 0; font-size: 13.5px; }
+    .pd-temas { list-style: none; margin: 0 0 6px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 16px; }
+    .pd-temas label { display: flex; flex-direction: row; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 14px; padding: 4px 0; }
+    .pd-temas input { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+    .pd-temas small { display: block; font-size: 12px; }
+    .pd-temas .e-atrasado small { color: var(--rojo); }
+    .plan-dia :global(.minuta) { margin-top: 10px; border-color: #f0c9c9; }
+    .ok-txt { color: var(--verde); } .mal-txt { color: var(--rojo); }
     .notas { display: flex; flex-direction: column; gap: 8px; }
     details.nota:not(.nueva) { background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
     details.nota:not(.nueva) > summary { display: flex; gap: 12px; align-items: baseline; padding: 11px 16px; cursor: pointer; list-style: none; }

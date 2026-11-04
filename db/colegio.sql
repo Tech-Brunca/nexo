@@ -238,3 +238,48 @@ CREATE INDEX IF NOT EXISTS bitacora_estudiante ON __ESQUEMA__.bitacora_estudiant
 ALTER TABLE __ESQUEMA__.comunicados ADD COLUMN IF NOT EXISTS medio text NOT NULL DEFAULT 'whatsapp' CHECK (medio IN ('whatsapp', 'impreso', 'ambos'));
 ALTER TABLE __ESQUEMA__.comunicados ADD COLUMN IF NOT EXISTS seccion_id int REFERENCES __ESQUEMA__.secciones(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS comunicados_estudiante ON __ESQUEMA__.comunicados (estudiante_id, creado);
+
+-- v3.10: plan anual. Uno por subárea (asignatura), nivel y año; lo comparten todas las secciones de esa
+-- subárea y nivel. Cada sección lleva su avance (temas vistos). Los atrasos quedan en la bitácora (tipo 'plan').
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.planes (
+  id serial PRIMARY KEY,
+  usuario_id int NOT NULL REFERENCES general.usuarios(id) ON DELETE CASCADE,
+  asignatura_id int REFERENCES general.asignaturas(id) ON DELETE SET NULL,
+  nivel text NOT NULL,
+  anio smallint NOT NULL,
+  tolerancia smallint NOT NULL DEFAULT 7,          -- días de gracia antes de avisar un atraso
+  seguimiento_desde date NOT NULL DEFAULT CURRENT_DATE, -- los temas que terminaban antes no generan aviso
+  archivo_nombre text,
+  archivo_tipo text,
+  archivo bytea,                                   -- el plan original, para descargarlo
+  borrador jsonb,                                  -- tablas leídas del archivo mientras se eligen las columnas
+  creado timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS planes_unico ON __ESQUEMA__.planes (usuario_id, COALESCE(asignatura_id, 0), nivel, anio);
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.plan_temas (
+  id serial PRIMARY KEY,
+  plan_id int NOT NULL REFERENCES __ESQUEMA__.planes(id) ON DELETE CASCADE,
+  orden int NOT NULL DEFAULT 0,
+  unidad text NOT NULL DEFAULT '',
+  tema text NOT NULL DEFAULT '',
+  inicio date,
+  fin date,
+  horas numeric(6,1)
+);
+CREATE INDEX IF NOT EXISTS plan_temas_plan ON __ESQUEMA__.plan_temas (plan_id, orden);
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.plan_avance (
+  seccion_id int NOT NULL REFERENCES __ESQUEMA__.secciones(id) ON DELETE CASCADE,
+  tema_id int NOT NULL REFERENCES __ESQUEMA__.plan_temas(id) ON DELETE CASCADE,
+  fecha date NOT NULL,
+  PRIMARY KEY (seccion_id, tema_id)
+);
+CREATE TABLE IF NOT EXISTS __ESQUEMA__.plan_alertas (
+  seccion_id int NOT NULL REFERENCES __ESQUEMA__.secciones(id) ON DELETE CASCADE,
+  tema_id int NOT NULL REFERENCES __ESQUEMA__.plan_temas(id) ON DELETE CASCADE,
+  bitacora_id int REFERENCES __ESQUEMA__.bitacora(id) ON DELETE SET NULL,
+  detectado date NOT NULL,
+  resuelto date,
+  PRIMARY KEY (seccion_id, tema_id)
+);
+ALTER TABLE __ESQUEMA__.bitacora DROP CONSTRAINT IF EXISTS bitacora_tipo_check;
+ALTER TABLE __ESQUEMA__.bitacora ADD CONSTRAINT bitacora_tipo_check CHECK (tipo IN ('minuta', 'estudiante', 'plan'));
