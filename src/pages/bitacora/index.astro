@@ -55,9 +55,9 @@ const inicioMes = fecha.slice(0, 8) + '01';
             <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" anotacion={n} estudiantes={ests} filas={3} borrable />
           </details>
         ))}
-        <details class="nota nueva" id="nueva-nota" open={sp.get('nueva') === '1'}>
-          <summary class="btn" title="Atajo: Ctrl + H">+ Nueva anotación <kbd>Ctrl + H</kbd></summary>
-          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} filas={3} placeholder="Anotación sobre uno o varios estudiantes. Elíjalos con «+ Estudiante» o escriba @." />
+        <details class="nota nueva" id="nueva-nota">
+          <summary class="btn">+ Nueva anotación</summary>
+          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} filas={3} placeholder="Anotación sobre uno o varios estudiantes. Elíjalos con «+ Estudiante» o escriba @." ayudaVoz />
         </details>
         <p id="otra" hidden><a class="btn sec" href={`?seccion=${sec.id}&fecha=${fecha}`}>Agregar otra anotación</a></p>
       </div>
@@ -100,8 +100,6 @@ const inicioMes = fecha.slice(0, 8) + '01';
   <script is:inline>
     // Al guardarse la «Nueva anotación» queda creada: se ofrece agregar otra
     document.getElementById('nueva-nota')?.addEventListener('minuta:creada', () => { document.getElementById('otra').hidden = false; });
-    // Llegó con Ctrl + H desde otra pantalla: el cursor queda en la nueva anotación
-    if (new URLSearchParams(location.search).get('nueva') === '1') { const t = document.querySelector('#nueva-nota .m-texto'); t?.focus(); document.getElementById('nueva-nota')?.scrollIntoView({ block: 'center' }); }
     // Al abrir una anotación, el cursor queda al final del texto
     document.querySelectorAll('details.nota').forEach((d) => d.addEventListener('toggle', () => { if (d.open) { const t = d.querySelector('.m-texto'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }));
   </script>
@@ -126,7 +124,6 @@ const inicioMes = fecha.slice(0, 8) + '01';
     details.nota:not(.nueva) > :global(.minuta) { border: 0; margin: 0; padding: 0 16px 14px; }
     details.nota.nueva > summary { list-style: none; display: inline-block; cursor: pointer; }
     details.nota.nueva[open] > summary { margin-bottom: 8px; }
-    details.nota.nueva kbd { font: inherit; font-size: 11.5px; font-weight: 500; margin-left: 8px; padding: 1px 6px; border-radius: 5px; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.3); }
-    @media (max-width: 700px) { details.nota.nueva kbd { display: none; } details.nota:not(.nueva) > summary { flex-wrap: wrap; } .n-extracto { flex-basis: 100%; order: 3; } }
+    @media (max-width: 700px) { details.nota:not(.nueva) > summary { flex-wrap: wrap; } .n-extracto { flex-basis: 100%; order: 3; } }
   </style>
 </Base>

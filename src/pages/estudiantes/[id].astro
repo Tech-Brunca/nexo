@@ -68,7 +68,7 @@ const fechaBoleta = (() => { const t = fechaLarga(fecha); return t.charAt(0).toU
       <section class="tarjeta">
         <h2>Nueva anotación</h2>
         <div id="nota-nueva">
-          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} preseleccion={[{ id: est.id, nombre }]} filas={3}
+          <MinutaEditor seccionId={sec.id} fecha={fecha} tipo="estudiante" estudiantes={ests} preseleccion={[{ id: est.id, nombre }]} filas={3} ayudaVoz
             placeholder={`Anotación sobre ${est.nombre}. Queda en la bitácora de ${etiquetaSeccion(sec)} de hoy.`} />
         </div>
         <p id="nota-lista" class="muted" hidden>Anotación guardada en la bitácora. <a href={`/estudiantes/${est.id}?seccion=${sec.id}`}>Ver en la línea de tiempo o agregar otra</a></p>

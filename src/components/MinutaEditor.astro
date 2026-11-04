@@ -7,9 +7,9 @@ interface Est { id: number; nombre: string }
 interface Props {
   seccionId: number; fecha: string; tipo: 'minuta' | 'estudiante';
   anotacion?: { id: number; texto: string; actualizado?: string; estudiantes: Est[] } | null;
-  estudiantes: Est[]; preseleccion?: Est[]; titulo?: string; placeholder?: string; filas?: number; borrable?: boolean;
+  estudiantes: Est[]; preseleccion?: Est[]; titulo?: string; placeholder?: string; filas?: number; borrable?: boolean; ayudaVoz?: boolean;
 }
-const { seccionId, fecha, tipo, anotacion = null, estudiantes, preseleccion = [], titulo, placeholder, filas = 5, borrable = false } = Astro.props;
+const { seccionId, fecha, tipo, anotacion = null, estudiantes, preseleccion = [], titulo, placeholder, filas = 5, borrable = false, ayudaVoz = false } = Astro.props;
 // Nombres en tipo título para leerlos mejor en el texto («@Valeria Mora Solís»)
 const tituloNombre = (s: string) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
 const lista = estudiantes.map((e) => ({ id: e.id, nombre: tituloNombre(e.nombre) }));
@@ -34,6 +34,7 @@ import { horaCorta as hora } from '../lib/bitacora';
       <option value="">+ Estudiante</option>
       {lista.map((e) => <option value={e.id}>{e.nombre}</option>)}
     </select>
+    {ayudaVoz && <span class="m-ayuda-voz muted" hidden>También puede dictar con <kbd>Windows</kbd> + <kbd>H</kbd></span>}
   </div>
   <div class="m-aviso-voz msg aviso" hidden>
     El dictado usa el servicio de reconocimiento de voz del navegador (en Chrome, de Google): el audio se envía a sus servidores para convertirlo en texto.
@@ -55,6 +56,8 @@ import { horaCorta as hora } from '../lib/bitacora';
     border: 1px solid #c6d4e3; border-radius: 10px; box-shadow: 0 8px 22px rgba(10,61,145,.15); max-height: 220px; overflow: auto; }
   .minuta .m-sugerencias li { padding: 7px 10px; border-radius: 7px; cursor: pointer; }
   .minuta .m-sugerencias li[aria-selected="true"], .minuta .m-sugerencias li:hover { background: var(--hielo); color: var(--marino); }
+  .minuta .m-ayuda-voz { font-size: 13px; margin-left: auto; }
+  .minuta .m-ayuda-voz kbd { font: inherit; font-size: 12px; padding: 1px 6px; border: 1px solid var(--linea); border-bottom-width: 2px; border-radius: 5px; background: #fff; color: var(--tinta); }
   .minuta .m-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
   .minuta .m-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .minuta .chip-est { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 10px; border-radius: 99px; background: var(--hielo);
@@ -176,7 +179,8 @@ import { horaCorta as hora } from '../lib/bitacora';
         (caja.closest('[data-contenedor]') ?? caja).remove();
       };
 
-      // ── Dictado por voz ──
+      // ── Dictado por voz ── (la ayuda de Windows + H solo se muestra en Windows)
+      const ayuda = caja.querySelector('.m-ayuda-voz'); if (ayuda && /Windows/.test(navigator.userAgent)) ayuda.hidden = false;
       const voz = caja.querySelector('.m-voz'), aviso = caja.querySelector('.m-aviso-voz'), interino = caja.querySelector('.m-interino');
       if (!Rec) {
         voz.disabled = true;
