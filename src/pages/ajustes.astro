@@ -1,9 +1,13 @@
 ---
 import Base from '../layouts/Base.astro';
-import { exec, q, getAjustes, getEscala } from '../lib/db';
+import MateriaCampos from '../components/MateriaCampos.astro';
+import { exec, q, one, getAjustes, getEscala } from '../lib/db';
+import { CICLOS, anioVigente, reglasDe, resumenRegla } from '../lib/reac';
 import { num, str } from '../lib/util';
 const { user } = Astro.locals;
-let ok = '';
+let ok = '', error = '';
+const anioReglas = await anioVigente((await getAjustes(user.id)).curso_lectivo);
+const reglas = await reglasDe(anioReglas);
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
@@ -24,10 +28,31 @@ if (Astro.request.method === 'POST') {
     // Al quedar vacía, getEscala vuelve a cargar la tabla del MEP
     await exec('DELETE FROM general.escala_asistencia WHERE usuario_id=?', [user.id]);
     ok = 'Se restauró la escala del MEP.';
-  } else if (accion === 'asignatura') {
-    if (str(f.get('nombre'))) await exec('INSERT INTO general.asignaturas (usuario_id, nombre) VALUES (?,?)', [user.id, str(f.get('nombre'))]);
+  } else if (accion === 'asignatura' || accion === 'editar-asignatura') {
+    // Materia con su ciclo y tipo del Reglamento de Evaluación: define los componentes que se crean solos
+    const nombre = str(f.get('nombre')).slice(0, 120);
+    const codigo = str(f.get('regla')) || null;
+    const x = codigo ? reglas.find((r) => r.codigo === codigo) : null;
+    const tc = str(f.get('tc_modo')) === 'unica' ? 'unica' : 'indicadores';
+    if (!nombre) error = 'Escriba el nombre de la materia.';
+    else if (accion === 'asignatura') {
+      await exec('INSERT INTO general.asignaturas (usuario_id, nombre, ciclo, regla, tc_modo) VALUES (?,?,?,?,?)', [user.id, nombre, x?.ciclo ?? null, x?.codigo ?? null, tc]);
+      ok = `Materia «${nombre}» agregada.${x ? ` Al crear sus secciones se crearán los componentes: ${resumenRegla(x)}.` : ''}`;
+    } else {
+      const id = num(f.get('id'));
+      await exec('UPDATE general.asignaturas SET nombre=?, ciclo=?, regla=?, tc_modo=? WHERE id=? AND usuario_id=?', [nombre, x?.ciclo ?? null, x?.codigo ?? null, tc, id, user.id]);
+      ok = `Materia «${nombre}» guardada.${x ? ' Para aplicar los porcentajes a secciones que ya existen, use Componentes.' : ''}`;
+    }
   } else if (accion === 'borrar-asignatura') {
-    await exec('DELETE FROM general.asignaturas WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
+    const id = num(f.get('id'));
+    const usada = Astro.locals.inst ? await one<any>('SELECT 1 FROM {S}.secciones WHERE usuario_id=? AND asignatura_id=? LIMIT 1', [user.id, id]) : null;
+    if (usada) error = 'No se puede eliminar: hay secciones con esa materia en este colegio.';
+    else {
+      try {
+        if (Astro.locals.inst) await exec('DELETE FROM {S}.componentes WHERE usuario_id=? AND asignatura_id=?', [user.id, id]);
+        await exec('DELETE FROM general.asignaturas WHERE id=? AND usuario_id=?', [id, user.id]);
+      } catch { error = 'No se puede eliminar: la materia se usa en otro de sus colegios.'; }
+    }
   }
 }
 const c = await getAjustes(user.id);
@@ -36,25 +61,45 @@ const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuari
 ---
 <Base titulo="Ajustes">
   <h1>Ajustes</h1>
-  <p class="sub">Sus asignaturas y reglas de evaluación. Aplican en todos sus colegios.</p>
-  {ok && <div class="msg ok">{ok}</div>}
+  <p class="sub">Sus materias y reglas de evaluación. Aplican en todos sus colegios.</p>
+  {ok && <div class="msg ok">{ok}</div>}{error && <div class="msg mal">{error}</div>}
 
-  <div class="tarjeta">
-    <h2 style="margin-top:0">Mis asignaturas</h2>
-    <div class="fila">
-      {asignaturas.length === 0 && <span class="muted">Aún no hay asignaturas.</span>}
-      {asignaturas.map((a) => (
-        <form method="post" class="chip ok" style="display:inline-flex;gap:6px;align-items:center">
-          <input type="hidden" name="accion" value="borrar-asignatura" /><input type="hidden" name="id" value={a.id} />
-          {a.nombre}<button class="mini peligro" title="Eliminar" onclick="return confirm('¿Eliminar asignatura?')">×</button>
-        </form>
-      ))}
-    </div>
-    <form method="post" class="fila" style="margin-top:12px">
-      <input type="hidden" name="accion" value="asignatura" />
-      <label style="flex:1">Nueva asignatura<input name="nombre" placeholder="p. ej. Soporte a las TI" /></label>
-      <button class="sec">Agregar</button>
-    </form>
+  <div class="tarjeta" id="materias">
+    <h2 style="margin-top:0">Mis materias</h2>
+    <p class="muted">Elija el ciclo y el tipo de cada materia según el Reglamento de Evaluación ({anioReglas}): al crear una sección con esa materia, Nexo crea solos sus componentes con los porcentajes del MEP y reparte las pruebas en cada periodo.</p>
+    {asignaturas.length === 0 && <p class="muted">Aún no hay materias.</p>}
+    {asignaturas.length > 0 && (
+      <ul class="materias">
+        {asignaturas.map((a) => {
+          const x = reglas.find((r) => r.codigo === a.regla);
+          return (
+            <li>
+              <details>
+                <summary><b>{a.nombre}</b> <span class="muted">{x ? `· ${CICLOS.find(([k]) => k === x.ciclo)?.[1].split(' (')[0]} · ${x.nombre}` : '· sin tipo del MEP'}</span>
+                  {x && <span class="m-resumen">{resumenRegla(x)}{!x.diagnostico && ` · Trabajo cotidiano ${a.tc_modo === 'unica' ? 'con una sola nota' : 'por indicadores'}`}</span>}</summary>
+                <form method="post" class="form-materia">
+                  <input type="hidden" name="accion" value="editar-asignatura" /><input type="hidden" name="id" value={a.id} />
+                  <MateriaCampos reglas={reglas} materia={a} />
+                  <div class="fila"><button>Guardar</button></div>
+                </form>
+                <form method="post" class="fila" style="margin-top:6px">
+                  <input type="hidden" name="accion" value="borrar-asignatura" /><input type="hidden" name="id" value={a.id} />
+                  <button class="mini peligro" onclick="return confirm('¿Eliminar la materia?')">Eliminar materia</button>
+                </form>
+              </details>
+            </li>
+          );
+        })}
+      </ul>
+    )}
+    <details class="nueva-materia" open={asignaturas.length === 0}>
+      <summary class="btn">+ Agregar materia</summary>
+      <form method="post" class="form-materia">
+        <input type="hidden" name="accion" value="asignatura" />
+        <MateriaCampos reglas={reglas} />
+        <div class="fila"><button>Agregar materia</button><span class="muted">Puede agregar o ajustar componentes después en Componentes.</span></div>
+      </form>
+    </details>
   </div>
 
   <form method="post" class="tarjeta">
@@ -76,7 +121,7 @@ const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuari
   <form method="post" class="tarjeta">
     <input type="hidden" name="accion" value="escala" />
     <h2 style="margin-top:0">Escala del componente de asistencia</h2>
-    <p class="muted">Porcentaje de ausencias injustificadas del total de lecciones impartidas en el periodo (incluye las tardías convertidas) → porcentaje del valor del componente que obtiene el estudiante. Viene con la tabla del MEP: con asistencia de 10%, «0% a menos del 1%» da 10, «del 1% a menos del 10%» da 9, y así hasta «del 90% al 100%», que da 0. Si su asistencia vale otro porcentaje, se ajusta en proporción (con 5%: 5, 4,5, 4…).</p>
+    <p class="muted">Porcentaje de ausencias injustificadas del total de lecciones impartidas en el periodo (incluye las tardías convertidas) → porcentaje del valor del componente que obtiene el estudiante. Viene con la tabla del artículo 37 del Reglamento de Evaluación 2026: de 0 % a menos de 10 % de ausencias obtiene todo el valor; cada 10 % más baja una quinta parte, y desde 50 % obtiene 0. Con asistencia de 5 %: 5, 4, 3, 2, 1 y 0.</p>
     <table style="max-width:520px">
       <tr><th>Desde %</th><th>Hasta % (sin incluir)</th><th>Obtiene %</th></tr>
       {[...escala, { desde: '', hasta: '', porcentaje: '' }].map((e) => (
@@ -87,4 +132,14 @@ const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuari
       <button class="sec" form="escala-mep" onclick="return confirm('¿Volver a la escala del MEP? Se pierden los cambios hechos a la escala.')">Restaurar escala del MEP</button></p>
   </form>
   <form id="escala-mep" method="post"><input type="hidden" name="accion" value="escala-mep" /></form>
+  <style>
+    .materias { list-style: none; margin: 0 0 12px; padding: 0; border: 1px solid var(--linea); border-radius: 10px; }
+    .materias li { border-top: 1px solid var(--linea); padding: 10px 14px; }
+    .materias li:first-child { border-top: 0; }
+    .materias summary { cursor: pointer; }
+    .m-resumen { display: block; font-size: 13px; color: var(--suave); margin-top: 2px; }
+    .nueva-materia > summary { list-style: none; display: inline-block; cursor: pointer; }
+    .nueva-materia > summary::-webkit-details-marker { display: none; }
+    .nueva-materia[open] > summary { margin-bottom: 6px; }
+  </style>
 </Base>

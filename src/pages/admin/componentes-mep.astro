@@ -1,0 +1,140 @@
+---
+// Matriz de componentes del Reglamento de Evaluación por año: la usan las materias de todos los docentes.
+// Cuando el MEP cambie el reglamento, se copia el año anterior y se ajusta aquí.
+import Base from '../../layouts/Base.astro';
+import { exec, q, one, transaccion } from '../../lib/db';
+import { num, str } from '../../lib/util';
+import { CICLOS, REAC_2026, aniosReglas, reglasDe, resumenRegla, type CompRegla } from '../../lib/reac';
+import type { ClaveSea } from '../../lib/sea';
+let msg = '', error = '';
+const CLAVES: [ClaveSea, string][] = [['tc', 'Trabajo cotidiano'], ['tareas', 'Tareas'], ['prueba', 'Pruebas'], ['proyecto', 'Proyecto'], ['asistencia', 'Asistencia']];
+let anios = await aniosReglas();
+let anio = Number(Astro.url.searchParams.get('anio') ?? anios[anios.length - 1] ?? 2026);
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const accion = str(f.get('accion'));
+  anio = num(f.get('anio')) || anio;
+  if (accion === 'guardar') {
+    const codigo = str(f.get('codigo'));
+    const comps: CompRegla[] = [];
+    for (const [clave] of CLAVES) {
+      const pct = str(f.get(`pct_${clave}`));
+      if (pct === '') continue;
+      const cant = num(f.get(`cant_${clave}`));
+      comps.push({ clave, nombre: str(f.get(`nom_${clave}`)) || CLAVES.find(([k]) => k === clave)![1], pct: Number(pct.replace(',', '.')), ...(cant > 0 ? { cantidad: cant } : {}) });
+    }
+    const suma = comps.reduce((t, c) => t + c.pct, 0);
+    const diag = f.get('diagnostico') === 'on';
+    if (!comps.length) error = 'La regla necesita al menos un componente.';
+    else {
+      await exec('UPDATE general.reac_reglas SET nombre=?, articulo=?, aprobatoria=?, diagnostico=?, nota=?, componentes=?::jsonb WHERE anio=? AND codigo=?',
+        [str(f.get('nombre')), str(f.get('articulo')), num(f.get('aprobatoria'), 70), diag, str(f.get('nota')) || null, JSON.stringify(comps), anio, codigo]);
+      msg = `Regla ${codigo} guardada.` + (!diag && suma !== 100 ? ` Ojo: sus componentes suman ${suma} %.` : '');
+    }
+  } else if (accion === 'nueva') {
+    const codigo = str(f.get('codigo')).replace(/\s+/g, '');
+    const ciclo = str(f.get('ciclo'));
+    if (!codigo || !CICLOS.some(([k]) => k === ciclo)) error = 'Indique un código (p. ej. 42x) y el ciclo.';
+    else if (await one<any>('SELECT 1 FROM general.reac_reglas WHERE anio=? AND codigo=?', [anio, codigo])) error = `Ya existe la regla ${codigo} en ${anio}.`;
+    else {
+      await exec(`INSERT INTO general.reac_reglas (anio, codigo, ciclo, nombre, articulo, aprobatoria, componentes, orden)
+        VALUES (?,?,?,?,?,70,?::jsonb,(SELECT COALESCE(MAX(orden),0)+1 FROM general.reac_reglas WHERE anio=?))`,
+        [anio, codigo, ciclo, str(f.get('nombre')) || 'Nueva regla', codigo, JSON.stringify([{ clave: 'tc', nombre: 'Trabajo cotidiano', pct: 100 }]), anio]);
+      msg = `Regla ${codigo} creada; complete sus componentes.`;
+    }
+  } else if (accion === 'borrar') {
+    await exec('DELETE FROM general.reac_reglas WHERE anio=? AND codigo=?', [anio, str(f.get('codigo'))]);
+    msg = 'Regla eliminada. Las materias que la usaban quedan sin tipo del MEP en ese año.';
+  } else if (accion === 'copiar') {
+    const destino = num(f.get('destino'));
+    if (destino < 2020 || destino > 2100) error = 'Año no válido.';
+    else if (await one<any>('SELECT 1 FROM general.reac_reglas WHERE anio=?', [destino])) error = `Ya hay reglas para ${destino}.`;
+    else {
+      await exec(`INSERT INTO general.reac_reglas (anio, codigo, ciclo, nombre, articulo, aprobatoria, diagnostico, nota, componentes, orden)
+        SELECT ?, codigo, ciclo, nombre, articulo, aprobatoria, diagnostico, nota, componentes, orden FROM general.reac_reglas WHERE anio=?`, [destino, anio]);
+      msg = `Se copiaron las reglas de ${anio} a ${destino}. Ajústelas al nuevo reglamento.`;
+      anio = destino;
+    }
+  } else if (accion === 'restaurar' && anio === 2026) {
+    await transaccion(async (c) => {
+      await c.query('DELETE FROM general.reac_reglas WHERE anio=2026');
+      for (const [i, x] of REAC_2026.entries())
+        await c.query(`INSERT INTO general.reac_reglas (anio, codigo, ciclo, nombre, articulo, aprobatoria, diagnostico, nota, componentes, orden)
+          VALUES (2026,$1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`, [x.codigo, x.ciclo, x.nombre, x.articulo, x.aprobatoria, !!x.diagnostico, x.nota ?? null, JSON.stringify(x.componentes), i + 1]);
+    });
+    msg = 'Se restauraron las reglas del REAC 2026 (Decreto 45509-MEP).';
+  }
+  anios = await aniosReglas();
+}
+const reglas = await reglasDe(anio);
+const usos = new Map((await q<any>('SELECT regla, COUNT(*) AS n FROM general.asignaturas WHERE regla IS NOT NULL GROUP BY regla')).map((r) => [r.regla, Number(r.n)]));
+---
+<Base titulo="Componentes del MEP">
+  <h1>Componentes del MEP</h1>
+  <p class="sub">Matriz del Reglamento de Evaluación de los Aprendizajes (artículos 40 a 46). Las materias de los docentes toman de aquí sus componentes para el curso lectivo de ese año (o del más reciente anterior).</p>
+  {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
+  <div class="tarjeta fila">
+    <form method="get"><label>Año<select name="anio" onchange="this.form.submit()">{anios.map((a) => <option selected={a === anio}>{a}</option>)}</select></label></form>
+    <form method="post" class="fila"><input type="hidden" name="accion" value="copiar" /><input type="hidden" name="anio" value={anio} />
+      <label>Copiar {anio} al año<input name="destino" type="number" value={anio + 1} style="width:100px" /></label><button class="sec">Copiar</button></form>
+    {anio === 2026 && <form method="post"><input type="hidden" name="accion" value="restaurar" /><input type="hidden" name="anio" value={anio} />
+      <button class="sec" onclick="return confirm('Se reemplazan las reglas de 2026 por las del decreto. ¿Continuar?')">Restaurar REAC 2026</button></form>}
+  </div>
+  {CICLOS.map(([k, titulo]) => {
+    const del = reglas.filter((r) => r.ciclo === k);
+    return del.length > 0 && (
+      <section class="ciclo">
+        <h2>{titulo}</h2>
+        {del.map((r) => {
+          const suma = r.componentes.reduce((t, c) => t + c.pct, 0);
+          return (
+            <details class="tarjeta regla">
+              <summary><b>{r.articulo}</b> {r.nombre}<span class="muted r-res">{resumenRegla(r)} · aprueba con {r.aprobatoria}{usos.get(r.codigo) ? ` · ${usos.get(r.codigo)} materias` : ''}</span>
+                {!r.diagnostico && suma !== 100 && <span class="mal-txt"> Suma {suma} %</span>}</summary>
+              <form method="post">
+                <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="anio" value={anio} /><input type="hidden" name="codigo" value={r.codigo} />
+                <div class="fila">
+                  <label style="flex:3">Materias<input name="nombre" value={r.nombre} /></label>
+                  <label>Artículo<input name="articulo" value={r.articulo} style="width:90px" /></label>
+                  <label>Nota para aprobar<input name="aprobatoria" value={r.aprobatoria} style="width:80px" /></label>
+                  <label class="check"><input type="checkbox" name="diagnostico" checked={r.diagnostico} /> Diagnóstico (sin porcentaje)</label>
+                </div>
+                <table class="comp-t">
+                  <tr><th>Componente</th><th>Nombre</th><th>%</th><th>Cuántas</th></tr>
+                  {CLAVES.map(([clave, def]) => { const x = r.componentes.find((c) => c.clave === clave); return (
+                    <tr><td>{def}</td><td><input name={`nom_${clave}`} value={x?.nombre ?? def} /></td>
+                      <td><input name={`pct_${clave}`} value={x ? x.pct : ''} placeholder="—" style="width:70px" /></td>
+                      <td><input name={`cant_${clave}`} value={x?.cantidad ?? ''} placeholder="—" style="width:60px" /></td></tr>); })}
+                </table>
+                <label>Nota<input name="nota" value={r.nota ?? ''} placeholder="Aclaración para los docentes (opcional)" /></label>
+                <p class="fila"><button>Guardar</button><span class="muted">«Cuántas»: evaluaciones que se crean solas en cada periodo (p. ej. 2 pruebas). Vacío en % = la regla no tiene ese componente.</span></p>
+              </form>
+              <form method="post"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="anio" value={anio} /><input type="hidden" name="codigo" value={r.codigo} />
+                <button class="mini peligro" onclick="return confirm('¿Eliminar esta regla?')">Eliminar regla</button></form>
+            </details>
+          );
+        })}
+      </section>
+    );
+  })}
+  <form method="post" class="tarjeta fila">
+    <input type="hidden" name="accion" value="nueva" /><input type="hidden" name="anio" value={anio} />
+    <label>Código<input name="codigo" placeholder="42x" style="width:90px" required /></label>
+    <label>Ciclo<select name="ciclo">{CICLOS.map(([k, t]) => <option value={k}>{t}</option>)}</select></label>
+    <label style="flex:1">Materias<input name="nombre" /></label>
+    <button class="sec">Agregar regla</button>
+  </form>
+  <style>
+    .ciclo h2 { font-size: 17px; margin: 22px 0 8px; }
+    .regla { margin: 0 0 8px; padding: 10px 14px; }
+    .regla summary { cursor: pointer; }
+    .r-res { display: block; font-size: 13px; margin-top: 2px; }
+    .regla form { margin-top: 10px; }
+    .regla label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+    .regla label.check { flex-direction: row; align-items: center; gap: 6px; }
+    .regla label.check input { width: auto; }
+    .comp-t { margin: 8px 0; }
+    .comp-t td, .comp-t th { padding: 4px 8px; font-size: 14px; text-align: left; }
+    .mal-txt { color: var(--rojo); }
+  </style>
+</Base>

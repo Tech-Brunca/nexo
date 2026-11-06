@@ -1,12 +1,13 @@
 ---
 import { asegurarComponentes } from '../../lib/sea';
 import Base from '../../layouts/Base.astro';
-import { exec, q, getAjustes } from '../../lib/db';
+import { exec, q, one, getAjustes } from '../../lib/db';
+import { reglaDeMateria, crearEvaluacionesPlan, resumenRegla } from '../../lib/reac';
 import { seccionDuplicada } from '../../lib/calc';
 import { num, numOrNull, str, etiquetaSeccion, validarSubgrupo } from '../../lib/util';
 const { user, inst } = Astro.locals;
 const cfg = await getAjustes(user.id);
-let msg = '';
+let msg = '', ok = '';
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
@@ -21,9 +22,16 @@ if (Astro.request.method === 'POST') {
       const nueva = { nivel, nombre, subgrupo, asignatura_id: propia, anio: cfg.curso_lectivo };
       if (await seccionDuplicada(user.id, nueva)) msg = `Ya existe la sección ${etiquetaSeccion(nueva)} con esa asignatura en el curso ${cfg.curso_lectivo}.`;
       else {
-        await exec('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, subgrupo, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?,?)',
-          [user.id, nivel, nombre, subgrupo, propia, numOrNull(f.get('nota_aprobatoria')), cfg.curso_lectivo]);
-        await asegurarComponentes(user.id, nivel);
+        // Con la regla del MEP de la materia: nota aprobatoria del reglamento (si no se indicó), componentes y pruebas
+        const m = propia ? await reglaDeMateria(user.id, propia) : null;
+        const creada = await one<any>('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, subgrupo, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?,?) RETURNING id',
+          [user.id, nivel, nombre, subgrupo, propia, numOrNull(f.get('nota_aprobatoria')) ?? m?.regla.aprobatoria ?? null, cfg.curso_lectivo]);
+        await asegurarComponentes(user.id, nivel, propia);
+        if (m) {
+          const creadas = await crearEvaluacionesPlan(user.id, { id: creada!.id, nivel, asignatura_id: propia }, m.regla, m.tc);
+          ok = `Sección ${etiquetaSeccion({ nivel, nombre, subgrupo })} creada con los componentes del MEP (${resumenRegla(m.regla)}).` +
+            (creadas.length ? ` Se crearon en cada periodo: ${creadas.join('; ')}.` : '') + ' Puede ajustarlos en Componentes y Evaluaciones.';
+        } else ok = `Sección ${etiquetaSeccion({ nivel, nombre, subgrupo })} creada.${propia ? ' Su materia no tiene tipo del MEP: elíjalo en Ajustes para crear los componentes solos.' : ''}`;
       }
     }
   } else if (accion === 'borrar') {
@@ -40,7 +48,7 @@ const secciones = await q<any>(
 <Base titulo="Secciones">
   <h1>Secciones</h1>
   <p class="sub">Sus grupos en {inst!.nombre}: grupos completos o medios grupos, cada uno con su asignatura.</p>
-  {msg && <div class="msg mal">{msg}</div>}
+  {msg && <div class="msg mal">{msg}</div>}{ok && <div class="msg ok">{ok}</div>}
   <form method="post" class="tarjeta fila">
     <input type="hidden" name="accion" value="crear" />
     <label>Nivel<input name="nivel" id="nivel" placeholder="10" size="4" required /></label>

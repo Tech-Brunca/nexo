@@ -6,6 +6,7 @@ import { exec, q, one, getAjustes } from '../../lib/db';
 import { estudiantesDe, pctIndicadores } from '../../lib/calc';
 import { num, numOrNull, str, fmt, r2, sqlEtiquetaSeccion } from '../../lib/util';
 import { plantillas, llenar, enlaceWa, fechaLarga } from '../../lib/whatsapp';
+import { repartir } from '../../lib/reac';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
 const ev = await one<any>(`SELECT e.*, c.nombre AS componente, COALESCE(e.tipo, c.tipo) AS tipo, s.nivel, ${sqlEtiquetaSeccion()} AS seccion, p.nombre AS periodo, a.nombre AS asignatura
@@ -47,9 +48,30 @@ if (Astro.request.method === 'POST') {
     if (fuera) error = `${fuera} nota(s) fuera del rango 0–${ev.puntos_total} no se guardaron.`;
     else msg = 'Calificaciones guardadas.';
   } else if (accion === 'datos') {
-    await exec('UPDATE {S}.evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, fecha=? WHERE id=?',
-      [str(f.get('nombre')), num(f.get('puntos_total')), num(f.get('porcentaje')), str(f.get('fecha')) || null, id]);
-    return Astro.redirect(`/evaluaciones/${id}`);
+    const nuevo = Number(str(f.get('porcentaje')).replace(',', '.'));
+    const comp = await one<any>('SELECT porcentaje FROM {S}.componentes WHERE id=?', [ev.componente_id]);
+    const valorComp = Number(comp?.porcentaje ?? 100);
+    if (!(nuevo >= 0) || nuevo > valorComp) error = `El valor debe estar entre 0 y ${valorComp} % (el valor del componente ${ev.componente}).`;
+    else {
+      // Completar el rubro: si el componente estaba completo y tiene otras evaluaciones, se reparten lo que falta
+      // (dos pruebas de 45 %: si una queda en 20 %, la otra pasa a 25 %). Las notas del SEA no se tocan.
+      const otras = await q<any>(`SELECT id, nombre, porcentaje, origen FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND componente_id=? AND id<>? ORDER BY fecha NULLS LAST, id`,
+        [ev.seccion_id, ev.periodo_id, ev.componente_id, id]);
+      const sea = otras.filter((o) => o.origen === 'sea'), libres = otras.filter((o) => o.origen !== 'sea');
+      const sumaSea = sea.reduce((t, o) => t + Number(o.porcentaje), 0);
+      const antes = Number(ev.porcentaje) + sumaSea + libres.reduce((t, o) => t + Number(o.porcentaje), 0);
+      await exec('UPDATE {S}.evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, fecha=? WHERE id=?',
+        [str(f.get('nombre')), num(f.get('puntos_total')), nuevo, str(f.get('fecha')) || null, id]);
+      let aviso = '';
+      const resto = Math.round((valorComp - nuevo - sumaSea) * 100) / 100;
+      if (libres.length && nuevo !== Number(ev.porcentaje) && Math.abs(antes - valorComp) < 0.01 && resto >= 0) {
+        const partes = repartir(resto, libres.length);
+        for (const [i, o] of libres.entries())
+          await exec(`UPDATE {S}.evaluaciones SET porcentaje=?, puntos_total=CASE WHEN origen='auto' THEN ? ELSE puntos_total END WHERE id=?`, [partes[i], partes[i], o.id]);
+        aviso = `Para completar ${ev.componente} (${valorComp} %): ` + libres.map((o, i) => `${o.nombre} quedó en ${partes[i]} %`).join(', ') + '.';
+      }
+      return Astro.redirect(`/evaluaciones/${id}${aviso ? `?aviso=${encodeURIComponent(aviso)}` : ''}`);
+    }
   }
 }
 const ests = await estudiantesDe(ev.seccion_id);
@@ -80,13 +102,16 @@ const NIVELES = [['', '—'], ['1', '1'], ['2', '2'], ['3', '3'], ['0', 'NE']];
   <h1 class="no-print">{ev.nombre}</h1>
   <p class="sub no-print">{ev.componente} · Sección {ev.seccion} · {ev.periodo} · Valor {ev.porcentaje}%{!porInd && ` · ${ev.puntos_total} puntos`}</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
-  <details class="tarjeta no-print"><summary>Editar datos de la evaluación</summary>
+  {Astro.url.searchParams.get('aviso') && <div class="msg ok no-print">{Astro.url.searchParams.get('aviso')}</div>}
+  {ev.origen === 'plan' && notas.size === 0 && !porInd && <div class="msg aviso no-print">Nexo creó esta evaluación según el reglamento. Antes de calificar, ponga los puntos totales del instrumento en «Editar datos de la evaluación».</div>}
+  <details class="tarjeta no-print" open={ev.origen === 'plan' && notas.size === 0 && !porInd}><summary>Editar datos de la evaluación</summary>
     <form method="post" class="fila" style="margin-top:10px"><input type="hidden" name="accion" value="datos" />
       <label style="flex:1">Nombre<input name="nombre" value={ev.nombre} /></label>
       {!porInd && <label>Puntos totales<input name="puntos_total" value={ev.puntos_total} style="width:90px" /></label>}
       {porInd && <input type="hidden" name="puntos_total" value="0" />}
       <label>Valor %<input name="porcentaje" value={ev.porcentaje} style="width:90px" /></label>
-      <label>Fecha<input type="date" name="fecha" value={ev.fecha ?? ''} /></label><button class="sec">Guardar</button></form>
+      <label>Fecha<input type="date" name="fecha" value={ev.fecha ?? ''} /></label><button class="sec">Guardar</button>
+      <p class="muted" style="flex-basis:100%;margin:0;font-size:13px">Si cambia el valor %, las demás evaluaciones de {ev.componente} se ajustan solas para completar el componente.</p></form>
   </details>
   {subgrupos.length > 0 && (
     <form class="fila no-print" style="margin-bottom:10px"><label>Subgrupo<select name="sub" onchange="this.form.submit()"><option value="">Todos</option>{subgrupos.map((s) => <option selected={s === sub}>{s}</option>)}</select></label></form>

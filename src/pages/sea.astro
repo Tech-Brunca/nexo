@@ -13,8 +13,8 @@ const periodos = await q<any>('SELECT id, numero, nombre, fecha_ini, fecha_fin F
 const pedido = Number(Astro.url.searchParams.get('periodo') ?? 0);
 const per = periodos.find((p) => p.id === pedido) ?? periodos.find((p) => p.id === Astro.locals.periodo?.id) ?? periodoDeFecha(periodos);
 const sec = seccionId ? await seccion(U, seccionId) : null;
-if (sec) await asegurarComponentes(U, sec.nivel);
-const comps = sec ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave IS NOT NULL', [U, sec.nivel]) : [];
+if (sec) await asegurarComponentes(U, sec.nivel, sec.asignatura_id);
+const comps = sec ? await q<any>('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=? AND clave IS NOT NULL', [U, sec.nivel, sec.asignatura_id ?? 0]) : [];
 const compDe = (k: string) => comps.find((c) => c.clave === k);
 const ORD = ['primer', 'segundo', 'tercer', 'cuarto'];
 const nombreArchivo = () => `sea_${ORD[(per?.numero ?? 1) - 1] ?? 'periodo' + per?.numero}_periodo_${etiquetaSeccion(sec)}.csv`;
@@ -148,7 +148,7 @@ const qs = sec && per ? `seccion=${sec.id}&periodo=${per.id}` : '';
   {errores.length > 0 && <div class="msg mal"><b>No se importó nada.</b> Corrija el archivo e inténtelo de nuevo:<ul style="margin:6px 0 0;padding-left:20px">{errores.slice(0, 15).map((e) => <li>{e}</li>)}</ul>{errores.length > 15 && <p style="margin:6px 0 0">… y {errores.length - 15} más.</p>}</div>}
   {sec && per && r && (
     <>
-      {sumaPct !== 100 && <div class="msg aviso">Los componentes del nivel {sec.nivel} suman {sumaPct}%. Ajústelos en <a href={`/componentes?nivel=${sec.nivel}`}>Componentes</a> antes de importar o exportar.</div>}
+      {sumaPct !== 100 && <div class="msg aviso">Los componentes del nivel {sec.nivel} suman {sumaPct}%. Ajústelos en <a href={`/componentes?nivel=${sec.nivel}&asignatura=${sec.asignatura_id ?? 0}`}>Componentes</a> antes de importar o exportar.</div>}
       <div class="grid-sea">
         <div class="tarjeta">
           <h2 style="margin-top:0">Exportar al SEA</h2>

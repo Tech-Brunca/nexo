@@ -9,7 +9,7 @@ const U = user.id;
 // fk: columna -> tabla cuyos ids se remapean; opcional: queda NULL si su referencia no existe.
 const TABLAS: { t: string; sql: string; fk: Record<string, string>; auto?: boolean; opcional?: string[] }[] = [
   { t: 'periodos', sql: 'SELECT * FROM {S}.periodos WHERE usuario_id=?', fk: {}, auto: true },
-  { t: 'componentes', sql: 'SELECT * FROM {S}.componentes WHERE usuario_id=?', fk: {}, auto: true },
+  { t: 'componentes', sql: 'SELECT * FROM {S}.componentes WHERE usuario_id=?', fk: { asignatura_id: 'asignaturas' }, auto: true, opcional: ['asignatura_id'] },
   { t: 'secciones', sql: 'SELECT * FROM {S}.secciones WHERE usuario_id=?', fk: { asignatura_id: 'asignaturas' }, auto: true, opcional: ['asignatura_id'] },
   { t: 'estudiantes', sql: 'SELECT * FROM {S}.estudiantes WHERE usuario_id=?', fk: {}, auto: true },
   { t: 'matriculas', sql: 'SELECT m.* FROM {S}.matriculas m JOIN {S}.secciones s ON s.id=m.seccion_id WHERE s.usuario_id=?', fk: { estudiante_id: 'estudiantes', seccion_id: 'secciones' }, auto: true },
@@ -81,7 +81,7 @@ if (Astro.request.method === 'POST') {
           }
           for (const r of json.data.asignaturas ?? []) {
             const ya = (await c.query('SELECT id FROM general.asignaturas WHERE usuario_id=$1 AND nombre=$2', [U, r.nombre])).rows[0];
-            mapa.asignaturas.set(r.id, ya?.id ?? (await ins('general.asignaturas', { usuario_id: U, nombre: r.nombre }, true)));
+            mapa.asignaturas.set(r.id, ya?.id ?? (await ins('general.asignaturas', { usuario_id: U, nombre: r.nombre, ciclo: r.ciclo ?? null, regla: r.regla ?? null, tc_modo: r.tc_modo ?? 'indicadores' }, true)));
           }
           for (const r of json.data.indicadores ?? []) {
             const ya = (await c.query('SELECT id FROM general.indicadores WHERE usuario_id=$1 AND nivel=$2 AND nombre=$3', [U, r.nivel, r.nombre])).rows[0];

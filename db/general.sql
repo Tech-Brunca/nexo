@@ -102,3 +102,34 @@ CREATE TABLE IF NOT EXISTS general.plantillas_hogar (
   orden smallint NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS plantillas_hogar_usuario ON general.plantillas_hogar (usuario_id, orden);
+
+-- v3.11: matriz de componentes del MEP (Reglamento de Evaluación), por año; la administran los administradores
+CREATE TABLE IF NOT EXISTS general.reac_reglas (
+  anio smallint NOT NULL,
+  codigo text NOT NULL,          -- artículo e inciso, p. ej. «42h»
+  ciclo text NOT NULL,           -- primaria, iii, diversificada, adultos, vocacional, coned-distancia, coned-virtual
+  nombre text NOT NULL,
+  articulo text NOT NULL DEFAULT '',
+  aprobatoria numeric(5,2) NOT NULL DEFAULT 70,
+  diagnostico boolean NOT NULL DEFAULT false,
+  nota text,
+  componentes jsonb NOT NULL,    -- [{clave, nombre, pct, cantidad?}]
+  orden int NOT NULL DEFAULT 0,
+  PRIMARY KEY (anio, codigo)
+);
+-- Regla del MEP de cada materia y forma de calificar el trabajo cotidiano
+ALTER TABLE general.asignaturas ADD COLUMN IF NOT EXISTS ciclo text;
+ALTER TABLE general.asignaturas ADD COLUMN IF NOT EXISTS regla text;
+ALTER TABLE general.asignaturas ADD COLUMN IF NOT EXISTS tc_modo text NOT NULL DEFAULT 'indicadores' CHECK (tc_modo IN ('indicadores', 'unica'));
+-- La escala de asistencia que venía de fábrica (reglamento anterior) pasa a la del artículo 37 del REAC 2026.
+-- Solo para quienes la tienen tal cual vino; una escala modificada por el docente no se toca.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM general.meta WHERE clave = 'escala_reac_2026') THEN
+    DELETE FROM general.escala_asistencia e WHERE e.usuario_id IN (
+      SELECT usuario_id FROM general.escala_asistencia GROUP BY usuario_id
+      HAVING string_agg(desde::int || '-' || hasta::int || ':' || porcentaje::int, ',' ORDER BY desde)
+        = '0-1:100,1-10:90,10-20:80,20-30:70,30-40:60,40-50:50,50-60:40,60-70:30,70-80:20,80-90:10,90-101:0');
+    INSERT INTO general.meta VALUES ('escala_reac_2026', '1') ON CONFLICT DO NOTHING;
+  END IF;
+END $$;

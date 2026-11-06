@@ -1,0 +1,108 @@
+---
+// Campos para crear o editar una materia: ciclo → materia de la lista del MEP (o «Otra», con su tipo),
+// y cómo se califica el trabajo cotidiano. Envía nombre, regla y tc_modo.
+import { CICLOS, MATERIAS, resumenRegla, type Regla } from '../lib/reac';
+interface Props { reglas: Regla[]; materia?: { nombre: string; ciclo: string | null; regla: string | null; tc_modo: string } }
+const { reglas, materia } = Astro.props;
+const datos = {
+  reglas: reglas.map((r) => ({ codigo: r.codigo, ciclo: r.ciclo, nombre: r.nombre, resumen: resumenRegla(r), nota: r.nota ?? '', diag: !!r.diagnostico,
+    tc: r.componentes.some((c) => c.clave === 'tc' && c.pct > 0), aprobatoria: r.aprobatoria })),
+  materias: MATERIAS.filter((m) => reglas.some((r) => r.codigo === m.codigo)),
+};
+const ciclo = materia?.ciclo ?? reglas.find((r) => r.codigo === materia?.regla)?.ciclo ?? '';
+---
+<div class="materia-campos" data-datos={JSON.stringify(datos)} data-ciclo={ciclo} data-nombre={materia?.nombre ?? ''} data-regla={materia?.regla ?? ''}>
+  <div class="fila">
+    <label>Ciclo o modalidad<select class="mc-ciclo">
+      <option value="">Elija…</option>
+      {CICLOS.map(([k, t]) => <option value={k} selected={k === ciclo}>{t}</option>)}
+      <option value="ninguno" selected={!!materia && !materia.regla}>Sin reglamento (componentes a mano)</option>
+    </select></label>
+    <label class="mc-l-materia" hidden>Materia<select class="mc-materia"></select></label>
+  </div>
+  <div class="fila">
+    <label class="mc-l-nombre" hidden style="flex:1">Nombre de la materia<input name="nombre" class="mc-nombre" maxlength="120" value={materia?.nombre ?? ''} /></label>
+    <label class="mc-l-tipo" hidden style="flex:2">Tipo según el reglamento<select class="mc-tipo"></select></label>
+  </div>
+  <input type="hidden" name="regla" class="mc-regla" value={materia?.regla ?? ''} />
+  <p class="mc-resumen" hidden></p>
+  <fieldset class="mc-tc" hidden>
+    <legend>Trabajo cotidiano</legend>
+    <label class="radio"><input type="radio" name="tc_modo" value="indicadores" checked={materia?.tc_modo !== 'unica'} /> Por indicadores, con varios instrumentos</label>
+    <label class="radio"><input type="radio" name="tc_modo" value="unica" checked={materia?.tc_modo === 'unica'} /> Una sola calificación</label>
+  </fieldset>
+</div>
+<style is:global>
+  .materia-campos { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 10px; }
+  .materia-campos label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .materia-campos label[hidden], .materia-campos [hidden] { display: none !important; }
+  .materia-campos select { max-width: 100%; }
+  .mc-resumen { margin: 0; padding: 8px 12px; background: var(--hielo); border-radius: 8px; font-size: 14px; }
+  .mc-resumen small { display: block; color: var(--ambar); margin-top: 3px; }
+  .mc-tc { border: 1px solid var(--linea); border-radius: 8px; padding: 8px 12px; margin: 0; }
+  .mc-tc legend { font-size: 13px; color: var(--suave); padding: 0 4px; }
+  .mc-tc label.radio { flex-direction: row; align-items: center; gap: 8px; margin: 3px 0; }
+  .mc-tc input { width: auto; }
+</style>
+<script is:inline>
+  (() => {
+    const iniciar = (caja) => {
+      if (caja.dataset.listo) return; caja.dataset.listo = '1';
+      const d = JSON.parse(caja.dataset.datos);
+      const $ = (s) => caja.querySelector(s);
+      const ciclo = $('.mc-ciclo'), mat = $('.mc-materia'), nombre = $('.mc-nombre'), tipo = $('.mc-tipo'), regla = $('.mc-regla');
+      const resumen = $('.mc-resumen'), tc = $('.mc-tc');
+      const ver = (sel, si) => { $(sel).hidden = !si; };
+      const opciones = (sel, items, val) => { sel.innerHTML = ''; for (const [v, t] of items) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === val) o.selected = true; sel.appendChild(o); } };
+      const pintarRegla = () => {
+        const r = d.reglas.find((x) => x.codigo === regla.value);
+        resumen.hidden = !r;
+        tc.hidden = !r || r.diag || !r.tc;
+        if (r) {
+          resumen.textContent = `Componentes: ${r.resumen}. Nota mínima para aprobar: ${r.aprobatoria}.`;
+          if (r.nota) { const s = document.createElement('small'); s.textContent = r.nota; resumen.appendChild(s); }
+        }
+      };
+      const elegirMateria = () => {
+        const v = mat.value;
+        if (v === 'otra') {
+          ver('.mc-l-nombre', true); ver('.mc-l-tipo', true); nombre.required = true;
+          if (nombre.dataset.auto) { nombre.value = ''; delete nombre.dataset.auto; }
+          regla.value = tipo.value;
+        } else if (v === '') {
+          ver('.mc-l-nombre', false); ver('.mc-l-tipo', false); regla.value = ''; nombre.required = false;
+        } else {
+          const m = d.materias[Number(v)];
+          ver('.mc-l-tipo', false); regla.value = m.codigo;
+          ver('.mc-l-nombre', !!m.pide); nombre.required = !!m.pide;
+          if (m.pide) { if (nombre.dataset.auto) { nombre.value = ''; delete nombre.dataset.auto; } nombre.placeholder = 'p. ej. Soporte a las Tecnologías de Información'; }
+          else { nombre.value = m.nombre; nombre.dataset.auto = '1'; }
+        }
+        pintarRegla();
+      };
+      const elegirCiclo = (inicial) => {
+        const c = ciclo.value;
+        if (c === 'ninguno') {
+          ver('.mc-l-materia', false); ver('.mc-l-tipo', false); ver('.mc-l-nombre', true); nombre.required = true; regla.value = ''; pintarRegla(); return;
+        }
+        ver('.mc-l-materia', !!c);
+        if (!c) { ver('.mc-l-nombre', false); ver('.mc-l-tipo', false); regla.value = ''; pintarRegla(); return; }
+        const lista = d.materias.map((m, i) => [m, i]).filter(([m]) => m.ciclo === c);
+        let val = '';
+        if (inicial && caja.dataset.regla) {
+          const i = lista.find(([m]) => m.codigo === caja.dataset.regla && (m.pide || m.nombre === caja.dataset.nombre));
+          val = i ? String(i[1]) : 'otra';
+        }
+        opciones(mat, [['', 'Elija la materia…'], ...lista.map(([m, i]) => [String(i), m.nombre]), ['otra', 'Otra materia (escribir el nombre)']], val);
+        opciones(tipo, d.reglas.filter((r) => r.ciclo === c).map((r) => [r.codigo, `${r.articulo}: ${r.nombre}`]), inicial ? caja.dataset.regla : '');
+        elegirMateria();
+      };
+      ciclo.addEventListener('change', () => elegirCiclo(false));
+      mat.addEventListener('change', elegirMateria);
+      tipo.addEventListener('change', () => { regla.value = tipo.value; pintarRegla(); });
+      elegirCiclo(true);
+      if (ciclo.value === 'ninguno' || (!ciclo.value && caja.dataset.nombre)) { ver('.mc-l-nombre', true); }
+    };
+    document.querySelectorAll('.materia-campos').forEach(iniciar);
+  })();
+</script>

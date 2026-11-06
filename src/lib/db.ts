@@ -79,7 +79,7 @@ export async function transaccion<T>(fn: (c: pg.PoolClient) => Promise<T>): Prom
 
 // ── Esquemas y migraciones ──────────────────────────────────────────────────
 // Subir VERSION cuando cambien general.sql o colegio.sql: la primera petición migra todo.
-export const VERSION = '3.10.0';
+export const VERSION = '3.11.0';
 let listo: Promise<void> | null = null;
 
 export const sqlDeColegio = (esquema: string) => sqlColegio.replaceAll('__ESQUEMA__', esquema);
@@ -135,8 +135,9 @@ export type Ajustes = {
   alerta_dias: number; alerta_ausencias: number; ne_cuenta_cero: boolean;
 };
 
-const ESCALA_INICIAL = [[0, 1, 100], [1, 10, 90], [10, 20, 80], [20, 30, 70], [30, 40, 60], [40, 50, 50],
-  [50, 60, 40], [60, 70, 30], [70, 80, 20], [80, 90, 10], [90, 101, 0]];
+// Tabla del artículo 37 del Reglamento de Evaluación (Decreto 45509-MEP, 2026): porcentaje de ausencias
+// injustificadas → parte del valor del componente (con asistencia de 5 %: 5, 4, 3, 2, 1 y 0).
+const ESCALA_INICIAL = [[0, 10, 100], [10, 20, 80], [20, 30, 60], [30, 40, 40], [40, 50, 20], [50, 101, 0]];
 
 export async function getAjustes(uid: number): Promise<Ajustes> {
   let a = await one<Ajustes>('SELECT * FROM general.ajustes WHERE usuario_id=?', [uid]);

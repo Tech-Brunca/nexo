@@ -107,10 +107,10 @@ export async function calcularPeriodo(uid: number, seccionId: number, periodoId:
   if (!per) return null;
   const aj = await getAjustes(uid);
   const notaApb = Number(sec.nota_aprobatoria ?? aj.nota_aprobatoria);
-  await asegurarComponentes(uid, sec.nivel);
+  await asegurarComponentes(uid, sec.nivel, sec.asignatura_id);
   await materializarImportadas(uid, sec, periodoId);
   const comps = await q<Comp>(
-    'SELECT id, nombre, porcentaje, tipo, clave FROM {S}.componentes WHERE usuario_id = ? AND nivel = ? ORDER BY orden, id', [uid, sec.nivel]);
+    'SELECT id, nombre, porcentaje, tipo, clave FROM {S}.componentes WHERE usuario_id = ? AND nivel = ? AND COALESCE(asignatura_id,0) = ? ORDER BY orden, id', [uid, sec.nivel, sec.asignatura_id ?? 0]);
   // Valores importados (ReDDi / SEA): reemplazan lo calculado para ese componente
   const imp = await q<any>('SELECT estudiante_id, clave, valor FROM {S}.notas_importadas WHERE seccion_id = ? AND periodo_id = ?', [seccionId, periodoId]);
   const impMap = new Map(imp.map((x) => [`${x.estudiante_id}:${x.clave}`, Number(x.valor)]));

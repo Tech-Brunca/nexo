@@ -24,10 +24,18 @@ export function claveDeNombre(nombre: string): ClaveSea | null {
 }
 export const normalizar = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
-/** Garantiza los 5 componentes del SEA para un nivel: adopta los existentes por nombre y crea los que falten. */
-export async function asegurarComponentes(uid: number, nivel: string) {
+/**
+ * Garantiza los 5 componentes del SEA para un nivel y materia: adopta los existentes por nombre y crea los que falten.
+ * Si la materia tiene regla del MEP, la primera vez se crean con sus porcentajes (ver reac.ts).
+ */
+export async function asegurarComponentes(uid: number, nivel: string, asignaturaId: number | null = null) {
   if (!nivel) return;
-  const comps = await q<any>('SELECT id, nombre, clave FROM {S}.componentes WHERE usuario_id=? AND nivel=? ORDER BY orden, id', [uid, nivel]);
+  const comps = await q<any>('SELECT id, nombre, clave FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=? ORDER BY orden, id', [uid, nivel, asignaturaId ?? 0]);
+  if (!comps.length && asignaturaId) {
+    const { reglaDeMateria, aplicarRegla } = await import('./reac');
+    const m = await reglaDeMateria(uid, asignaturaId);
+    if (m) { await aplicarRegla(uid, nivel, asignaturaId, m.regla, m.tc); return; }
+  }
   const tomadas = new Set(comps.filter((c) => c.clave).map((c) => c.clave as string));
   if (tomadas.size === SEA.length) return;
   for (const c of comps.filter((c) => !c.clave)) {
@@ -39,8 +47,8 @@ export async function asegurarComponentes(uid: number, nivel: string) {
   }
   for (const [i, s] of SEA.entries()) {
     if (tomadas.has(s.clave)) continue;
-    await exec(`INSERT INTO {S}.componentes (usuario_id, nivel, nombre, porcentaje, tipo, orden, clave) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT DO NOTHING`, [uid, nivel, s.nombre, s.pct, s.tipo, i + 1, s.clave]);
+    await exec(`INSERT INTO {S}.componentes (usuario_id, nivel, asignatura_id, nombre, porcentaje, tipo, orden, clave) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT DO NOTHING`, [uid, nivel, asignaturaId, s.nombre, s.pct, s.tipo, i + 1, s.clave]);
   }
 }
 
@@ -99,7 +107,7 @@ export function valorPrueba1(comp: { porcentaje: unknown; prueba1?: unknown }) {
 /** Deja la II prueba (creada sola) acorde a la I prueba del SEA: la crea, ajusta su valor o la quita */
 async function asegurarSegunda(x: X, comp: any, seccionId: number, periodoId: number, primera: number | null) {
   const auto = await x(`SELECT e.id, (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego)) AS cal
-    FROM {S}.evaluaciones e WHERE e.seccion_id=? AND e.periodo_id=? AND e.componente_id=? AND e.origen='auto'`, [seccionId, periodoId, comp.id]);
+    FROM {S}.evaluaciones e WHERE e.seccion_id=? AND e.periodo_id=? AND e.componente_id=? AND e.origen IN ('auto', 'plan')`, [seccionId, periodoId, comp.id]);
   if (primera === null) {
     for (const a of auto) if (Number(a.cal) === 0) await x('DELETE FROM {S}.evaluaciones WHERE id=?', [a.id]);
     return null;
@@ -111,14 +119,15 @@ async function asegurarSegunda(x: X, comp: any, seccionId: number, periodoId: nu
       [comp.id, seccionId, periodoId, 'II Prueba', resto, resto]);
     return `II Prueba (${resto} %, sin calificar)`;
   }
-  for (const a of auto) if (Number(a.cal) === 0) await x('UPDATE {S}.evaluaciones SET porcentaje=?, puntos_total=? WHERE id=?', [resto, resto, a.id]);
+  // Las de Nexo ('plan') conservan los puntos que el docente les haya puesto; solo cambia su porcentaje
+  for (const a of auto) if (Number(a.cal) === 0) await x(`UPDATE {S}.evaluaciones SET porcentaje=?, puntos_total=CASE WHEN origen='auto' THEN ? ELSE puntos_total END WHERE id=?`, [resto, resto, a.id]);
   return null;
 }
 
 /** Guarda las notas del SEA como evaluaciones. soloPrimera: la nota de Prueba es solo la I prueba (II periodo). */
-export async function guardarNotasSea(x: X, uid: number, sec: { id: number; nivel: string }, periodoId: number, notas: NotaSea[], soloPrimera: boolean) {
+export async function guardarNotasSea(x: X, uid: number, sec: { id: number; nivel: string; asignatura_id?: number | null }, periodoId: number, notas: NotaSea[], soloPrimera: boolean) {
   const hechas: string[] = [];
-  const comps = await x('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave IS NOT NULL', [uid, sec.nivel]);
+  const comps = await x('SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=? AND clave IS NOT NULL', [uid, sec.nivel, sec.asignatura_id ?? 0]);
   for (const s of SEA.filter((s) => s.clave !== 'asistencia')) {
     const comp = comps.find((c) => c.clave === s.clave);
     const mias = notas.filter((n) => n.clave === s.clave);
@@ -126,6 +135,12 @@ export async function guardarNotasSea(x: X, uid: number, sec: { id: number; nive
     const primera = s.clave === 'prueba' && soloPrimera ? valorPrueba1(comp) : null;
     const valor = primera ?? Number(comp.porcentaje);
     const nombre = primera !== null ? 'I Prueba (SEA)' : `${comp.nombre} (SEA)`;
+    // Las evaluaciones que Nexo creó según el reglamento y aún no tienen notas ceden el lugar a la del SEA:
+    // con la nota completa, todas; con solo la I prueba, la primera prueba (la II queda y se ajusta abajo).
+    const plan = await x(`SELECT e.id FROM {S}.evaluaciones e WHERE e.seccion_id=? AND e.periodo_id=? AND e.componente_id=? AND e.origen='plan'
+      AND NOT EXISTS (SELECT 1 FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego))
+      AND NOT EXISTS (SELECT 1 FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) ORDER BY e.id`, [sec.id, periodoId, comp.id]);
+    for (const p of primera !== null ? plan.slice(0, 1) : plan) await x('DELETE FROM {S}.evaluaciones WHERE id=?', [p.id]);
     let ev = (await x(`SELECT id FROM {S}.evaluaciones WHERE seccion_id=? AND periodo_id=? AND componente_id=? AND origen='sea'`, [sec.id, periodoId, comp.id]))[0];
     if (ev) await x('UPDATE {S}.evaluaciones SET nombre=?, puntos_total=?, porcentaje=?, tipo=? WHERE id=?', [nombre, valor, valor, 'puntos', ev.id]);
     else ev = (await x(`INSERT INTO {S}.evaluaciones (componente_id, seccion_id, periodo_id, nombre, puntos_total, porcentaje, tipo, origen)
@@ -146,12 +161,12 @@ export async function guardarNotasSea(x: X, uid: number, sec: { id: number; nive
  * Al cambiar en Componentes el valor de la I prueba de un nivel: ajusta las pruebas del SEA ya importadas
  * en el II periodo de todas las secciones de ese nivel. Devuelve avisos de las que no se pudieron ajustar.
  */
-export async function ajustarPruebasSea(uid: number, nivel: string) {
+export async function ajustarPruebasSea(uid: number, nivel: string, asignaturaId: number | null = null) {
   const avisos: string[] = [];
   const esquema = esquemaActual();
   await transaccion(async (c) => {
     const x: X = async (sql, p = []) => (await c.query(preparar(sql, esquema), p)).rows;
-    const comp = (await x(`SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave='prueba'`, [uid, nivel]))[0];
+    const comp = (await x(`SELECT * FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=? AND clave='prueba'`, [uid, nivel, asignaturaId ?? 0]))[0];
     if (!comp) return;
     const primera = valorPrueba1(comp);
     const evs = await x(`SELECT e.id, e.seccion_id, e.periodo_id, s.nivel || '-' || s.nombre AS seccion,
@@ -172,7 +187,7 @@ export async function ajustarPruebasSea(uid: number, nivel: string) {
 }
 
 /** Convierte en evaluaciones las notas importadas antes de v3.5 (quedaban como reemplazo del componente). */
-export async function materializarImportadas(uid: number, sec: { id: number; nivel: string }, periodoId: number) {
+export async function materializarImportadas(uid: number, sec: { id: number; nivel: string; asignatura_id?: number | null }, periodoId: number) {
   const pend = await q<any>(`SELECT estudiante_id, clave, valor FROM {S}.notas_importadas WHERE seccion_id=? AND periodo_id=? AND clave<>'asistencia'`, [sec.id, periodoId]);
   if (!pend.length) return;
   const per = (await q<any>('SELECT numero FROM {S}.periodos WHERE id=?', [periodoId]))[0];

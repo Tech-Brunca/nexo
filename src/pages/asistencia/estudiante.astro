@@ -56,7 +56,7 @@ if (Astro.request.method === 'POST') {
     // Valor del componente Asistencia traído del SEA para un periodo
     const pid = num(f.get('periodo_id'));
     const p = periodos.find((x) => x.id === pid);
-    const comp = await one<any>(`SELECT porcentaje FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND clave='asistencia'`, [U, sec.nivel]);
+    const comp = await one<any>(`SELECT porcentaje FROM {S}.componentes WHERE usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=? AND clave='asistencia'`, [U, sec.nivel, sec.asignatura_id ?? 0]);
     if (!p) error = 'Periodo no válido.';
     else if (accion === 'quitar-importada') {
       await exec(`DELETE FROM {S}.notas_importadas WHERE estudiante_id=? AND seccion_id=? AND periodo_id=? AND clave='asistencia'`, [est.id, sec.id, p.id]);

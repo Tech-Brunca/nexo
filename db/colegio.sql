@@ -138,7 +138,7 @@ CREATE INDEX IF NOT EXISTS comunicados_usuario ON __ESQUEMA__.comunicados (usuar
 -- v3.1: componentes fijos del SEA (clave) y calificaciones importadas
 ALTER TABLE __ESQUEMA__.componentes ADD COLUMN IF NOT EXISTS clave text
   CHECK (clave IN ('tc', 'tareas', 'prueba', 'proyecto', 'asistencia'));
-CREATE UNIQUE INDEX IF NOT EXISTS componentes_clave ON __ESQUEMA__.componentes (usuario_id, nivel, clave) WHERE clave IS NOT NULL;
+-- (el índice único de clave se redefinió en v3.11 por materia: componentes_materia)
 
 -- Valor obtenido (en puntos del porcentaje) que reemplaza lo calculado para un componente,
 -- p. ej. al traer el I periodo desde ReDDi o desde el SEA.
@@ -283,3 +283,38 @@ CREATE TABLE IF NOT EXISTS __ESQUEMA__.plan_alertas (
 );
 ALTER TABLE __ESQUEMA__.bitacora DROP CONSTRAINT IF EXISTS bitacora_tipo_check;
 ALTER TABLE __ESQUEMA__.bitacora ADD CONSTRAINT bitacora_tipo_check CHECK (tipo IN ('minuta', 'estudiante', 'plan'));
+
+-- v3.11: los componentes son por nivel Y materia (asignatura), porque el MEP fija porcentajes distintos por materia.
+-- Los componentes existentes (por nivel) se copian a cada materia que se usa en ese nivel y sus evaluaciones
+-- pasan a la copia de su materia; nada se pierde.
+ALTER TABLE __ESQUEMA__.componentes ADD COLUMN IF NOT EXISTS asignatura_id int REFERENCES general.asignaturas(id) ON DELETE SET NULL;
+DROP INDEX IF EXISTS __ESQUEMA__.componentes_clave;
+DO $$
+DECLARE
+  g record; a record; c record; nuevo int; quedan boolean;
+BEGIN
+  IF EXISTS (SELECT 1 FROM general.meta WHERE clave = 'componentes_materia:__ESQUEMA__') THEN RETURN; END IF;
+  FOR g IN SELECT DISTINCT usuario_id, nivel FROM __ESQUEMA__.componentes WHERE asignatura_id IS NULL LOOP
+    FOR a IN SELECT DISTINCT s.asignatura_id FROM __ESQUEMA__.secciones s
+             WHERE s.usuario_id = g.usuario_id AND s.nivel = g.nivel AND s.asignatura_id IS NOT NULL LOOP
+      FOR c IN SELECT * FROM __ESQUEMA__.componentes WHERE usuario_id = g.usuario_id AND nivel = g.nivel AND asignatura_id IS NULL LOOP
+        INSERT INTO __ESQUEMA__.componentes (usuario_id, nivel, asignatura_id, nombre, porcentaje, tipo, orden, clave, prueba1)
+          VALUES (c.usuario_id, c.nivel, a.asignatura_id, c.nombre, c.porcentaje, c.tipo, c.orden, c.clave, c.prueba1) RETURNING id INTO nuevo;
+        UPDATE __ESQUEMA__.evaluaciones e SET componente_id = nuevo FROM __ESQUEMA__.secciones s
+          WHERE e.componente_id = c.id AND s.id = e.seccion_id AND s.asignatura_id = a.asignatura_id;
+      END LOOP;
+    END LOOP;
+    -- Si ninguna sección de ese nivel queda sin materia, los originales sobran
+    SELECT EXISTS (SELECT 1 FROM __ESQUEMA__.secciones s WHERE s.usuario_id = g.usuario_id AND s.nivel = g.nivel AND s.asignatura_id IS NULL) INTO quedan;
+    IF NOT quedan THEN
+      DELETE FROM __ESQUEMA__.componentes x WHERE x.usuario_id = g.usuario_id AND x.nivel = g.nivel AND x.asignatura_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM __ESQUEMA__.evaluaciones e WHERE e.componente_id = x.id)
+        AND EXISTS (SELECT 1 FROM __ESQUEMA__.secciones s WHERE s.usuario_id = g.usuario_id AND s.nivel = g.nivel);
+    END IF;
+  END LOOP;
+  INSERT INTO general.meta VALUES ('componentes_materia:__ESQUEMA__', '1') ON CONFLICT DO NOTHING;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS componentes_materia ON __ESQUEMA__.componentes (usuario_id, nivel, COALESCE(asignatura_id, 0), clave) WHERE clave IS NOT NULL;
+-- Evaluaciones creadas solas según el reglamento al crear la sección (pruebas repartidas, proyecto…)
+ALTER TABLE __ESQUEMA__.evaluaciones DROP CONSTRAINT IF EXISTS evaluaciones_origen_check;
+ALTER TABLE __ESQUEMA__.evaluaciones ADD CONSTRAINT evaluaciones_origen_check CHECK (origen IN ('sea', 'auto', 'plan'));

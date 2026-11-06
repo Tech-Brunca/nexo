@@ -30,10 +30,10 @@ if (sec && Astro.request.method === 'POST') {
     await exec('DELETE FROM {S}.evaluaciones WHERE id=? AND seccion_id=?', [num(f.get('id')), seccionId]);
   }
 }
-if (sec) { await asegurarComponentes(U, sec.nivel); if (periodoId) await materializarImportadas(U, sec, periodoId); }
+if (sec) { await asegurarComponentes(U, sec.nivel, sec.asignatura_id); if (periodoId) await materializarImportadas(U, sec, periodoId); }
 const comps = sec ? await q<any>(`SELECT c.*, COALESCE(SUM(e.porcentaje),0) AS usado FROM {S}.componentes c
   LEFT JOIN {S}.evaluaciones e ON e.componente_id=c.id AND e.seccion_id=? AND e.periodo_id=?
-  WHERE c.usuario_id=? AND c.nivel=? GROUP BY c.id ORDER BY c.clave IS NULL, c.orden, c.id`, [seccionId, periodoId, U, sec.nivel]) : [];
+  WHERE c.usuario_id=? AND c.nivel=? AND COALESCE(c.asignatura_id,0)=? GROUP BY c.id ORDER BY c.clave IS NULL, c.orden, c.id`, [seccionId, periodoId, U, sec.nivel, sec.asignatura_id ?? 0]) : [];
 const evals = sec ? await q<any>(`SELECT e.*, c.nombre AS componente, COALESCE(e.tipo, c.tipo) AS tipo,
   (SELECT COUNT(*) FROM {S}.notas n WHERE n.evaluacion_id=e.id AND (n.puntos IS NOT NULL OR n.no_entrego)) +
   (SELECT COUNT(DISTINCT v.estudiante_id) FROM {S}.valoraciones v WHERE v.evaluacion_id=e.id AND v.nivel IS NOT NULL) AS calificados
@@ -51,7 +51,7 @@ const nEst = sec ? (await one<any>('SELECT COUNT(*) AS n FROM {S}.matriculas WHE
   <p class="sub">Pruebas, tareas, proyectos y trabajo cotidiano de cada sección y periodo.</p>
   <Selector seccionId={seccionId} periodoId={periodoId} conPeriodo />
   {error && <div class="msg mal">{error}</div>}
-  {sec && comps.length === 0 && <div class="msg aviso">El nivel {sec.nivel} no tiene componentes. Configúrelos en <a href={`/componentes?nivel=${sec.nivel}`}>Componentes</a>.</div>}
+  {sec && comps.length === 0 && <div class="msg aviso">El nivel {sec.nivel} no tiene componentes. Configúrelos en <a href={`/componentes?nivel=${sec.nivel}&asignatura=${sec.asignatura_id ?? 0}`}>Componentes</a>.</div>}
   {sec && comps.length > 0 && (
     <>
       <div class="grid-kpi" style="margin-bottom:16px">

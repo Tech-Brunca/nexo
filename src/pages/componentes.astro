@@ -3,14 +3,23 @@ import Base from '../layouts/Base.astro';
 import { exec, q, one, transaccion, preparar, esquemaActual } from '../lib/db';
 import { num, str } from '../lib/util';
 import { SEA, asegurarComponentes, ajustarPruebasSea, PRUEBA1_DEFECTO } from '../lib/sea';
+import { reglaDeMateria, aplicarRegla, crearEvaluacionesPlan, resumenRegla } from '../lib/reac';
 let msg = '', error = '', avisos: string[] = [];
 const { user, inst } = Astro.locals;
 const U = user.id;
-const niveles = (await q<any>('SELECT DISTINCT nivel, length(nivel) FROM {S}.secciones WHERE usuario_id=? ORDER BY length(nivel), nivel', [U])).map((r) => r.nivel);
-let nivel = Astro.url.searchParams.get('nivel') ?? niveles[0] ?? '';
+// Los componentes son por nivel y materia: cada combinación de sus secciones
+const combos = await q<any>(`SELECT DISTINCT s.nivel, COALESCE(s.asignatura_id,0) AS asig, a.nombre AS asignatura, length(s.nivel) AS ln FROM {S}.secciones s
+  LEFT JOIN general.asignaturas a ON a.id=s.asignatura_id WHERE s.usuario_id=? ORDER BY ln, s.nivel, a.nombre`, [U]);
+const clave = (n: string, a: number) => `${n}|${a}`;
+const etiqueta = (c: any) => `${/^\d+$/.test(c.nivel) ? c.nivel + '.°' : c.nivel} · ${c.asignatura ?? 'Sin materia'}`;
+const pedido = combos.find((c) => c.nivel === Astro.url.searchParams.get('nivel') && Number(c.asig) === Number(Astro.url.searchParams.get('asignatura') ?? -1))
+  ?? combos.find((c) => c.nivel === Astro.url.searchParams.get('nivel')) ?? combos[0];
+let nivel = pedido?.nivel ?? '';
+let asig = Number(pedido?.asig ?? 0);
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   nivel = str(f.get('nivel')) || nivel;
+  if (f.has('asignatura')) asig = num(f.get('asignatura'));
   const accion = str(f.get('accion'));
   if (accion === 'guardar') {
     const ids = f.getAll('id');
@@ -38,23 +47,36 @@ if (Astro.request.method === 'POST') {
         else if (choque) error = `No se cambió el valor de la I prueba: en ${choque.seccion} hay notas importadas de hasta ${Number(choque.maximo)}, mayores que ${p1} %.`;
         else {
           await exec('UPDATE {S}.componentes SET prueba1=? WHERE id=? AND usuario_id=?', [p1, idPrueba, U]);
-          avisos = await ajustarPruebasSea(U, nivel);
+          avisos = await ajustarPruebasSea(U, nivel, asig || null);
         }
       }
       msg = error ? 'Porcentajes guardados, excepto el valor de la I prueba.' : 'Porcentajes guardados.';
     }
   } else if (accion === 'copiar') {
-    const destino = str(f.get('destino'));
-    if (destino && niveles.includes(destino)) {
-      await asegurarComponentes(U, destino);
-      await exec(`UPDATE {S}.componentes d SET porcentaje=o.porcentaje, tipo=o.tipo FROM {S}.componentes o
-        WHERE o.usuario_id=? AND o.nivel=? AND d.usuario_id=o.usuario_id AND d.nivel=? AND d.clave=o.clave`, [U, nivel, destino]);
-      msg = `Porcentajes copiados al nivel ${destino}.`;
+    const [dn, da] = str(f.get('destino')).split('|');
+    const dest = combos.find((c) => c.nivel === dn && Number(c.asig) === Number(da));
+    if (dest) {
+      await asegurarComponentes(U, dest.nivel, Number(dest.asig) || null);
+      await exec(`UPDATE {S}.componentes d SET porcentaje=o.porcentaje, tipo=o.tipo, nombre=o.nombre, prueba1=o.prueba1 FROM {S}.componentes o
+        WHERE o.usuario_id=? AND o.nivel=? AND COALESCE(o.asignatura_id,0)=? AND d.usuario_id=o.usuario_id AND d.nivel=? AND COALESCE(d.asignatura_id,0)=? AND d.clave=o.clave`,
+        [U, nivel, asig, dest.nivel, Number(dest.asig)]);
+      msg = `Porcentajes copiados a ${etiqueta(dest)}.`;
+    }
+  } else if (accion === 'mep') {
+    // Aplica los porcentajes del reglamento de la materia y crea las pruebas que falten en sus secciones
+    const m = asig ? await reglaDeMateria(U, asig) : null;
+    if (!m) error = 'Esta materia no tiene tipo del MEP. Elíjalo en Ajustes → Mis materias.';
+    else {
+      await aplicarRegla(U, nivel, asig, m.regla, m.tc);
+      const secs = await q<any>('SELECT id, nivel, asignatura_id FROM {S}.secciones WHERE usuario_id=? AND nivel=? AND asignatura_id=?', [U, nivel, asig]);
+      let n = 0;
+      for (const s of secs) n += (await crearEvaluacionesPlan(U, s, m.regla, m.tc)).length;
+      msg = `Se aplicaron los componentes del MEP: ${resumenRegla(m.regla)}.` + (n ? ' Se crearon las pruebas y proyectos que faltaban en sus secciones.' : ' Las evaluaciones que ya tenía no se cambiaron.');
     }
   } else if (accion === 'unir') {
     // Pasa las evaluaciones de un componente anterior (sin columna SEA) a uno de los fijos y lo elimina
     const viejo = await one<any>('SELECT * FROM {S}.componentes WHERE id=? AND usuario_id=? AND clave IS NULL', [num(f.get('id')), U]);
-    const destino = await one<any>('SELECT * FROM {S}.componentes WHERE id=? AND usuario_id=? AND nivel=? AND clave IS NOT NULL', [num(f.get('destino')), U, viejo?.nivel ?? '']);
+    const destino = await one<any>('SELECT * FROM {S}.componentes WHERE id=? AND usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=COALESCE(?::int,0) AND clave IS NOT NULL', [num(f.get('destino')), U, viejo?.nivel ?? '', viejo?.asignatura_id ?? null]);
     if (viejo && destino) {
       const esquema = esquemaActual();
       await transaccion(async (c) => {
@@ -67,9 +89,11 @@ if (Astro.request.method === 'POST') {
     await exec('DELETE FROM {S}.componentes WHERE id=? AND usuario_id=? AND clave IS NULL', [num(f.get('id')), U]);
   }
 }
-if (nivel) await asegurarComponentes(U, nivel);
+if (nivel) await asegurarComponentes(U, nivel, asig || null);
 const comps = nivel ? await q<any>(`SELECT c.*, (SELECT COUNT(*) FROM {S}.evaluaciones e WHERE e.componente_id=c.id) AS evals
-  FROM {S}.componentes c WHERE usuario_id=? AND nivel=? ORDER BY clave IS NULL, orden, id`, [U, nivel]) : [];
+  FROM {S}.componentes c WHERE usuario_id=? AND nivel=? AND COALESCE(asignatura_id,0)=? ORDER BY clave IS NULL, orden, id`, [U, nivel, asig]) : [];
+const mep = asig ? await reglaDeMateria(U, asig) : null;
+const actual = combos.find((c) => c.nivel === nivel && Number(c.asig) === asig);
 const fijos = comps.filter((c) => c.clave);
 const viejos = comps.filter((c) => !c.clave);
 const suma = fijos.reduce((s, c) => s + Number(c.porcentaje), 0);
@@ -77,22 +101,34 @@ const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)' };
 ---
 <Base titulo="Componentes">
   <h1>Componentes de evaluación</h1>
-  <p class="sub">Son las columnas de la plantilla del SEA, por eso el nombre es fijo. Ajuste el porcentaje de cada uno para cada nivel en {inst!.nombre}; las evaluaciones se reparten ese porcentaje.</p>
+  <p class="sub">Son las columnas de la plantilla del SEA. Cada nivel y materia tiene los suyos en {inst!.nombre}; si la materia tiene tipo del MEP, se crean con los porcentajes del reglamento. Las evaluaciones se reparten el porcentaje de su componente.</p>
   {msg && <div class="msg ok">{msg}</div>}{error && <div class="msg mal">{error}</div>}
   {avisos.length > 0 && <div class="msg aviso">{avisos.map((a) => <div>{a}</div>)}</div>}
   <form method="get" class="tarjeta fila">
-    <label>Nivel
-      <select name="nivel" onchange="this.form.submit()">
-        {niveles.length === 0 && <option value="">Cree secciones primero</option>}
-        {niveles.map((n) => <option selected={n === nivel}>{n}</option>)}
+    <label>Nivel y materia
+      <select onchange="const [n, a] = this.value.split('|'); location.href = '?nivel=' + encodeURIComponent(n) + '&asignatura=' + a">
+        {combos.length === 0 && <option value="">Cree secciones primero</option>}
+        {combos.map((c) => <option value={clave(c.nivel, Number(c.asig))} selected={c.nivel === nivel && Number(c.asig) === asig}>{etiqueta(c)}</option>)}
       </select>
     </label>
   </form>
   {nivel && (
+    <div class="tarjeta mep">
+      {mep ? (
+        <form method="post" class="fila">
+          <input type="hidden" name="accion" value="mep" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="asignatura" value={asig} />
+          <span style="flex:1"><b>Reglamento de Evaluación {mep.anio}, art. {mep.regla.articulo}:</b> {mep.regla.nombre}.<br /><span class="muted">{resumenRegla(mep.regla)}</span></span>
+          <button class="sec" onclick="return confirm('Se ponen los porcentajes del reglamento y se crean las pruebas que falten. Las evaluaciones que ya tiene no se borran. ¿Continuar?')">Aplicar componentes del MEP</button>
+        </form>
+      ) : <p class="muted" style="margin:0">{asig ? <>Esta materia no tiene tipo del MEP. Elíjalo en <a href="/ajustes#materias">Ajustes → Mis materias</a> para aplicar los porcentajes del reglamento con un toque.</> : 'Las secciones sin materia usan estos componentes. Asigne una materia a la sección para usar los del reglamento.'}</p>}
+    </div>
+  )}
+  {nivel && (
     <>
-      {suma !== 100 && <div class="msg aviso">Los componentes del nivel {nivel} suman {suma}%. Deben sumar 100%.</div>}
+      {suma !== 100 && !(mep?.regla.diagnostico) && <div class="msg aviso">Los componentes de {actual ? etiqueta(actual) : nivel} suman {suma}%. Deben sumar 100%.</div>}
+      {mep?.regla.diagnostico && <div class="msg aviso">Según el reglamento, esta materia tiene carácter diagnóstico y formativo: sus componentes no llevan porcentaje.</div>}
       <form method="post" class="tabla">
-        <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="nivel" value={nivel} />
+        <input type="hidden" name="accion" value="guardar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="asignatura" value={asig} />
         <table>
           <tr><th>Componente (columna del SEA)</th><th class="n">Porcentaje</th><th>Se califica</th><th class="n">Evaluaciones</th></tr>
           {fijos.map((c) => (<>
@@ -116,9 +152,9 @@ const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)' };
         </table>
         <p style="padding:0 10px"><button>Guardar porcentajes</button></p>
       </form>
-      {niveles.length > 1 && (
-        <form method="post" class="fila" style="margin-top:12px"><input type="hidden" name="accion" value="copiar" /><input type="hidden" name="nivel" value={nivel} />
-          <label>Copiar estos porcentajes al nivel<select name="destino">{niveles.filter((n) => n !== nivel).map((n) => <option>{n}</option>)}</select></label><button class="sec">Copiar</button></form>
+      {combos.length > 1 && (
+        <form method="post" class="fila" style="margin-top:12px"><input type="hidden" name="accion" value="copiar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="asignatura" value={asig} />
+          <label>Copiar estos porcentajes a<select name="destino">{combos.filter((c) => !(c.nivel === nivel && Number(c.asig) === asig)).map((c) => <option value={clave(c.nivel, Number(c.asig))}>{etiqueta(c)}</option>)}</select></label><button class="sec">Copiar</button></form>
       )}
       {viejos.length > 0 && (
         <div class="tarjeta" style="margin-top:20px">
@@ -128,9 +164,9 @@ const TIPOS = { puntos: 'Por puntos', indicadores: 'Por indicadores (1-3)' };
             <tr><th>Componente</th><th class="n">Evaluaciones</th><th>Pasar evaluaciones a</th><th></th></tr>
             {viejos.map((c) => (
               <tr><td>{c.nombre}</td><td class="n">{c.evals}</td>
-                <td><form method="post" class="fila"><input type="hidden" name="accion" value="unir" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="id" value={c.id} />
+                <td><form method="post" class="fila"><input type="hidden" name="accion" value="unir" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="asignatura" value={asig} /><input type="hidden" name="id" value={c.id} />
                   <select name="destino">{fijos.filter((x) => x.clave !== 'asistencia').map((x) => <option value={x.id}>{x.nombre}</option>)}</select><button class="mini sec">Pasar</button></form></td>
-                <td><form method="post" onsubmit="return confirm('¿Eliminar este componente y sus evaluaciones?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="id" value={c.id} /><button class="mini peligro">Eliminar</button></form></td></tr>
+                <td><form method="post" onsubmit="return confirm('¿Eliminar este componente y sus evaluaciones?')"><input type="hidden" name="accion" value="borrar" /><input type="hidden" name="nivel" value={nivel} /><input type="hidden" name="asignatura" value={asig} /><input type="hidden" name="id" value={c.id} /><button class="mini peligro">Eliminar</button></form></td></tr>
             ))}
           </table></div>
         </div>

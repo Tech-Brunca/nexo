@@ -26,7 +26,7 @@ const config: Grupo = { clave: 'config', titulo: 'Configuración', items: [
   ['/indicadores', 'Indicadores'], ['/componentes', 'Componentes'], ['/periodos', 'Periodos'],
   ['/plantillas', 'Mensajes WhatsApp'], ['/ajustes', 'Ajustes'], ['/respaldo', 'Respaldo'],
 ] };
-const admin: Grupo = { clave: 'admin', titulo: 'Administración', items: [['/admin/usuarios', 'Usuarios'], ['/admin/colegios', 'Colegios']] };
+const admin: Grupo = { clave: 'admin', titulo: 'Administración', items: [['/admin/usuarios', 'Usuarios'], ['/admin/colegios', 'Colegios'], ['/admin/componentes-mep', 'Componentes del MEP']] };
 const menuGrupos = [...(inst ? grupos : []), config, ...(user?.rol === 'admin' ? [admin] : [])];
 const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 ---
