@@ -12,23 +12,56 @@ const ICONOS: Record<string, string> = {
   grupos: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M15.5 14.4c2.6-.3 4.5 1.3 5 4.1"/>',
   resultados: '<path d="M4 20h16"/><rect x="5.5" y="11" width="3" height="6.5" rx=".6"/><rect x="10.5" y="7" width="3" height="10.5" rx=".6"/><rect x="15.5" y="13" width="3" height="4.5" rx=".6"/>',
   familias: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
-  config: '<path d="M4 7h8M16 7h4M4 12h2M10 12h10M4 17h10M18 17h2"/><circle cx="14" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="17" r="2"/>',
+  preparar: '<rect x="5" y="4.5" width="14" height="16" rx="2"/><path d="M9 4.5V3.5h6v1"/><path d="m8.5 11 1.8 1.8L13.5 9.6M8.5 16.5h7"/>',
+  evaluar: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m13.5 8.5 3 3"/>',
+  cuenta: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/>',
   admin: '<path d="M12 3.5 5 6.5v5c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9v-5Z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
 };
-type Grupo = { clave: string; titulo: string; abierto?: boolean; items: [string, string][] };
+// Menú superior por proceso: preparar el curso → dar clases → evaluar → resultados → familias.
+// Cada grupo abre un panel (mega menú) con sus páginas y una línea de qué hace cada una; debajo de la barra,
+// las páginas del grupo actual quedan a la vista con la actual marcada.
+type Item = [string, string, string?];
+type Grupo = { clave: string; titulo: string; paso?: number; ayuda: string; items: Item[] };
 const grupos: Grupo[] = [
-  { clave: 'aula', titulo: 'En el aula', abierto: true, items: [['/bitacora', 'Bitácora'], ['/plan', 'Plan anual'], ['/asistencia', 'Asistencia'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones']] },
-  { clave: 'grupos', titulo: 'Grupos', items: [['/secciones', 'Secciones'], ['/estudiantes', 'Estudiantes']] },
-  { clave: 'resultados', titulo: 'Resultados', items: [['/anual', 'Nota anual'], ['/informes', 'Informes'], ['/sea', 'Importar / exportar SEA']] },
-  { clave: 'familias', titulo: 'Familias', items: [['/comunicados', 'Comunicados'], ['/comunicados#un-estudiante', 'A un estudiante'], ['/alertas', 'Alerta temprana']] },
+  { clave: 'preparar', titulo: 'Preparar', paso: 1, ayuda: 'Lo que se arma al inicio del curso', items: [
+    ['/ajustes', 'Materias y ajustes', 'Materias con su tipo del MEP, escala de asistencia'],
+    ['/secciones', 'Secciones', 'Grupos, subgrupos y su materia'],
+    ['/estudiantes', 'Estudiantes', 'Lista, encargados y perfil de cada uno'],
+    ['/periodos', 'Periodos', 'Fechas del I y II periodo'],
+    ['/componentes', 'Componentes', 'Porcentajes de cada materia y nivel'],
+    ['/indicadores', 'Indicadores', 'Indicadores del trabajo cotidiano'],
+    ['/plan', 'Plan anual', 'Cargar el plan y ver el avance de cada sección'],
+  ] },
+  { clave: 'aula', titulo: 'En clase', paso: 2, ayuda: 'Lo de todos los días', items: [
+    ['/bitacora', 'Bitácora', 'Minuta de la clase y anotaciones'],
+    ['/asistencia', 'Asistencia', 'Pasar lista y ver ausencias'],
+  ] },
+  { clave: 'evaluar', titulo: 'Evaluar', paso: 3, ayuda: 'Calificar y llevar las notas', items: [
+    ['/evaluaciones', 'Evaluaciones', 'Pruebas, tareas, proyectos y trabajo cotidiano'],
+    ['/notas', 'Calificaciones', 'Nota del periodo por componente'],
+    ['/sea', 'Importar / exportar SEA', 'Plantilla de notas del SEA'],
+  ] },
+  { clave: 'resultados', titulo: 'Resultados', paso: 4, ayuda: 'Informes y seguimiento', items: [
+    ['/anual', 'Nota anual', 'Promedio de los periodos y condición final'],
+    ['/informes', 'Informes', 'Reportes, eximidos y reconocimientos'],
+    ['/alertas', 'Alerta temprana', 'Estudiantes con ausencias que alertar'],
+  ] },
+  { clave: 'familias', titulo: 'Familias', paso: 5, ayuda: 'Comunicación con los encargados', items: [
+    ['/comunicados', 'Comunicados', 'Mensajes por WhatsApp a un grupo'],
+    ['/comunicados#un-estudiante', 'A un estudiante', 'Comunicado al hogar por WhatsApp o impreso'],
+    ['/plantillas', 'Mensajes WhatsApp', 'Plantillas de los avisos'],
+    ['/plantillas-hogar', 'Plantillas al hogar', 'Plantillas de los comunicados al hogar'],
+  ] },
 ];
-const config: Grupo = { clave: 'config', titulo: 'Configuración', items: [
-  ['/indicadores', 'Indicadores'], ['/componentes', 'Componentes'], ['/periodos', 'Periodos'],
-  ['/plantillas', 'Mensajes WhatsApp'], ['/ajustes', 'Ajustes'], ['/respaldo', 'Respaldo'],
+const admin: Grupo = { clave: 'admin', titulo: 'Administración', ayuda: 'Solo administradores', items: [
+  ['/admin/usuarios', 'Usuarios', 'Aprobar y administrar cuentas'], ['/admin/colegios', 'Colegios', 'Colegios y su escudo'],
+  ['/admin/componentes-mep', 'Componentes del MEP', 'Matriz del Reglamento de Evaluación por año'],
 ] };
-const admin: Grupo = { clave: 'admin', titulo: 'Administración', items: [['/admin/usuarios', 'Usuarios'], ['/admin/colegios', 'Colegios'], ['/admin/componentes-mep', 'Componentes del MEP']] };
-const menuGrupos = [...(inst ? grupos : []), config, ...(user?.rol === 'admin' ? [admin] : [])];
-const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
+// Sin colegio elegido solo se puede preparar la cuenta (materias y ajustes)
+const menuGrupos = [...(inst ? grupos : [{ ...grupos[0], items: grupos[0].items.filter(([h]) => h === '/ajustes') }]), ...(user?.rol === 'admin' ? [admin] : [])];
+const activo = (h: string) => (h === '/' ? ruta === '/' : !h.includes('#') && (ruta === h || ruta.startsWith(h + '/')));
+const actual = menuGrupos.find((g) => g.items.some(([h]) => activo(h)));
+const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
 ---
 <!doctype html>
 <html lang="es">
@@ -57,52 +90,76 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     body { margin: 0; }
     a { color: var(--teal); }
     a:hover { color: var(--marino); }
-    .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
-
-    /* Menú lateral */
-    nav.lateral { background: linear-gradient(180deg, var(--marino) 0%, var(--marino-osc) 100%); color: #cfe0f5; padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    /* Barra superior con mega menú (por proceso) */
+    :root { --alto-barra: 60px; }
+    .barra { position: sticky; top: 0; z-index: 50; height: var(--alto-barra); display: flex; align-items: center; gap: 14px; padding: 0 18px;
+      background: linear-gradient(90deg, var(--marino-osc) 0%, var(--marino) 60%); color: #fff; box-shadow: 0 2px 10px rgba(3,18,48,.22); }
     .marca { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-    .marca img { width: 40px; height: 40px; flex: none; }
-    .marca b { font-family: var(--titulos); font-weight: 800; font-size: 22px; letter-spacing: .02em; line-height: 1; }
-    .marca b span { color: var(--cian); }
-    .marca small { display: block; font-size: 11px; font-weight: 400; margin-top: 3px; letter-spacing: .01em; }
-    nav.lateral a.marca { display: flex; margin: 0 6px 18px; padding: 0; border: 0; }
-    nav.lateral .marca:hover { background: none; }
-    nav.lateral .marca b { color: #fff; }
-    nav.lateral .marca b span { color: var(--aqua); }
-    nav.lateral .marca small { color: #a9c4e6; }
-    nav.lateral a { display: block; color: #d4e4f7; text-decoration: none; padding: 8px 10px; border-radius: 8px; font-size: 14px; border-left: 3px solid transparent; }
-    nav.lateral a:hover { background: rgba(255,255,255,.08); color: #fff; }
-    nav.lateral a.on { background: rgba(18,207,243,.16); color: #fff; border-left-color: var(--cian); font-weight: 600; }
-    nav.lateral form button { margin: 16px 8px 0; background: transparent; border: 1px solid rgba(255,255,255,.28); color: #d4e4f7; width: calc(100% - 16px); font-weight: 400; }
-    nav.lateral form button:hover { background: rgba(255,255,255,.08); }
-    nav.lateral .ico { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    nav.lateral a.ir-inicio { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-    nav.lateral .gmenu { margin-top: 2px; }
-    nav.lateral .gmenu summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
-      color: #b9d2f0; font-weight: 600; font-size: 14px; user-select: none; -webkit-tap-highlight-color: transparent; }
-    nav.lateral .gmenu summary::-webkit-details-marker { display: none; }
-    nav.lateral .gmenu summary:hover { background: rgba(255,255,255,.08); color: #fff; }
-    nav.lateral .gmenu summary:focus-visible { outline: 3px solid rgba(18,207,243,.55); outline-offset: -2px; }
-    nav.lateral .gmenu summary span { flex: 1; }
-    nav.lateral .gmenu .flecha { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transition: transform .15s ease; }
-    nav.lateral .gmenu[open] .flecha { transform: rotate(90deg); }
-    nav.lateral .gmenu[data-aqui="1"] > summary { color: #fff; }
-    nav.lateral .gmenu .items { margin: 2px 0 6px; padding-left: 19px; border-left: 1px solid rgba(255,255,255,.12); margin-left: 19px; }
-    nav.lateral .gmenu .items a { padding: 7px 10px; }
-    nav.lateral select { width: calc(100% - 16px); margin: 0 8px 12px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2); font-size: 13px; }
-    nav.lateral .quien { margin: 0 8px 14px; font-size: 12px; color: #a9c4e6; }
-    nav.lateral .quien a { display: inline; padding: 0; border: 0; color: #fff; text-decoration: underline; }
-    nav.lateral .colegio { display: flex; align-items: center; gap: 10px; margin: 0 6px 12px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(73,225,255,.25); color: #fff; font-size: 13px; font-weight: 600; }
-    nav.lateral .colegio .escudo { width: 38px; height: 38px; object-fit: contain; flex: none; background: #fff; border-radius: 8px; padding: 3px; }
-    nav.lateral .colegio a { padding: 4px 0 0; border: 0; font-weight: 400; color: var(--aqua); font-size: 12px; }
-    nav.lateral .periodo-trabajo { display: flex; flex-direction: column; gap: 4px; margin: -4px 6px 14px; color: #a9c4e6; font-size: 12.5px; }
-    nav.lateral .periodo-trabajo select { width: 100%; margin: 0; font-weight: 600; font-size: 15px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
-    nav.lateral .periodo-trabajo select option { color: var(--tinta); }
-    nav.lateral .colegio a:hover { background: none; text-decoration: underline; }
+    .marca img { width: 34px; height: 34px; flex: none; }
+    .marca b { font-family: var(--titulos); font-weight: 800; font-size: 21px; letter-spacing: .02em; line-height: 1; color: #fff; }
+    .marca b span { color: var(--aqua); }
+    .marca small { display: block; font-size: 11px; font-weight: 400; margin-top: 3px; }
+    .barra .marca { flex: none; margin-right: 4px; }
+    .menu-btn { display: none; }
+    nav.menu { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; height: 100%; }
+    nav.menu .ico, .barra .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    nav.menu > a.mm-hoy, .mm > summary { display: flex; align-items: center; gap: 7px; height: 40px; padding: 0 11px; border-radius: 9px; color: #d4e4f7; text-decoration: none;
+      font-size: 14px; font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; list-style: none; -webkit-tap-highlight-color: transparent; position: relative; }
+    .mm > summary::-webkit-details-marker { display: none; }
+    nav.menu > a.mm-hoy:hover, .mm > summary:hover, .mm[open] > summary { background: rgba(255,255,255,.1); color: #fff; }
+    nav.menu > a.mm-hoy.on, .mm[data-aqui="1"] > summary { color: #fff; background: rgba(18,207,243,.18); }
+    nav.menu > a.mm-hoy.on::after, .mm[data-aqui="1"] > summary::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -10px; height: 3px; border-radius: 3px; background: var(--cian); }
+    .mm > summary:focus-visible, nav.menu > a:focus-visible { outline: 3px solid rgba(18,207,243,.6); outline-offset: -2px; }
+    .paso { font-style: normal; display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; font-size: 11px; font-weight: 700;
+      background: rgba(255,255,255,.14); color: #fff; }
+    .mm[data-aqui="1"] .paso { background: var(--cian); color: var(--marino-osc); }
+    .flecha { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transition: transform .15s ease; }
+    .mm[open] > summary .flecha { transform: rotate(180deg); }
+    .mm { position: relative; }
+    .mm-panel { position: absolute; top: calc(100% + 10px); left: 0; z-index: 60; width: max-content; min-width: 300px; max-width: min(620px, 92vw);
+      background: #fff; color: var(--tinta); border: 1px solid var(--linea); border-radius: 14px; padding: 14px; box-shadow: 0 18px 40px rgba(3,18,48,.22); }
+    .mm-panel::before { content: ''; position: absolute; top: -7px; left: 22px; width: 12px; height: 12px; background: #fff; border-left: 1px solid var(--linea); border-top: 1px solid var(--linea); transform: rotate(45deg); }
+    .mm:nth-last-of-type(-n+2) .mm-panel { left: auto; right: 0; }
+    .mm:nth-last-of-type(-n+2) .mm-panel::before { left: auto; right: 22px; }
+    .mm-ayuda { margin: 0 4px 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--teal); }
+    .mm-items { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(220px, 1fr)); gap: 2px 8px; }
+    .mm-items a { display: block; padding: 9px 12px; border-radius: 9px; text-decoration: none; color: var(--tinta); border-left: 3px solid transparent; }
+    .mm-items a b { display: block; font-size: 14.5px; color: var(--marino); }
+    .mm-items a small { display: block; font-size: 12.5px; color: var(--suave); margin-top: 1px; }
+    .mm-items a:hover { background: var(--hielo); }
+    .mm-items a.on { background: var(--hielo); border-left-color: var(--cian); }
+    .barra-der { display: flex; align-items: center; gap: 10px; flex: none; }
+    .barra .per-barra { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: #a9c4e6; }
+    .per-barra select { font-weight: 600; font-size: 14px; padding: 6px 8px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
+    .per-barra select option { color: var(--tinta); }
+    .colegio-chip { display: flex; align-items: center; gap: 8px; max-width: 190px; color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; line-height: 1.15; }
+    .colegio-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .colegio-chip .escudo { width: 32px; height: 32px; object-fit: contain; flex: none; background: #fff; border-radius: 7px; padding: 2px; }
+    .colegio-chip:hover { color: var(--aqua); }
+    .cuenta { position: relative; }
+    .cuenta > summary { list-style: none; cursor: pointer; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+      background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.28); color: #fff; }
+    .cuenta > summary::-webkit-details-marker { display: none; }
+    .cuenta > summary:hover, .cuenta[open] > summary { background: rgba(255,255,255,.24); }
+    .cuenta .mm-panel { left: auto; right: 0; min-width: 240px; }
+    .cuenta .mm-panel::before { left: auto; right: 14px; }
+    .cuenta-quien { padding: 4px 12px 10px; border-bottom: 1px solid var(--linea); margin-bottom: 6px; }
+    .cuenta-quien b { display: block; color: var(--marino); }
+    .cuenta-quien span { font-size: 12.5px; color: var(--suave); }
+    .cuenta form button { width: 100%; margin-top: 8px; }
+    .menu-movil-cab { display: none; }
+
+    /* Páginas del grupo actual: siempre a la vista bajo la barra */
+    .subnav { display: flex; align-items: center; gap: 4px; padding: 0 30px; background: #fff; border-bottom: 1px solid var(--linea); overflow-x: auto; scrollbar-width: thin; }
+    .subnav .sg { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--teal); margin-right: 10px; padding: 12px 0; }
+    .subnav .sg .paso { background: var(--hielo); color: var(--teal); }
+    .subnav a { flex: none; padding: 12px 12px 10px; font-size: 14px; color: var(--suave); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+    .subnav a:hover { color: var(--marino); background: var(--gris); }
+    .subnav a.on { color: var(--marino); font-weight: 700; border-bottom-color: var(--cian); }
+    .velo { display: none; }
 
     /* Contenido */
-    main { padding: 26px 30px 60px; max-width: 1400px; }
+    main { padding: 24px 30px 60px; max-width: 1400px; margin: 0 auto; }
     h1, h2 { font-family: var(--titulos); color: var(--marino); }
     h1 { font-size: 24px; font-weight: 700; margin: 0 0 4px; }
     .sub { color: var(--suave); margin: 0 0 20px; font-size: 14px; }
@@ -140,7 +197,7 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
     .kpi { background: #fff; border: 1px solid var(--linea); border-top: 3px solid var(--cian); border-radius: 12px; padding: 14px 16px; }
     .kpi b { display: block; font-family: var(--titulos); font-size: 26px; color: var(--marino); }
     .kpi span { color: var(--suave); font-size: 13px; }
-    .inicio { min-height: calc(100vh - 84px); }
+    .inicio { min-height: calc(100vh - var(--alto-barra) - 84px); }
     .marca-agua-inicio { display: block; width: min(57vw, 495px); max-height: 360px; margin: 4px auto 18px; object-fit: contain; opacity: .22; filter: saturate(.8) blur(.3px); pointer-events: none; user-select: none; }
     .muted { color: var(--suave); font-size: 13px; }
     .solo-print { display: none; }
@@ -158,28 +215,52 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
-    /* Barra superior del teléfono (oculta en PC) */
-    .barra-movil, .velo { display: none; }
-
+    /* Pantallas medianas y teléfono: el menú pasa a un panel lateral con los grupos plegables;
+       el grupo de la página actual queda abierto y los demás cerrados */
+    @media (max-width: 1280px) {
+      .barra .per-barra > span, .barra-der .colegio-chip span { display: none; }
+      .barra-der .colegio-chip:not(:has(img)) { display: none; }
+      nav.menu > a.mm-hoy, .mm > summary { padding: 0 9px; gap: 6px; }
+      .mm > summary .flecha { display: none; }
+    }
+    @media (max-width: 1080px) {
+      .barra { gap: 10px; padding: 0 12px; }
+      .menu-btn { display: grid; place-items: center; flex: none; width: 42px; height: 42px; padding: 0; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff; font-size: 20px; line-height: 1; }
+      .barra-der { margin-left: auto; }
+      .per-barra, .colegio-chip { display: none; }
+      nav.menu { position: fixed; z-index: 70; inset: 0 auto 0 0; width: min(320px, 86vw); height: 100dvh; flex-direction: column; align-items: stretch; gap: 2px;
+        padding: 14px 12px 40px; overflow-y: auto; background: linear-gradient(180deg, var(--marino) 0%, var(--marino-osc) 100%);
+        transform: translateX(-102%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(3,18,48,.35); }
+      body.menu-abierto nav.menu { transform: none; }
+      body.menu-abierto .barra { z-index: 80; }
+      .mm > summary .flecha { display: block; }
+      body.menu-abierto .velo { display: block; position: fixed; inset: 0; z-index: 65; background: rgba(3,18,48,.5); }
+      body.menu-abierto { overflow: hidden; }
+      .menu-movil-cab { display: flex; flex-direction: column; gap: 10px; margin: 0 4px 12px; color: #cfe0f5; font-size: 13px; }
+      .menu-movil-cab .marca small { color: #a9c4e6; }
+      .menu-movil-cab .colegio-chip { display: flex; max-width: none; }
+      .menu-movil-cab .colegio-chip span { display: inline; white-space: normal; }
+      .menu-movil-cab .per-barra { display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: #a9c4e6; font-size: 12.5px; }
+      .menu-movil-cab .per-barra select { width: 100%; font-weight: 600; font-size: 15px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
+      .menu-movil-cab .per-barra select option { color: var(--tinta); }
+      .menu-movil-cab .per-barra > span { display: inline; }
+      nav.menu > a.mm-hoy, .mm > summary { height: auto; padding: 12px 10px; font-size: 15px; }
+      nav.menu > a.mm-hoy.on::after, .mm[data-aqui="1"] > summary::after { display: none; }
+      .mm > summary .flecha { margin-left: auto; }
+      .mm-panel { position: static; width: auto; min-width: 0; max-width: none; background: transparent; border: 0; box-shadow: none; padding: 2px 0 8px 18px; }
+      .mm-panel::before, .mm-ayuda { display: none; }
+      .mm-items { grid-template-columns: 1fr !important; border-left: 1px solid rgba(255,255,255,.14); padding-left: 8px; }
+      .mm-items a { color: #d4e4f7; padding: 10px; }
+      .mm-items a b { color: inherit; font-weight: 600; font-size: 15px; }
+      .mm-items a small { display: none; }
+      .mm-items a:hover { background: rgba(255,255,255,.08); }
+      .mm-items a.on { background: rgba(18,207,243,.16); color: #fff; }
+      .subnav { padding: 0 10px; }
+    }
     @media (max-width: 800px) {
-      .app { grid-template-columns: minmax(0, 1fr); }
       main { padding: 16px 14px 90px; min-width: 0; }
       h1 { font-size: 21px; }
       h2 { font-size: 16px; }
-
-      .barra-movil { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 40; padding: 8px 12px; background: var(--marino); color: #fff; box-shadow: 0 2px 8px rgba(3,18,48,.25); }
-      .barra-movil .menu-btn { flex: none; width: 42px; height: 42px; padding: 0; display: grid; place-items: center; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff; font-size: 20px; line-height: 1; }
-      .barra-movil .marca img { width: 30px; height: 30px; }
-      .barra-movil .marca b { color: #fff; font-size: 18px; }
-      .barra-movil .marca b span { color: var(--aqua); }
-      .barra-movil .donde { margin-left: auto; font-size: 12px; line-height: 1.3; color: #cfe0f5; text-align: right; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-      nav.lateral { position: fixed; z-index: 60; inset: 0 auto 0 0; width: min(290px, 84vw); height: 100dvh; transform: translateX(-102%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(3,18,48,.35); padding-bottom: 40px; }
-      nav.lateral a { padding: 11px 12px; font-size: 15px; }
-      nav.lateral .gmenu summary { padding: 12px 10px; font-size: 15px; }
-      body.menu-abierto nav.lateral { transform: none; }
-      body.menu-abierto .velo { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(3,18,48,.5); }
-      body.menu-abierto { overflow: hidden; }
 
       /* Formularios cómodos para el dedo (16px evita el zoom automático del iPhone) */
       input, select, textarea { font-size: 16px; padding: 9px 10px; }
@@ -208,8 +289,8 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
       .acceso { justify-content: center; padding: 16px; background-position: 75% center; }
     }
     @media print {
-      nav.lateral, .barra-movil, .velo, .no-print, button, .btn { display: none !important; }
-      .app { display: block; } main { padding: 0; max-width: none; }
+      .barra, .subnav, .velo, .no-print, button, .btn { display: none !important; }
+      main { padding: 0; max-width: none; }
       .tarjeta, .tabla { border: none; box-shadow: none; } .solo-print { display: block; }
       th { position: static; color: var(--tinta); background: #eef3f6; }
       tr:hover td { background: none; }
@@ -218,56 +299,87 @@ const activo = (h: string) => (h === '/' ? ruta === '/' : ruta.startsWith(h));
 </head>
 <body>
   {sinMenu ? <slot /> : (
-    <header class="barra-movil">
-      <button type="button" class="menu-btn" aria-label="Abrir menú" aria-controls="menu" aria-expanded="false" data-menu>☰</button>
-      <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><b>NE<span>XO</span></b></a>
-      {inst && <span class="donde">{inst.nombre}{periodo && <><br />{periodo.nombre}</>}</span>}
-    </header>
-    <div class="velo" data-menu></div>
-    <div class="app">
-      <nav class="lateral" id="menu">
-        <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
-        <div class="quien">{user?.nombre} · <a href="/cuenta">Mi cuenta</a></div>
-        {inst && <div class="colegio">{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<div>{inst.nombre}{instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}</div></div>}
-        {inst && periodos.length > 0 && (
-          <label class="periodo-trabajo">Periodo de trabajo
-            <select onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
-              {periodos.map((p) => <option value={p.id} selected={p.id === periodo?.id}>{p.nombre}</option>)}
-            </select>
-          </label>
-        )}
-        {inst && <a href="/" class={`ir-inicio ${activo('/') ? 'on' : ''}`} aria-current={activo('/') ? 'page' : undefined}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.inicio} />Inicio</a>}
-        {menuGrupos.map((g) => {
-          const aqui = g.items.some(([h]) => activo(h));
-          return (
-            <details class="gmenu" data-g={g.clave} data-aqui={aqui ? '1' : ''} open={aqui || g.abierto}>
-              <summary><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[g.clave]} /><span>{g.titulo}</span><svg class="flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></summary>
-              <div class="items">{g.items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}</div>
+    <>
+      <header class="barra">
+        <button type="button" class="menu-btn" aria-label="Abrir menú" aria-controls="menu" aria-expanded="false" data-menu>☰</button>
+        <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><b>NE<span>XO</span></b></a>
+        <nav class="menu" id="menu" aria-label="Menú principal">
+          <div class="menu-movil-cab">
+            <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
+            {inst && <a class="colegio-chip" href={instituciones.length > 1 ? '/elegir-colegio' : '/'}>{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<span>{inst.nombre}</span></a>}
+            {inst && periodos.length > 0 && (
+              <label class="per-barra"><span>Periodo de trabajo</span>
+                <select onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
+                  {periodos.map((p) => <option value={p.id} selected={p.id === periodo?.id}>{p.nombre}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+          {inst && <a href="/" class={`mm-hoy ${activo('/') ? 'on' : ''}`} aria-current={activo('/') ? 'page' : undefined}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.inicio} />Inicio</a>}
+          {menuGrupos.map((g) => (
+            <details class="mm" data-g={g.clave} data-aqui={g === actual ? '1' : ''}>
+              <summary>{g.paso ? <i class="paso">{g.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[g.clave]} />}<span>{g.titulo}</span><svg class="flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
+              <div class="mm-panel">
+                <p class="mm-ayuda">{g.paso && `Paso ${g.paso} · `}{g.ayuda}</p>
+                <div class="mm-items" style={`--cols:${g.items.length > 4 ? 2 : 1}`}>
+                  {g.items.map(([h, t, d]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}><b>{t}</b>{d && <small>{d}</small>}</a>)}
+                </div>
+              </div>
             </details>
-          );
-        })}
-        <form method="post" action="/login?salir=1"><button type="submit">Salir</button></form>
-      </nav>
+          ))}
+        </nav>
+        <div class="barra-der">
+          {inst && periodos.length > 0 && (
+            <label class="per-barra"><span>Periodo</span>
+              <select aria-label="Periodo de trabajo" onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
+                {periodos.map((p) => <option value={p.id} selected={p.id === periodo?.id}>{p.nombre}</option>)}
+              </select>
+            </label>
+          )}
+          {inst && <a class="colegio-chip" title={instituciones.length > 1 ? `${inst.nombre} · cambiar de colegio` : inst.nombre} href={instituciones.length > 1 ? '/elegir-colegio' : '/'}>{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<span>{inst.nombre}</span></a>}
+          <details class="cuenta">
+            <summary aria-label="Mi cuenta" title={user?.nombre}>{iniciales}</summary>
+            <div class="mm-panel">
+              <div class="cuenta-quien"><b>{user?.nombre}</b><span>{user?.correo}</span></div>
+              <div class="mm-items">
+                <a href="/cuenta" class={activo('/cuenta') ? 'on' : ''}><b>Mi cuenta</b><small>Nombre, correo y contraseña</small></a>
+                <a href="/respaldo" class={activo('/respaldo') ? 'on' : ''}><b>Respaldo</b><small>Descargar o restaurar sus datos</small></a>
+                {instituciones.length > 1 && <a href="/elegir-colegio"><b>Cambiar de colegio</b></a>}
+              </div>
+              <form method="post" action="/login?salir=1"><button type="submit" class="sec">Salir</button></form>
+            </div>
+          </details>
+        </div>
+      </header>
+      <div class="velo" data-menu></div>
+      {actual && (
+        <nav class="subnav" aria-label={actual.titulo}>
+          <span class="sg">{actual.paso ? <i class="paso">{actual.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[actual.clave]} />}{actual.titulo}</span>
+          {actual.items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
+        </nav>
+      )}
       <main><slot /></main>
-    </div>
+    </>
   )}
   <script is:inline>
-    // Grupos del menú: recordar cuáles dejó abiertos (el de la página actual siempre abierto)
     (() => {
-      let guardado = null;
-      try { guardado = JSON.parse(localStorage.getItem('nexo-menu') || 'null'); } catch {}
-      const grupos = document.querySelectorAll('nav.lateral details.gmenu');
-      if (guardado) grupos.forEach((d) => { if (!d.dataset.aqui && d.dataset.g in guardado) d.open = guardado[d.dataset.g]; });
-      grupos.forEach((d) => d.addEventListener('toggle', () => {
-        const estado = {}; grupos.forEach((x) => { estado[x.dataset.g] = x.open; });
-        try { localStorage.setItem('nexo-menu', JSON.stringify(estado)); } catch {}
+      const angosto = () => matchMedia('(max-width: 1080px)').matches;
+      const menus = [...document.querySelectorAll('.barra details.mm, .barra details.cuenta')];
+      // En el panel del teléfono, el grupo actual empieza abierto y los demás cerrados
+      if (angosto()) document.querySelector('.barra details.mm[data-aqui="1"]')?.setAttribute('open', '');
+      // En la PC, un solo panel abierto a la vez; se cierra al tocar fuera o con Escape
+      menus.forEach((d) => d.addEventListener('toggle', () => {
+        if (d.open && (!angosto() || d.classList.contains('cuenta'))) menus.forEach((o) => { if (o !== d) o.open = false; });
+      }));
+      const cerrar = () => menus.forEach((d) => { if (!angosto() || d.classList.contains('cuenta')) d.open = false; });
+      document.addEventListener('click', (e) => { if (!e.target.closest('.barra details')) cerrar(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const a = menus.find((d) => d.open); cerrar(); a?.querySelector('summary')?.focus(); } });
+      // Panel lateral del teléfono
+      document.querySelectorAll('[data-menu]').forEach((el) => el.addEventListener('click', () => {
+        const abierto = document.body.classList.toggle('menu-abierto');
+        document.querySelector('.menu-btn')?.setAttribute('aria-expanded', String(abierto));
       }));
     })();
-    // Menú lateral del teléfono
-    document.querySelectorAll('[data-menu]').forEach((el) => el.addEventListener('click', () => {
-      const abierto = document.body.classList.toggle('menu-abierto');
-      document.querySelector('.menu-btn')?.setAttribute('aria-expanded', String(abierto));
-    }));
   </script>
 </body>
 </html>
