@@ -24,6 +24,7 @@ type Item = [string, string, string?];
 type Grupo = { clave: string; titulo: string; paso?: number; ayuda: string; items: Item[] };
 const grupos: Grupo[] = [
   { clave: 'preparar', titulo: 'Preparar', paso: 1, ayuda: 'Lo que se arma al inicio del curso', items: [
+    ['/asistente', 'Asistente: nueva materia', 'Paso a paso: materia, sección y estudiantes'],
     ['/ajustes', 'Materias y ajustes', 'Materias con su tipo del MEP, escala de asistencia'],
     ['/secciones', 'Secciones', 'Grupos, subgrupos y su materia'],
     ['/estudiantes', 'Estudiantes', 'Lista, encargados y perfil de cada uno'],
@@ -110,9 +111,9 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
     nav.menu > a.mm-hoy.on, .mm[data-aqui="1"] > summary { color: #fff; background: rgba(18,207,243,.18); }
     nav.menu > a.mm-hoy.on::after, .mm[data-aqui="1"] > summary::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -10px; height: 3px; border-radius: 3px; background: var(--cian); }
     .mm > summary:focus-visible, nav.menu > a:focus-visible { outline: 3px solid rgba(18,207,243,.6); outline-offset: -2px; }
-    .paso { font-style: normal; display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; font-size: 11px; font-weight: 700;
+    .num-paso { font-style: normal; display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; font-size: 11px; font-weight: 700;
       background: rgba(255,255,255,.14); color: #fff; }
-    .mm[data-aqui="1"] .paso { background: var(--cian); color: var(--marino-osc); }
+    .mm[data-aqui="1"] .num-paso { background: var(--cian); color: var(--marino-osc); }
     .flecha { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transition: transform .15s ease; }
     .mm[open] > summary .flecha { transform: rotate(180deg); }
     .mm { position: relative; }
@@ -152,7 +153,7 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
     /* Páginas del grupo actual: siempre a la vista bajo la barra */
     .subnav { display: flex; align-items: center; gap: 4px; padding: 0 30px; background: #fff; border-bottom: 1px solid var(--linea); overflow-x: auto; scrollbar-width: thin; }
     .subnav .sg { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--teal); margin-right: 10px; padding: 12px 0; }
-    .subnav .sg .paso { background: var(--hielo); color: var(--teal); }
+    .subnav .sg .num-paso { background: var(--hielo); color: var(--teal); }
     .subnav a { flex: none; padding: 12px 12px 10px; font-size: 14px; color: var(--suave); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
     .subnav a:hover { color: var(--marino); background: var(--gris); }
     .subnav a.on { color: var(--marino); font-weight: 700; border-bottom-color: var(--cian); }
@@ -318,7 +319,7 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
           {inst && <a href="/" class={`mm-hoy ${activo('/') ? 'on' : ''}`} aria-current={activo('/') ? 'page' : undefined}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.inicio} />Inicio</a>}
           {menuGrupos.map((g) => (
             <details class="mm" data-g={g.clave} data-aqui={g === actual ? '1' : ''}>
-              <summary>{g.paso ? <i class="paso">{g.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[g.clave]} />}<span>{g.titulo}</span><svg class="flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
+              <summary>{g.paso ? <i class="num-paso">{g.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[g.clave]} />}<span>{g.titulo}</span><svg class="flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
               <div class="mm-panel">
                 <p class="mm-ayuda">{g.paso && `Paso ${g.paso} · `}{g.ayuda}</p>
                 <div class="mm-items" style={`--cols:${g.items.length > 4 ? 2 : 1}`}>
@@ -354,7 +355,7 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
       <div class="velo" data-menu></div>
       {actual && (
         <nav class="subnav" aria-label={actual.titulo}>
-          <span class="sg">{actual.paso ? <i class="paso">{actual.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[actual.clave]} />}{actual.titulo}</span>
+          <span class="sg">{actual.paso ? <i class="num-paso">{actual.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[actual.clave]} />}{actual.titulo}</span>
           {actual.items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
         </nav>
       )}

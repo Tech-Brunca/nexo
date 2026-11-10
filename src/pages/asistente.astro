@@ -1,0 +1,400 @@
+---
+// Asistente para empezar: materia (ciclo → materia → trabajo cotidiano), sección y estudiantes, paso a paso
+// y con lenguaje sencillo. Al final crea todo: materia con su tipo del MEP, sección con componentes y pruebas,
+// y los estudiantes (importados del SEA, escritos a mano o para después).
+import Base from '../layouts/Base.astro';
+import { q, one, exec, getAjustes } from '../lib/db';
+import { str, num, etiquetaSeccion } from '../lib/util';
+import { CICLOS, MATERIAS, anioVigente, reglasDe, resumenRegla } from '../lib/reac';
+import { crearSeccion } from '../lib/secciones';
+import { guardarEstudiante, importarEstudiantes } from '../lib/estudiantes';
+const { user, inst } = Astro.locals;
+const U = user.id;
+const anio = await anioVigente((await getAjustes(U)).curso_lectivo);
+const reglas = await reglasDe(anio);
+const NIVELES: Record<string, string[]> = {
+  primaria: ['1', '2', '3', '4', '5', '6'], iii: ['7', '8', '9'], diversificada: ['10', '11', '12'],
+  vocacional: ['7', '8', '9', '10', '11', '12'], 'coned-distancia': ['7', '8', '9', '10', '11'], 'coned-virtual': ['7', '8', '9', '10', '11'], adultos: [],
+};
+const CICLO_AYUDA: Record<string, string> = {
+  primaria: '1.° a 6.° grado y escuelas nocturnas', iii: '7.°, 8.° y 9.° año', diversificada: '10.°, 11.° y 12.°, también las subáreas técnicas',
+  adultos: 'CINDEA e IPEC', vocacional: 'III Ciclo y Ciclo Diversificado Vocacional', 'coned-distancia': 'CONED o EPJA a distancia', 'coned-virtual': 'CONED o EPJA virtual',
+};
+
+let error = '', hecho: any = null;
+let previo: any = null;
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  previo = Object.fromEntries([...f.entries()].filter(([, v]) => typeof v === 'string'));
+  // 1. Materia: una ya creada, o una nueva (si ya existe con ese nombre y tipo, se reutiliza)
+  let asigId = num(f.get('asignatura_existente')) || null;
+  if (asigId && !(await one('SELECT 1 FROM general.asignaturas WHERE id=? AND usuario_id=?', [asigId, U]))) asigId = null;
+  const regla = reglas.find((r) => r.codigo === str(f.get('regla')));
+  const nombreMat = str(f.get('materia_nombre')).slice(0, 120);
+  const tc = str(f.get('tc_modo')) === 'unica' ? 'unica' : 'indicadores';
+  if (!asigId) {
+    if (!nombreMat) error = 'Falta el nombre de la materia.';
+    else {
+      const ya = await one<any>('SELECT id FROM general.asignaturas WHERE usuario_id=? AND lower(nombre)=lower(?) AND regla IS NOT DISTINCT FROM ?', [U, nombreMat, regla?.codigo ?? null]);
+      if (ya) { asigId = ya.id; await exec('UPDATE general.asignaturas SET tc_modo=? WHERE id=?', [tc, ya.id]); }
+      else asigId = (await one<any>('INSERT INTO general.asignaturas (usuario_id, nombre, ciclo, regla, tc_modo) VALUES (?,?,?,?,?) RETURNING id',
+        [U, nombreMat, regla?.ciclo ?? null, regla?.codigo ?? null, tc]))!.id;
+    }
+  }
+  // 2. Sección: «3» con nivel 10 queda «10-3»; también puede escribir el nombre completo
+  if (!error) {
+    const nivel = str(f.get('nivel'));
+    const num_ = str(f.get('seccion_num'));
+    const nombre = /^\d+$/.test(num_) && nivel ? `${nivel}-${num_}` : num_;
+    const r = await crearSeccion(U, { nivel, nombre, subgrupo: str(f.get('subgrupo')), asignatura_id: asigId });
+    if (r.error) error = r.error;
+    else {
+      // 3. Estudiantes
+      const modo = str(f.get('estudiantes'));
+      let est = '', n = 0;
+      if (modo === 'archivo') {
+        const a = f.get('archivo');
+        if (a instanceof File && a.size) {
+          const x = await importarEstudiantes(U, { id: r.id!, nivel, nombre, subgrupo: str(f.get('subgrupo')) || null }, a);
+          est = x.error ? `La sección se creó, pero el archivo no se pudo leer: ${x.error}` : x.ok!; n = x.n ?? 0;
+        } else est = 'No se eligió archivo: puede agregar los estudiantes desde la sección.';
+      } else if (modo === 'manual') {
+        const ced = f.getAll('cedula').map(String), ap = f.getAll('apellidos').map(String), no = f.getAll('nombre').map(String);
+        let malas = 0;
+        for (let i = 0; i < ced.length; i++) {
+          if (!ced[i].trim() && !ap[i].trim() && !no[i].trim()) continue;
+          (await guardarEstudiante(U, r.id!, { cedula: ced[i], apellidos: ap[i], nombre: no[i] })) ? n++ : malas++;
+        }
+        est = `${n} ${n === 1 ? 'estudiante agregado' : 'estudiantes agregados'}.` + (malas ? ` ${malas} fila(s) incompletas no se guardaron (faltaba cédula, apellidos o nombre).` : '');
+      } else est = 'Los estudiantes quedan para después.';
+      const mat = await one<any>('SELECT id, nombre FROM general.asignaturas WHERE id=?', [asigId]);
+      hecho = { ...r, materia: mat, estudiantes: est, n };
+    }
+  }
+}
+// Materias ya creadas (para «otra sección de la misma materia»)
+const mias = await q<any>('SELECT id, nombre, ciclo, regla, tc_modo FROM general.asignaturas WHERE usuario_id=? ORDER BY nombre', [U]);
+const desde = Number(Astro.url.searchParams.get('materia') ?? 0);
+const datos = {
+  ciclos: CICLOS.map(([k, t]) => ({ k, t: t.split(' (')[0].replace(', académico y técnico', ''), ayuda: CICLO_AYUDA[k] ?? '' })),
+  materias: MATERIAS.filter((m) => reglas.some((r) => r.codigo === m.codigo)),
+  reglas: reglas.map((r) => ({ codigo: r.codigo, ciclo: r.ciclo, nombre: r.nombre, articulo: r.articulo, resumen: resumenRegla(r), diag: !!r.diagnostico, nota: r.nota ?? '',
+    tc: r.componentes.some((c) => c.clave === 'tc' && c.pct > 0), aprobatoria: r.aprobatoria, comps: r.componentes.filter((c) => c.pct > 0).map((c) => ({ n: c.nombre, p: c.pct, k: c.cantidad ?? 0 })) })),
+  mias, niveles: NIVELES, desde: mias.some((m) => m.id === desde) ? desde : 0, previo: error ? previo : null,
+};
+---
+<Base titulo="Asistente">
+  <div class="asis">
+    {hecho ? (
+      <section class="tarjeta paso-listo">
+        <div class="listo-icono" aria-hidden="true">✓</div>
+        <h1>¡Listo! {hecho.etiqueta} · {hecho.materia?.nombre}</h1>
+        <ul class="hecho">
+          <li><b>Materia:</b> {hecho.materia?.nombre}{hecho.regla && ` (${resumenRegla(hecho.regla)})`}.</li>
+          <li><b>Sección:</b> {hecho.etiqueta}{hecho.regla && `, nota mínima para aprobar ${hecho.regla.aprobatoria}`}.</li>
+          {hecho.creadas.length > 0 && <li><b>Evaluaciones creadas en cada periodo:</b> {hecho.creadas.join('; ')}.</li>}
+          <li><b>Estudiantes:</b> {hecho.estudiantes}</li>
+        </ul>
+        <div class="siguientes">
+          <a class="btn grande" href={`/asistencia?seccion=${hecho.id}`}>Pasar lista</a>
+          {hecho.n === 0 && <a class="btn sec grande" href={`/secciones/${hecho.id}`}>Agregar estudiantes</a>}
+          <a class="btn sec grande" href={`/evaluaciones?seccion=${hecho.id}`}>Ver evaluaciones</a>
+          <a class="btn sec grande" href={`/asistente?materia=${hecho.materia?.id}`}>Otra sección de {hecho.materia?.nombre}</a>
+        </div>
+        <p class="muted">Todo se puede ajustar después en Preparar: Componentes, Secciones y Estudiantes.</p>
+      </section>
+    ) : (
+      <form method="post" enctype="multipart/form-data" class="tarjeta asistente" id="asistente" data-datos={JSON.stringify(datos)} novalidate>
+        <div class="progreso" aria-hidden="true"><span class="barra-p"></span></div>
+        <p class="paso-n" aria-live="polite"></p>
+        {error && <div class="msg mal">{error}</div>}
+
+        <fieldset class="paso" data-paso="ciclo">
+          <legend>¿En qué ciclo da esta materia?</legend>
+          <div class="opciones" data-lista="ciclos"></div>
+          <p class="atajo" hidden><button type="button" class="enlace" data-ir="mias">Usar una materia que ya creé</button></p>
+        </fieldset>
+
+        <fieldset class="paso" data-paso="mias" hidden>
+          <legend>¿Cuál de sus materias?</legend>
+          <div class="opciones" data-lista="mias"></div>
+        </fieldset>
+
+        <fieldset class="paso" data-paso="materia" hidden>
+          <legend>¿Qué materia es?</legend>
+          <div class="opciones dos" data-lista="materias"></div>
+          <div class="extra" data-extra="nombre" hidden>
+            <label>Nombre de la materia<input name="materia_nombre" autocomplete="off" placeholder="Por ejemplo: Soporte a las Tecnologías de Información" /></label>
+          </div>
+          <div class="extra" data-extra="tipo" hidden>
+            <label>¿A cuál se parece en el reglamento?<select name="regla_otra"></select></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="paso" data-paso="tc" hidden>
+          <legend>¿Cómo califica el trabajo cotidiano?</legend>
+          <div class="opciones">
+            <label class="op"><input type="radio" name="tc_modo" value="indicadores" checked /><span><b>Por indicadores</b><small>Varias veces en el periodo, con indicadores (1, 2 o 3). Es lo más común.</small></span></label>
+            <label class="op"><input type="radio" name="tc_modo" value="unica" /><span><b>Con una sola nota</b><small>Una calificación de trabajo cotidiano en cada periodo.</small></span></label>
+          </div>
+          <div class="comps" data-comps></div>
+        </fieldset>
+
+        <fieldset class="paso" data-paso="seccion" hidden>
+          <legend>¿Cuál es el grupo?</legend>
+          <p class="ayuda-paso">Nivel</p>
+          <div class="niveles" data-lista="niveles"></div>
+          <label class="extra" data-extra="nivel-libre" hidden>Nivel<input name="nivel_libre" placeholder="Por ejemplo: I Nivel" /></label>
+          <input type="hidden" name="nivel" />
+          <label class="num-sec">Número de sección<input name="seccion_num" inputmode="numeric" autocomplete="off" placeholder="3" /></label>
+          <p class="vista-sec" aria-live="polite"></p>
+          <div class="extra" data-extra="subgrupo" hidden>
+            <p class="ayuda-paso">¿Es un medio grupo?</p>
+            <div class="niveles">
+              <label class="chipop"><input type="radio" name="subgrupo" value="" checked /><span>Grupo completo</span></label>
+              <label class="chipop"><input type="radio" name="subgrupo" value="A" /><span>Subgrupo A</span></label>
+              <label class="chipop"><input type="radio" name="subgrupo" value="B" /><span>Subgrupo B</span></label>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="paso" data-paso="estudiantes" hidden>
+          <legend>¿Cómo agrega los estudiantes?</legend>
+          <div class="opciones">
+            <label class="op"><input type="radio" name="estudiantes" value="archivo" checked /><span><b>Subir la lista del SEA</b><small>El Excel con la lista de estudiantes, o la plantilla de notas (.csv) que se descarga del SEA.</small></span></label>
+            <label class="op"><input type="radio" name="estudiantes" value="manual" /><span><b>Escribirlos aquí</b><small>Cédula, apellidos y nombre de cada uno.</small></span></label>
+            <label class="op"><input type="radio" name="estudiantes" value="despues" /><span><b>Después</b><small>Se agregan luego desde la sección.</small></span></label>
+          </div>
+          <div class="extra" data-extra="archivo">
+            <label class="archivo">Archivo<input type="file" name="archivo" accept=".xlsx,.csv" /></label>
+            <p class="muted">¿No tiene la lista del SEA? Use la <a href="/plantilla-estudiantes.xlsx">plantilla de Nexo</a>.</p>
+          </div>
+          <div class="extra" data-extra="manual" hidden>
+            <div class="tabla"><table class="manual">
+              <tr><th>Cédula</th><th>Apellidos</th><th>Nombre</th></tr>
+              {Array.from({ length: 5 }).map(() => <tr><td><input name="cedula" inputmode="numeric" /></td><td><input name="apellidos" /></td><td><input name="nombre" /></td></tr>)}
+            </table></div>
+            <button type="button" class="sec mini" data-fila>+ Otra fila</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="paso" data-paso="resumen" hidden>
+          <legend>Revise y cree</legend>
+          <ul class="resumen-lista" data-resumen></ul>
+        </fieldset>
+
+        <input type="hidden" name="regla" /><input type="hidden" name="asignatura_existente" />
+        <div class="nav-pasos">
+          <button type="button" class="sec grande" data-atras>Atrás</button>
+          <button type="button" class="grande" data-sig>Continuar</button>
+          <button type="submit" class="grande" data-crear hidden>Crear</button>
+        </div>
+      </form>
+    )}
+  </div>
+  <script is:inline>
+    (() => {
+      const form = document.getElementById('asistente'); if (!form) return;
+      const D = JSON.parse(form.dataset.datos);
+      const $ = (s, el = form) => el.querySelector(s), $$ = (s, el = form) => [...el.querySelectorAll(s)];
+      const estado = { ciclo: '', materia: null, mia: null, regla: null, nivel: '' };
+      let pila = ['ciclo'];
+      const paso = (n) => $(`[data-paso="${n}"]`);
+      const op = (name, value, titulo, ayuda, checked) => {
+        const l = document.createElement('label'); l.className = 'op';
+        l.innerHTML = `<input type="radio" name="${name}" value="${value}"${checked ? ' checked' : ''} /><span><b></b><small></small></span>`;
+        l.querySelector('b').textContent = titulo; l.querySelector('small').textContent = ayuda || '';
+        return l;
+      };
+      // Paso: ciclo
+      const lc = $('[data-lista="ciclos"]');
+      D.ciclos.forEach((c) => lc.appendChild(op('_ciclo', c.k, c.t, c.ayuda)));
+      if (D.mias.length) $('[data-paso="ciclo"] .atajo').hidden = false;
+      // Paso: mis materias
+      const lm = $('[data-lista="mias"]');
+      D.mias.forEach((m) => { const r = D.reglas.find((x) => x.codigo === m.regla); lm.appendChild(op('_mia', m.id, m.nombre, r ? r.resumen : 'Sin tipo del MEP')); });
+      const reglaDe = (c) => D.reglas.find((r) => r.codigo === c) || null;
+      const pintarMaterias = () => {
+        const l = $('[data-lista="materias"]'); l.innerHTML = '';
+        D.materias.forEach((m, i) => { if (m.ciclo === estado.ciclo) l.appendChild(op('_materia', i, m.nombre, m.pide ? 'Escriba el nombre' : '')); });
+        l.appendChild(op('_materia', 'otra', 'Otra materia', 'No está en la lista'));
+        const sel = $('[name=regla_otra]'); sel.innerHTML = '';
+        D.reglas.filter((r) => r.ciclo === estado.ciclo).forEach((r) => { const o = document.createElement('option'); o.value = r.codigo; o.textContent = r.nombre; sel.appendChild(o); });
+      };
+      const pintarComps = () => {
+        const r = estado.regla, box = $('[data-comps]'); box.innerHTML = '';
+        if (!r) return;
+        const t = document.createElement('p'); t.className = 'ayuda-paso'; t.textContent = r.diag ? 'Esta materia es diagnóstica y formativa: no lleva porcentajes.' : 'Así quedan sus componentes (del Reglamento de Evaluación):'; box.appendChild(t);
+        r.comps.forEach((c) => {
+          const d = document.createElement('div'); d.className = 'comp';
+          d.innerHTML = '<span class="cn"></span><span class="cb"><i></i></span><span class="cp"></span>';
+          d.querySelector('.cn').textContent = c.n + (c.k > 1 ? ` (${c.k})` : '');
+          d.querySelector('i').style.width = c.p + '%'; d.querySelector('.cp').textContent = c.p + ' %';
+          box.appendChild(d);
+        });
+        if (r.nota) { const n = document.createElement('p'); n.className = 'aviso-txt'; n.textContent = r.nota; box.appendChild(n); }
+      };
+      const pintarNiveles = () => {
+        const l = $('[data-lista="niveles"]'); l.innerHTML = '';
+        const ns = D.niveles[estado.ciclo] || [];
+        ns.forEach((n) => { const c = document.createElement('label'); c.className = 'chipop'; c.innerHTML = `<input type="radio" name="_nivel" value="${n}" /><span>${n}.°</span>`; l.appendChild(c); });
+        $('[data-extra="nivel-libre"]').hidden = ns.length > 0;
+        l.hidden = !ns.length;
+      };
+      const nivelActual = () => (D.niveles[estado.ciclo] || []).length ? ($('[name=_nivel]:checked')?.value || '') : $('[name=nivel_libre]').value.trim();
+      const vistaSec = () => {
+        const n = nivelActual(), s = $('[name=seccion_num]').value.trim();
+        $('[name=nivel]').value = n;
+        $('.vista-sec').textContent = n && s ? `Su sección será ${/^\d+$/.test(s) ? `${n}-${s}` : s}${$('[name=subgrupo]:checked')?.value || ''}` : '';
+        $('[data-extra="subgrupo"]').hidden = !['7', '8', '9'].includes(n);
+      };
+      form.addEventListener('change', (e) => {
+        const t = e.target;
+        if (t.name === '_materia') {
+          const otra = t.value === 'otra', m = otra ? null : D.materias[Number(t.value)];
+          estado.materia = m;
+          $('[data-extra="nombre"]').hidden = !(otra || m?.pide);
+          $('[data-extra="tipo"]').hidden = !otra;
+          if (m && !m.pide) $('[name=materia_nombre]').value = m.nombre; else if (!otra || !$('[name=materia_nombre]').dataset.toc) $('[name=materia_nombre]').value = '';
+          if (m?.pide || otra) setTimeout(() => $('[name=materia_nombre]').focus(), 50);
+        }
+        if (t.name === 'estudiantes') { $('[data-extra="archivo"]').hidden = t.value !== 'archivo'; $('[data-extra="manual"]').hidden = t.value !== 'manual'; }
+        if (['_nivel', 'subgrupo'].includes(t.name)) vistaSec();
+        // Elegir una opción avanza solo en los pasos de una sola elección
+        if (['_ciclo', '_mia'].includes(t.name) || (t.name === '_materia' && t.value !== 'otra' && !estado.materia?.pide)) setTimeout(siguiente, 180);
+      });
+      form.addEventListener('input', (e) => { if (['seccion_num', 'nivel_libre'].includes(e.target.name)) vistaSec(); if (e.target.name === 'materia_nombre') e.target.dataset.toc = '1'; });
+      $('[data-fila]').addEventListener('click', () => { const tr = $('.manual tr:last-child').cloneNode(true); tr.querySelectorAll('input').forEach((i) => (i.value = '')); $('.manual').appendChild(tr); });
+      const mostrar = () => {
+        const actual = pila[pila.length - 1];
+        $$('.paso').forEach((p) => (p.hidden = p.dataset.paso !== actual));
+        const orden = estado.mia ? ['mias', 'seccion', 'estudiantes', 'resumen'] : ['ciclo', 'materia', 'tc', 'seccion', 'estudiantes', 'resumen'];
+        const i = Math.max(0, orden.indexOf(actual));
+        $('.paso-n').textContent = `Paso ${i + 1} de ${orden.length}`;
+        $('.barra-p').style.width = `${((i + 1) / orden.length) * 100}%`;
+        $('[data-atras]').style.visibility = pila.length > 1 ? 'visible' : 'hidden';
+        $('[data-sig]').hidden = actual === 'resumen';
+        $('[data-crear]').hidden = actual !== 'resumen';
+        const campo = paso(actual).querySelector('input[name=seccion_num]'); if (campo && actual === 'seccion' && !campo.value) campo.focus({ preventScroll: true });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+      const aviso = (txt) => { let m = $('.msg.mal.js'); if (!m) { m = document.createElement('div'); m.className = 'msg mal js'; $('.paso-n').after(m); } m.textContent = txt; m.hidden = !txt; };
+      const siguiente = () => {
+        const actual = pila[pila.length - 1];
+        aviso('');
+        let sig = null;
+        if (actual === 'ciclo') {
+          const c = $('[name=_ciclo]:checked'); if (!c) return aviso('Elija el ciclo.');
+          estado.ciclo = c.value; estado.mia = null; $('[name=asignatura_existente]').value = ''; pintarMaterias(); pintarNiveles(); sig = 'materia';
+        } else if (actual === 'mias') {
+          const c = $('[name=_mia]:checked'); if (!c) return aviso('Elija la materia.');
+          estado.mia = D.mias.find((m) => String(m.id) === c.value); $('[name=asignatura_existente]').value = estado.mia.id;
+          estado.regla = reglaDe(estado.mia.regla); estado.ciclo = estado.mia.ciclo || estado.regla?.ciclo || ''; pintarNiveles(); sig = 'seccion';
+        } else if (actual === 'materia') {
+          const c = $('[name=_materia]:checked'); if (!c) return aviso('Elija la materia.');
+          const nombre = $('[name=materia_nombre]').value.trim();
+          if ((c.value === 'otra' || estado.materia?.pide) && !nombre) return aviso('Escriba el nombre de la materia.');
+          estado.regla = reglaDe(c.value === 'otra' ? $('[name=regla_otra]').value : estado.materia.codigo);
+          $('[name=regla]').value = estado.regla?.codigo || '';
+          pintarComps(); sig = estado.regla && !estado.regla.diag && estado.regla.tc ? 'tc' : 'seccion';
+        } else if (actual === 'tc') sig = 'seccion';
+        else if (actual === 'seccion') {
+          vistaSec();
+          if (!$('[name=nivel]').value) return aviso('Elija el nivel.');
+          if (!$('[name=seccion_num]').value.trim()) return aviso('Escriba el número de la sección.');
+          sig = 'estudiantes';
+        } else if (actual === 'estudiantes') {
+          const m = $('[name=estudiantes]:checked').value;
+          if (m === 'archivo' && !$('[name=archivo]').files.length) return aviso('Elija el archivo, o escoja «Después».');
+          sig = 'resumen'; pintarResumen();
+        }
+        if (sig) { pila.push(sig); mostrar(); }
+      };
+      const pintarResumen = () => {
+        const ul = $('[data-resumen]'); ul.innerHTML = '';
+        const li = (k, v) => { const e = document.createElement('li'); e.innerHTML = '<b></b> <span></span>'; e.querySelector('b').textContent = k; e.querySelector('span').textContent = v; ul.appendChild(e); };
+        const nombreMat = estado.mia ? estado.mia.nombre : $('[name=materia_nombre]').value.trim();
+        li('Materia:', nombreMat);
+        if (estado.regla) li('Componentes:', estado.regla.resumen);
+        if (!estado.mia && estado.regla?.tc && !estado.regla.diag) li('Trabajo cotidiano:', $('[name=tc_modo]:checked').value === 'unica' ? 'una sola nota' : 'por indicadores');
+        li('Sección:', $('.vista-sec').textContent.replace('Su sección será ', ''));
+        const m = $('[name=estudiantes]:checked').value;
+        li('Estudiantes:', m === 'archivo' ? `del archivo ${$('[name=archivo]').files[0]?.name}` : m === 'manual' ? `${$$('.manual [name=cedula]').filter((i) => i.value.trim()).length} escritos aquí` : 'después');
+      };
+      $('[data-sig]').addEventListener('click', siguiente);
+      $('[data-atras]').addEventListener('click', () => { if (pila.length > 1) { pila.pop(); if (pila[pila.length - 1] === 'ciclo') estado.mia = null; mostrar(); } });
+      $('[data-paso="ciclo"] [data-ir="mias"]')?.addEventListener('click', () => { pila = ['ciclo', 'mias']; estado.mia = {}; mostrar(); });
+      form.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'file') { e.preventDefault(); siguiente(); } });
+      form.addEventListener('submit', () => { $('[data-crear]').disabled = true; $('[data-crear]').textContent = 'Creando…'; });
+      // Viene de «Otra sección de la misma materia»
+      if (D.desde) { pila = ['mias']; const r = $(`[name=_mia][value="${D.desde}"]`); if (r) { r.checked = true; pila = ['mias']; siguiente(); pila = ['mias', 'seccion']; } }
+      // Volvió con un error (p. ej. la sección ya existía): se retoma en el paso de la sección con lo que había elegido
+      if (D.previo) {
+        const p = D.previo;
+        if (p.asignatura_existente) { const r = $(`[name=_mia][value="${p.asignatura_existente}"]`); if (r) { r.checked = true; pila = ['mias']; siguiente(); } }
+        else if (p._ciclo) { const c = $(`[name=_ciclo][value="${p._ciclo}"]`); if (c) { c.checked = true; pila = ['ciclo']; siguiente();
+          const m = $(`[name=_materia][value="${p._materia}"]`); if (m) { m.checked = true; m.dispatchEvent(new Event('change', { bubbles: true })); $('[name=materia_nombre]').value = p.materia_nombre || ''; if (p.regla_otra) $('[name=regla_otra]').value = p.regla_otra; siguiente(); if (pila[pila.length - 1] === 'tc') { const t = $(`[name=tc_modo][value="${p.tc_modo}"]`); if (t) t.checked = true; siguiente(); } } } }
+        const nv = $(`[name=_nivel][value="${p.nivel}"]`); if (nv) nv.checked = true; else if ($('[name=nivel_libre]')) $('[name=nivel_libre]').value = p.nivel || '';
+        $('[name=seccion_num]').value = p.seccion_num || ''; vistaSec();
+      }
+      mostrar();
+    })();
+  </script>
+  <style is:global>
+    .asis { max-width: 780px; margin: 0 auto; }
+    .asistente [hidden] { display: none !important; }
+    .asistente, .asis .paso-listo { padding: 26px 30px 24px; }
+    .asis .progreso { height: 6px; background: var(--hielo); border-radius: 6px; overflow: hidden; margin-bottom: 10px; }
+    .asis .barra-p { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--teal), var(--cian)); transition: width .25s ease; }
+    .asis .paso-n { margin: 0 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--teal); }
+    .asis .paso { border: 0; padding: 0; margin: 0; min-width: 0; }
+    .asis .paso legend { font-family: var(--titulos); font-weight: 700; font-size: 25px; color: var(--marino); margin: 0 0 18px; padding: 0; line-height: 1.2; }
+    .asis .opciones { display: grid; gap: 10px; }
+    .asis .opciones.dos { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+    .asis .op { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 2px solid var(--linea); border-radius: 12px; cursor: pointer; background: #fff; transition: border-color .12s, background .12s; }
+    .asis .op:hover { border-color: var(--aqua); background: #fbfeff; }
+    .asis .op:has(input:checked) { border-color: var(--marino); background: var(--hielo); }
+    .asis .op input { width: 20px; height: 20px; margin: 1px 0 0; flex: none; accent-color: var(--marino); }
+    .asis .op b { display: block; font-size: 16.5px; color: var(--marino); }
+    .asis .op small { display: block; font-size: 14px; color: var(--suave); margin-top: 2px; }
+    .asis .op:focus-within { outline: 3px solid rgba(18,207,243,.45); outline-offset: 1px; }
+    .asis .extra { margin-top: 14px; }
+    .asis .extra label, .asis .num-sec, .asis label.archivo { display: flex; flex-direction: column; gap: 6px; font-size: 15px; font-weight: 600; color: var(--tinta); }
+    .asis .extra input, .asis .extra select, .asis .num-sec input { font-size: 17px; padding: 11px 12px; }
+    .asis .num-sec { margin-top: 18px; max-width: 260px; }
+    .asis .vista-sec { font-size: 17px; font-weight: 700; color: var(--teal); min-height: 1.4em; margin: 10px 0 0; }
+    .asis .ayuda-paso { margin: 0 0 8px; font-weight: 600; color: var(--suave); font-size: 14.5px; }
+    .asis .niveles { display: flex; flex-wrap: wrap; gap: 8px; }
+    .asis .chipop { display: inline-flex !important; flex-direction: row !important; cursor: pointer; }
+    .asis .chipop input { position: absolute; opacity: 0; pointer-events: none; }
+    .asis .chipop span { display: inline-block; min-width: 64px; text-align: center; padding: 11px 16px; border: 2px solid var(--linea); border-radius: 10px; font-size: 17px; font-weight: 700; color: var(--marino); background: #fff; }
+    .asis .chipop input:checked + span { background: var(--marino); border-color: var(--marino); color: #fff; }
+    .asis .chipop input:focus-visible + span { outline: 3px solid rgba(18,207,243,.5); }
+    .asis .comps { margin-top: 20px; }
+    .asis .comp { display: grid; grid-template-columns: minmax(150px, 34%) 1fr 52px; align-items: center; gap: 10px; margin: 6px 0; font-size: 14.5px; }
+    .asis .cb { height: 10px; background: var(--gris); border-radius: 6px; overflow: hidden; }
+    .asis .cb i { display: block; height: 100%; background: var(--teal); border-radius: 6px; }
+    .asis .cp { text-align: right; font-weight: 700; color: var(--marino); }
+    .asis .aviso-txt { color: var(--ambar); font-size: 14px; }
+    .asis .manual input { width: 100%; min-width: 0; }
+    .asis .manual td { padding: 4px; }
+    .asis .resumen-lista { list-style: none; padding: 0; margin: 0; }
+    .asis .resumen-lista li { padding: 10px 0; border-top: 1px solid var(--linea); font-size: 16px; }
+    .asis .resumen-lista li:first-child { border-top: 0; }
+    .asis .nav-pasos { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--linea); }
+    .asis .grande { font-size: 16.5px; padding: 12px 26px; }
+    .asis .enlace { background: none; border: 0; color: var(--teal); text-decoration: underline; padding: 0; font-size: 15px; cursor: pointer; }
+    .asis .enlace:hover { background: none; color: var(--marino); }
+    .asis .atajo { margin: 14px 0 0; }
+    .asis .paso-listo { text-align: left; }
+    .asis .listo-icono { width: 52px; height: 52px; border-radius: 50%; background: var(--verde); color: #fff; display: grid; place-items: center; font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    .asis .hecho { padding-left: 20px; line-height: 1.6; }
+    .asis .siguientes { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 10px; }
+    @media (max-width: 700px) {
+      .asistente, .asis .paso-listo { padding: 18px 16px; }
+      .asis .paso legend { font-size: 21px; }
+      .asis .nav-pasos { position: sticky; bottom: 0; background: #fff; margin: 20px -16px -18px; padding: 12px 16px; }
+      .asis .grande { flex: 1; }
+    }
+  </style>
+</Base>

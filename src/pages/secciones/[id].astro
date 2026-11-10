@@ -3,32 +3,14 @@ import Base from '../../layouts/Base.astro';
 import { exec, q, one } from '../../lib/db';
 import { estudiantesDe, seccion, seccionDuplicada, leccionesEfectivas } from '../../lib/calc';
 import { num, numOrNull, str, parseCsv, etiquetaSeccion, validarSubgrupo } from '../../lib/util';
-import { leerExcel, CEDULA_EJEMPLO } from '../../lib/excel';
+import { guardarEstudiante as guardarEst, importarEstudiantes } from '../../lib/estudiantes';
 const { user, inst } = Astro.locals;
 const id = Number(Astro.params.id);
 const sec = await seccion(user.id, id);
 if (!sec) return Astro.redirect('/secciones');
 let msg = '', error = '';
 
-async function guardarEstudiante(d: Record<string, string>, subgrupo = '') {
-  const ced = (d.cedula || '').replace(/[-–\s]/g, '');
-  if (!ced || !d.apellidos || !d.nombre) return false;
-  const fecha = (d.fecha_nac || '').trim();
-  let fn: string | null = /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha
-    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.test(fecha) ? fecha.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, (_, a, b, c) => `${c}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`) : null;
-  if (fn && Number.isNaN(new Date(fn + 'T00:00:00').getTime())) fn = null; // fecha imposible: se ignora
-  await exec(
-    `INSERT INTO {S}.estudiantes (usuario_id, cedula, apellidos, nombre, fecha_nac, genero, encargado, telefono, extranjero)
-     VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (usuario_id, cedula) DO UPDATE SET apellidos=EXCLUDED.apellidos, nombre=EXCLUDED.nombre,
-     fecha_nac=COALESCE(EXCLUDED.fecha_nac, {S}.estudiantes.fecha_nac), genero=COALESCE(EXCLUDED.genero, {S}.estudiantes.genero),
-     encargado=EXCLUDED.encargado, telefono=EXCLUDED.telefono, activo=1`,
-    [user.id, ced, d.apellidos.trim(), d.nombre.trim(), fn, (d.genero || '').trim().slice(0, 1).toUpperCase() || null,
-     (d.encargado || '').trim(), (d.telefono || '').trim(), /^(s|si|sí|1|x)$/i.test(d.extranjero || '') ? 1 : 0]);
-  const e = await one<any>('SELECT id FROM {S}.estudiantes WHERE usuario_id=? AND cedula=?', [user.id, ced]);
-  await exec('INSERT INTO {S}.matriculas (estudiante_id, seccion_id, subgrupo) VALUES (?,?,?) ON CONFLICT (estudiante_id, seccion_id) DO UPDATE SET subgrupo=EXCLUDED.subgrupo',
-    [e.id, id, subgrupo.trim().toUpperCase().slice(0, 5)]);
-  return true;
-}
+const guardarEstudiante = (d: Record<string, string>, subgrupo = '') => guardarEst(user.id, id, d, subgrupo);
 
 if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
@@ -38,34 +20,8 @@ if (Astro.request.method === 'POST') {
     (await guardarEstudiante(d, str(f.get('subgrupo')))) ? (msg = 'Estudiante agregado.') : (error = 'Cédula, apellidos y nombre son obligatorios.');
   } else if (accion === 'importar') {
     const archivo = f.get('archivo');
-    const ext = archivo instanceof File ? (archivo.name.split('.').pop() ?? '').toLowerCase() : '';
-    if (ext === 'xls') error = 'El formato .xls (Excel 97-2003) no se puede leer. En Excel use «Guardar como» → «Libro de Excel (.xlsx)».';
-    else if (archivo instanceof File && archivo.size) {
-      const filas = ext === 'xlsx' ? await leerExcel(await archivo.arrayBuffer()) : parseCsv(await archivo.text());
-      const norm = (c: string) => c.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      // La cabecera puede venir debajo de filas de título (nombre del colegio, fecha…)
-      const h = filas.findIndex((r) => r.some((c) => norm(c).startsWith('cedula')));
-      const cab = h >= 0 ? filas[h].map(norm) : [];
-      const col = (n: string) => cab.findIndex((c) => c.startsWith(n));
-      const idx = { cedula: col('cedula'), apellidos: col('apellido'), apellido1: col('primer apellido'), apellido2: col('segundo apellido'), nombre: col('nombre'),
-        seccion: col('seccion'), fecha_nac: col('fecha'), genero: col('genero'), encargado: col('encargad'), telefono: col('telefono'), extranjero: col('extranjer'), subgrupo: col('subgrupo') };
-      if (idx.cedula < 0 || (idx.apellidos < 0 && idx.apellido1 < 0) || idx.nombre < 0) error = 'El archivo debe tener columnas Cédula, Primer apellido, Segundo apellido y Nombre. Descargue la plantilla.';
-      else {
-        const clave = (v: string) => v.replace(/\s/g, '').split(/[-–]/).map((p) => p.replace(/^0+(?=.)/, '').toUpperCase()).join('-');
-        // Un medio grupo (7-1A) recibe las filas de su sección completa (7-1)
-        const estas = [clave(etiquetaSeccion({ ...sec, subgrupo: null })), clave(etiquetaSeccion(sec))];
-        let n = 0, malas = 0, otras = 0;
-        for (const r of filas.slice(h + 1)) {
-          const d: any = {}; for (const [k, i] of Object.entries(idx)) d[k] = i >= 0 ? r[i] ?? '' : '';
-          if (idx.apellidos < 0) d.apellidos = `${d.apellido1.trim()} ${d.apellido2.trim()}`.trim();
-          if (d.cedula.replace(/[-–\s]/g, '') === CEDULA_EJEMPLO) continue; // fila de ejemplo de la plantilla
-          if (d.seccion.trim() && !estas.includes(clave(d.seccion))) { otras++; continue; }
-          try { if (await guardarEstudiante(d, d.subgrupo)) n++; else malas++; } catch { malas++; }
-        }
-        msg = `${n} estudiantes importados o actualizados.` + (malas ? ` ${malas} fila(s) omitidas por datos incompletos.` : '')
-          + (otras ? ` ${otras} fila(s) de otras secciones no se importaron aquí.` : '');
-      }
-    } else error = 'Elija un archivo de Excel (.xlsx) o CSV.';
+    if (!(archivo instanceof File) || !archivo.size) error = 'Elija un archivo de Excel (.xlsx) o CSV.';
+    else { const r = await importarEstudiantes(user.id, sec, archivo); r.error ? (error = r.error) : (msg = r.ok!); }
   } else if (accion === 'quitar') {
     await exec('DELETE FROM {S}.matriculas WHERE estudiante_id=? AND seccion_id=?', [num(f.get('estudiante_id')), id]);
   } else if (accion === 'subgrupo') {

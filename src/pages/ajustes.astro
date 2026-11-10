@@ -92,8 +92,9 @@ const asignaturas = await q<any>('SELECT * FROM general.asignaturas WHERE usuari
         })}
       </ul>
     )}
-    <details class="nueva-materia" open={asignaturas.length === 0}>
-      <summary class="btn">+ Agregar materia</summary>
+    <p class="fila"><a class="btn" href="/asistente">+ Agregar materia con el asistente</a><span class="muted">Paso a paso: materia, sección y estudiantes.</span></p>
+    <details class="nueva-materia">
+      <summary class="muted" style="cursor:pointer">Agregar solo la materia, sin asistente</summary>
       <form method="post" class="form-materia">
         <input type="hidden" name="accion" value="asignatura" />
         <MateriaCampos reglas={reglas} />

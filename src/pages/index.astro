@@ -56,9 +56,9 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
 
     {secciones.length === 0 ? (
       <div class="vacio tarjeta">
-        <h2>Empiece por crear una sección</h2>
-        <p>Cree sus grupos (por ejemplo 10-3) y agregue los estudiantes, o impórtelos desde el SEA.</p>
-        <p><a class="btn" href="/secciones">Crear sección</a> <a class="btn sec" href="/sea">Importar del SEA</a></p>
+        <h2>Empiece por su primera materia</h2>
+        <p>El asistente le guía paso a paso: su materia, el grupo (por ejemplo 10-3) y los estudiantes, que puede subir desde el SEA.</p>
+        <p><a class="btn" href="/asistente">Empezar con el asistente</a></p>
       </div>
     ) : (
       <>

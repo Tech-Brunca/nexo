@@ -1,9 +1,7 @@
 ---
-import { asegurarComponentes } from '../../lib/sea';
 import Base from '../../layouts/Base.astro';
 import { exec, q, one, getAjustes } from '../../lib/db';
-import { reglaDeMateria, crearEvaluacionesPlan, resumenRegla } from '../../lib/reac';
-import { seccionDuplicada } from '../../lib/calc';
+import { crearSeccion } from '../../lib/secciones';
 import { num, numOrNull, str, etiquetaSeccion, validarSubgrupo } from '../../lib/util';
 const { user, inst } = Astro.locals;
 const cfg = await getAjustes(user.id);
@@ -12,28 +10,9 @@ if (Astro.request.method === 'POST') {
   const f = await Astro.request.formData();
   const accion = str(f.get('accion'));
   if (accion === 'crear') {
-    const nivel = str(f.get('nivel')), nombre = str(f.get('nombre'));
-    const { subgrupo, error } = validarSubgrupo(nivel, str(f.get('subgrupo')));
-    if (!nivel || !nombre) msg = 'Indique nivel y nombre.';
-    else if (error) msg = error;
-    else {
-      const asg = numOrNull(f.get('asignatura_id'));
-      const propia = asg && (await q('SELECT id FROM general.asignaturas WHERE id=? AND usuario_id=?', [asg, user.id])).length ? asg : null;
-      const nueva = { nivel, nombre, subgrupo, asignatura_id: propia, anio: cfg.curso_lectivo };
-      if (await seccionDuplicada(user.id, nueva)) msg = `Ya existe la sección ${etiquetaSeccion(nueva)} con esa asignatura en el curso ${cfg.curso_lectivo}.`;
-      else {
-        // Con la regla del MEP de la materia: nota aprobatoria del reglamento (si no se indicó), componentes y pruebas
-        const m = propia ? await reglaDeMateria(user.id, propia) : null;
-        const creada = await one<any>('INSERT INTO {S}.secciones (usuario_id, nivel, nombre, subgrupo, asignatura_id, nota_aprobatoria, anio) VALUES (?,?,?,?,?,?,?) RETURNING id',
-          [user.id, nivel, nombre, subgrupo, propia, numOrNull(f.get('nota_aprobatoria')) ?? m?.regla.aprobatoria ?? null, cfg.curso_lectivo]);
-        await asegurarComponentes(user.id, nivel, propia);
-        if (m) {
-          const creadas = await crearEvaluacionesPlan(user.id, { id: creada!.id, nivel, asignatura_id: propia }, m.regla, m.tc);
-          ok = `Sección ${etiquetaSeccion({ nivel, nombre, subgrupo })} creada con los componentes del MEP (${resumenRegla(m.regla)}).` +
-            (creadas.length ? ` Se crearon en cada periodo: ${creadas.join('; ')}.` : '') + ' Puede ajustarlos en Componentes y Evaluaciones.';
-        } else ok = `Sección ${etiquetaSeccion({ nivel, nombre, subgrupo })} creada.${propia ? ' Su materia no tiene tipo del MEP: elíjalo en Ajustes para crear los componentes solos.' : ''}`;
-      }
-    }
+    const r = await crearSeccion(user.id, { nivel: str(f.get('nivel')), nombre: str(f.get('nombre')), subgrupo: str(f.get('subgrupo')),
+      asignatura_id: numOrNull(f.get('asignatura_id')), nota_aprobatoria: numOrNull(f.get('nota_aprobatoria')) });
+    if (r.error) msg = r.error; else ok = r.ok!;
   } else if (accion === 'borrar') {
     await exec('DELETE FROM {S}.secciones WHERE id=? AND usuario_id=?', [num(f.get('id')), user.id]);
   }
@@ -48,6 +27,7 @@ const secciones = await q<any>(
 <Base titulo="Secciones">
   <h1>Secciones</h1>
   <p class="sub">Sus grupos en {inst!.nombre}: grupos completos o medios grupos, cada uno con su asignatura.</p>
+  <div class="tarjeta fila asis-cta"><span style="flex:1"><b>¿Una materia o un grupo nuevo?</b> El asistente crea la materia, la sección con sus componentes del MEP y agrega los estudiantes, paso a paso.</span><a class="btn" href="/asistente">Abrir el asistente</a></div>
   {msg && <div class="msg mal">{msg}</div>}{ok && <div class="msg ok">{ok}</div>}
   <form method="post" class="tarjeta fila">
     <input type="hidden" name="accion" value="crear" />
