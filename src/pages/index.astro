@@ -71,6 +71,7 @@ const faltan = obligatorios.filter((p) => !p.listo);
         <div class="prep-cab"><h2 id="prep-titulo">Preparar el curso · {obligatorios.length - faltan.length} de {obligatorios.length}</h2><a href="/configurar">Ver todo</a></div>
         <div class="prep-barra"><span style={`width:${Math.round(((obligatorios.length - faltan.length) / obligatorios.length) * 100)}%`}></span></div>
         <p class="muted">Falta: {faltan.map((p, i) => <>{i > 0 && ' · '}<a href={p.h}>{p.titulo}</a></>)}</p>
+        {faltan.some((p) => ['materias', 'secciones', 'estudiantes'].includes(p.clave)) && <p class="muted">¿Le falta una materia, una sección o sus estudiantes? <a href="/asistente">Use el asistente</a>: lo hace todo paso a paso.</p>}
       </section>
     )}
 
