@@ -3,6 +3,7 @@
 // con el estado de cada paso y las plantillas de mensajes.
 import Base from '../layouts/Base.astro';
 import { pasosPreparar } from '../lib/preparar';
+import ConfigurarCurso from '../components/ConfigurarCurso.astro';
 const { user } = Astro.locals;
 const pasos = await pasosPreparar(user.id);
 const obligatorios = pasos.filter((p) => !p.opcional);
@@ -15,24 +16,7 @@ const otros = [
 <Base titulo="Configurar el curso">
   <h1>Configurar el curso</h1>
   <p class="sub">{listos === obligatorios.length ? 'Todo listo. Puede volver aquí para cambiar cualquier ajuste.' : `${listos} de ${obligatorios.length} pasos listos.`}</p>
-  <div class="cfg-barra" role="progressbar" aria-valuemin="0" aria-valuemax={obligatorios.length} aria-valuenow={listos} aria-label="Avance de la configuración"><span style={`width:${Math.round((listos / obligatorios.length) * 100)}%`}></span></div>
-  <a class="cfg-asis" href="/asistente">
-    <span class="cfg-asis-ico" aria-hidden="true">+</span>
-    <span><b>Agregar una materia o sección con el asistente</b><small>La forma más fácil: elige la materia, el grupo y sube los estudiantes del SEA. Deja listos los componentes del MEP.</small></span>
-    <span class="btn">Abrir</span>
-  </a>
-  <h2>Paso por paso</h2>
-  <ol class="cfg-pasos">
-    {pasos.map((p) => (
-      <li class={p.listo ? 'listo' : ''}>
-        <a href={p.h}>
-          <span class="marca-paso" aria-hidden="true">{p.listo ? '✓' : ''}</span>
-          <span class="txt"><b>{p.titulo}{p.opcional && <small> · opcional</small>}</b><small>{p.ayuda}</small></span>
-          <span class={`chip ${p.listo ? 'ok' : 'aviso'}`}>{p.listo ? 'Listo' : 'Falta'}</span>
-        </a>
-      </li>
-    ))}
-  </ol>
+  <ConfigurarCurso pasos={pasos} />
   <h2>Más opciones</h2>
   <ul class="cfg-otros">
     {otros.map(([h, t, d]) => <li><a href={h}><b>{t}</b><small>{d}</small></a></li>)}

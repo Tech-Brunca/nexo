@@ -1,0 +1,53 @@
+---
+// Pasos para configurar el curso, con el asistente destacado. Se usa en Configurar el curso
+// y en Inicio la primera vez que entra el docente.
+import type { PasoPreparar } from '../lib/preparar';
+interface Props { pasos: PasoPreparar[] }
+const { pasos } = Astro.props;
+const obligatorios = pasos.filter((p) => !p.opcional);
+const listos = obligatorios.filter((p) => p.listo).length;
+---
+<div class="cfg">
+  <div class="cfg-barra" role="progressbar" aria-valuemin="0" aria-valuemax={obligatorios.length} aria-valuenow={listos} aria-label="Avance de la configuración"><span style={`width:${Math.round((listos / obligatorios.length) * 100)}%`}></span></div>
+  <a class="cfg-asis" href="/asistente">
+    <span class="cfg-asis-ico" aria-hidden="true">+</span>
+    <span><b>Agregar una materia o sección con el asistente</b><small>La forma más fácil: elige la materia, el grupo y sube los estudiantes del SEA. Deja listos los componentes del MEP.</small></span>
+    <span class="btn">Abrir</span>
+  </a>
+  <h2 class="cfg-h">Paso por paso</h2>
+  <ol class="cfg-pasos">
+    {pasos.map((p) => (
+      <li class={p.listo ? 'listo' : ''}>
+        <a href={p.h}>
+          <span class="marca-paso" aria-hidden="true">{p.listo ? '✓' : ''}</span>
+          <span class="txt"><b>{p.titulo}{p.opcional && <small> · opcional</small>}</b><small>{p.ayuda}</small></span>
+          <span class={`chip ${p.listo ? 'ok' : 'aviso'}`}>{p.listo ? 'Listo' : 'Falta'}</span>
+        </a>
+      </li>
+    ))}
+  </ol>
+</div>
+  <style is:global>
+    .cfg-asis { display: flex; align-items: center; gap: 14px; max-width: 640px; padding: 14px 16px; margin-bottom: 18px; border-radius: 12px; text-decoration: none;
+      background: var(--hielo); border: 2px solid var(--teal); color: var(--tinta); }
+    .cfg-asis:hover { background: #fff; }
+    .cfg-asis > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; }
+    .cfg-asis b { color: var(--marino); font-size: 16px; }
+    .cfg-asis small { color: var(--suave); font-size: 13px; }
+    .cfg-asis-ico { width: 34px; height: 34px; border-radius: 50%; background: var(--teal); color: #fff; display: grid; place-items: center; font-size: 22px; font-weight: 700; flex: none; }
+    .cfg-h { font-size: 17px; margin: 0 0 8px; }
+    .cfg-barra { height: 8px; background: #fff; border: 1px solid var(--linea); border-radius: 8px; overflow: hidden; max-width: 640px; margin-bottom: 16px; }
+    .cfg-barra span { display: block; height: 100%; background: var(--teal); }
+    .cfg-pasos, .cfg-otros { list-style: none; margin: 0; padding: 0; max-width: 640px; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .cfg-pasos li + li, .cfg-otros li + li { border-top: 1px solid var(--linea); }
+    .cfg-pasos a, .cfg-otros a { display: flex; align-items: center; gap: 14px; padding: 12px 16px; text-decoration: none; color: var(--tinta); }
+    .cfg-pasos a:hover, .cfg-otros a:hover { background: var(--hielo); }
+    .marca-paso { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #c6d4e3; display: grid; place-items: center; font-weight: 700; color: #fff; flex: none; }
+    .listo .marca-paso { background: var(--verde); border-color: var(--verde); }
+    .txt, .cfg-otros a { flex-direction: column; align-items: flex-start; }
+    .txt { display: flex; flex: 1; }
+    .cfg-otros a { gap: 0; }
+    .txt b, .cfg-otros b { color: var(--marino); }
+    .txt small, .cfg-otros small { color: var(--suave); font-size: 13px; }
+    .txt b small { color: var(--suave); font-weight: 400; }
+  </style>

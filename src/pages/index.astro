@@ -9,6 +9,7 @@ import MinutaEditor from '../components/MinutaEditor.astro';
 import { bitacoraRango } from '../lib/bitacora';
 import { revisarAtrasos, resumenPlanes } from '../lib/plan';
 import { pasosPreparar } from '../lib/preparar';
+import ConfigurarCurso from '../components/ConfigurarCurso.astro';
 import { seccionesMenu, ordenarParaMenu } from '../lib/menu';
 const { user, inst } = Astro.locals;
 const aj = await getAjustes(user.id);
@@ -76,11 +77,11 @@ const faltan = obligatorios.filter((p) => !p.listo);
     )}
 
     {secciones.length === 0 ? (
-      <div class="vacio tarjeta">
-        <h2>Empiece por su primera materia</h2>
-        <p>El asistente le guía paso a paso: su materia, el grupo (por ejemplo 10-3) y los estudiantes, que puede subir desde el SEA.</p>
-        <p><a class="btn" href="/asistente">Empezar con el asistente</a></p>
-      </div>
+      <section class="primera" aria-labelledby="cfg-titulo">
+        <h2 id="cfg-titulo">Configurar el curso</h2>
+        <p class="muted">Bienvenido a Nexo. Antes de pasar lista y calificar, deje listo su curso. Lo más fácil es empezar con el asistente.</p>
+        <ConfigurarCurso pasos={pasos} />
+      </section>
     ) : (
       <>
         {bitSec && (
@@ -134,6 +135,8 @@ const faltan = obligatorios.filter((p) => !p.listo);
   </div>
   <style>
     .hoy-enc { margin-bottom: 6px; }
+    .primera h2 { font-size: 20px; margin: 4px 0 4px; }
+    .primera > p { max-width: 640px; margin: 0 0 14px; }
     .preparar { background: var(--hielo); border: 1px solid #bfe9f5; border-radius: 12px; padding: 12px 16px; margin: 6px 0 18px; }
     .prep-cab { display: flex; align-items: baseline; gap: 12px; }
     .prep-cab h2 { margin: 0; font-size: 16px; }
