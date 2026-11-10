@@ -3,6 +3,7 @@ import Base from '../../layouts/Base.astro';
 import { exec, q } from '../../lib/db';
 import { hashClave, claveValida } from '../../lib/auth';
 import { num, str } from '../../lib/util';
+import { colegiosDe, resetearColegio, resetearTodo, eliminarCuenta } from '../../lib/admin';
 const { user } = Astro.locals;
 let msg = '', error = '';
 if (Astro.request.method === 'POST') {
@@ -14,6 +15,17 @@ if (Astro.request.method === 'POST') {
   else if (accion === 'bloquear') { await exec(`UPDATE general.usuarios SET estado='bloqueado' WHERE id=?`, [id]); msg = 'Cuenta desactivada.'; }
   else if (accion === 'rol') { await exec('UPDATE general.usuarios SET rol=? WHERE id=?', [str(f.get('rol')) === 'admin' ? 'admin' : 'docente', id]); msg = 'Rol actualizado.'; }
   else if (accion === 'rechazar') { await exec(`DELETE FROM general.usuarios WHERE id=? AND estado='pendiente'`, [id]); msg = 'Solicitud rechazada.'; }
+  else if (accion === 'resetear-colegio' || accion === 'resetear-todo' || accion === 'eliminar') {
+    // Borrados que no se pueden deshacer: se confirma escribiendo la palabra
+    const palabra = accion === 'eliminar' ? 'ELIMINAR' : 'RESETEAR';
+    if (str(f.get('confirmar')).toUpperCase() !== palabra) error = `Para confirmar escriba ${palabra}.`;
+    else {
+      try {
+        msg = accion === 'resetear-colegio' ? await resetearColegio(id, num(f.get('colegio')))
+          : accion === 'resetear-todo' ? await resetearTodo(id) : await eliminarCuenta(id);
+      } catch (e: any) { error = `No se pudo completar: ${e.message}`; }
+    }
+  }
   else if (accion === 'clave') {
     const c = str(f.get('clave'));
     if (!claveValida(c)) error = 'La contraseña temporal debe tener al menos 8 caracteres.';
@@ -25,6 +37,7 @@ const usuarios = await q<any>(`SELECT u.*, string_agg(c.nombre, ', ' ORDER BY c.
   FROM general.usuarios u LEFT JOIN general.usuario_colegios uc ON uc.usuario_id=u.id LEFT JOIN general.colegios c ON c.id=uc.colegio_id
   WHERE (?='' OR u.estado=?) GROUP BY u.id
   ORDER BY CASE u.estado WHEN 'pendiente' THEN 0 WHEN 'activo' THEN 1 ELSE 2 END, u.nombre`, [filtro, filtro]);
+const colegiosPor = new Map(await Promise.all(usuarios.map(async (u) => [u.id, await colegiosDe(u.id)] as const)));
 const pendientes = usuarios.filter((u) => u.estado === 'pendiente').length;
 const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<string, string>;
 ---
@@ -52,6 +65,31 @@ const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<st
           {u.id !== user.id && u.estado !== 'activo' && <form method="post" style="display:inline"><input type="hidden" name="accion" value="aprobar" /><input type="hidden" name="id" value={u.id} /><button class="mini">{u.estado === 'pendiente' ? 'Aprobar' : 'Reactivar'}</button></form>}
           {u.id !== user.id && u.estado === 'activo' && <form method="post" style="display:inline" onsubmit="return confirm('¿Desactivar esta cuenta? Sus datos se conservan.')"><input type="hidden" name="accion" value="bloquear" /><input type="hidden" name="id" value={u.id} /><button class="mini peligro">Desactivar</button></form>}
           {u.estado === 'pendiente' && <form method="post" style="display:inline" onsubmit="return confirm('¿Rechazar y borrar la solicitud?')"><input type="hidden" name="accion" value="rechazar" /><input type="hidden" name="id" value={u.id} /> <button class="mini peligro">Rechazar</button></form>}
+          {u.id !== user.id && u.estado !== 'pendiente' && (
+            <details class="resetear"><summary class="muted">Resetear</summary>
+              <div class="r-panel">
+                <p class="muted">No se puede deshacer. Pida antes al docente descargar su <b>Respaldo</b> (menú de su cuenta).</p>
+                {(colegiosPor.get(u.id) ?? []).length > 0 && (
+                  <form method="post" class="fila" onsubmit="return confirm('¿Borrar los datos del docente en ese colegio?')">
+                    <input type="hidden" name="accion" value="resetear-colegio" /><input type="hidden" name="id" value={u.id} />
+                    <label>Borrar sus datos de<select name="colegio">{colegiosPor.get(u.id)!.map((c) => <option value={c.id}>{c.nombre}</option>)}</select></label>
+                    <input name="confirmar" placeholder="Escriba RESETEAR" autocomplete="off" style="width:150px" /><button class="mini peligro">Borrar del colegio</button>
+                    <span class="muted r-ayuda">Secciones, estudiantes, notas, asistencia, bitácora y planes de ese colegio. Sus materias y los otros colegios quedan.</span>
+                  </form>
+                )}
+                <form method="post" class="fila" onsubmit="return confirm('¿Borrar todos los datos del docente?')">
+                  <input type="hidden" name="accion" value="resetear-todo" /><input type="hidden" name="id" value={u.id} />
+                  <input name="confirmar" placeholder="Escriba RESETEAR" autocomplete="off" style="width:150px" /><button class="mini peligro">Borrar todos sus datos</button>
+                  <span class="muted r-ayuda">Todo, en todos sus colegios, más sus materias, ajustes y plantillas. La cuenta y la contraseña quedan.</span>
+                </form>
+                <form method="post" class="fila" onsubmit="return confirm('¿Eliminar la cuenta y todos sus datos?')">
+                  <input type="hidden" name="accion" value="eliminar" /><input type="hidden" name="id" value={u.id} />
+                  <input name="confirmar" placeholder="Escriba ELIMINAR" autocomplete="off" style="width:150px" /><button class="mini peligro">Eliminar cuenta</button>
+                  <span class="muted r-ayuda">Como si nunca se hubiera registrado.</span>
+                </form>
+              </div>
+            </details>
+          )}
           {u.estado !== 'pendiente' && (
             <details style="display:inline-block"><summary class="muted">Clave</summary>
               <form method="post" class="fila" style="margin-top:6px"><input type="hidden" name="accion" value="clave" /><input type="hidden" name="id" value={u.id} />
@@ -62,5 +100,15 @@ const chip = { pendiente: 'aviso', activo: 'ok', bloqueado: 'mal' } as Record<st
       </tr>
     ))}
   </table></div>
+  <style>
+    details.resetear { display: inline-block; margin: 0 10px 0 12px; text-align: left; }
+    details.resetear summary { cursor: pointer; }
+    .r-panel { position: absolute; right: 24px; z-index: 5; width: min(560px, 88vw); white-space: normal; background: #fff; border: 1px solid var(--linea);
+      border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 30px rgba(3,18,48,.18); display: flex; flex-direction: column; gap: 10px; }
+    .r-panel p { margin: 0; font-size: 13.5px; }
+    .r-panel form { align-items: center; padding-top: 10px; border-top: 1px solid var(--linea); }
+    .r-panel label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+    .r-ayuda { flex-basis: 100%; font-size: 12.5px; }
+  </style>
   <p class="muted">Los administradores ven esta lista y los colegios, pero no las notas ni los estudiantes de otros docentes.</p>
 </Base>
