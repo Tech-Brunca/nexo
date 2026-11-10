@@ -1,0 +1,25 @@
+---
+// Herramientas: entrada y salida de datos (SEA, respaldo, plantillas para importar), fuera del menú diario.
+import Base from '../layouts/Base.astro';
+const opciones = [
+  ['/sea', 'Importar y exportar SEA', 'Llevar las notas al SEA o traerlas desde su plantilla'],
+  ['/respaldo', 'Respaldo', 'Descargar todos sus datos o restaurarlos'],
+  ['/plantilla-estudiantes.xlsx', 'Plantilla de estudiantes (Excel)', 'Para importar la lista de una sección'],
+  ['/indicadores-plantilla.xlsx', 'Plantilla de indicadores (Excel)', 'Para cargar indicadores del trabajo cotidiano'],
+];
+---
+<Base titulo="Herramientas">
+  <h1>Herramientas</h1>
+  <p class="sub">Importar, exportar y respaldar sus datos.</p>
+  <ul class="herr">
+    {opciones.map(([h, t, d]) => <li><a href={h}><b>{t}</b><small>{d}</small></a></li>)}
+  </ul>
+  <style>
+    .herr { list-style: none; margin: 0; padding: 0; max-width: 640px; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .herr li + li { border-top: 1px solid var(--linea); }
+    .herr a { display: flex; flex-direction: column; padding: 12px 16px; text-decoration: none; }
+    .herr a:hover { background: var(--hielo); }
+    .herr b { color: var(--marino); }
+    .herr small { color: var(--suave); font-size: 13px; }
+  </style>
+</Base>

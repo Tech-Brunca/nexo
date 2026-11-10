@@ -1,0 +1,51 @@
+---
+// Configurar el curso: todo lo que se arma al inicio (antes en el grupo «Preparar» del menú),
+// con el estado de cada paso y las plantillas de mensajes.
+import Base from '../layouts/Base.astro';
+import { pasosPreparar } from '../lib/preparar';
+const { user } = Astro.locals;
+const pasos = await pasosPreparar(user.id);
+const obligatorios = pasos.filter((p) => !p.opcional);
+const listos = obligatorios.filter((p) => p.listo).length;
+const otros = [
+  ['/asistente', 'Asistente: nueva materia', 'Paso a paso: materia, sección y estudiantes de una vez'],
+  ['/plantillas', 'Mensajes de WhatsApp', 'Plantillas de los avisos a encargados'],
+  ['/plantillas-hogar', 'Comunicados al hogar', 'Plantillas de los comunicados para el cuaderno o WhatsApp'],
+];
+---
+<Base titulo="Configurar el curso">
+  <h1>Configurar el curso</h1>
+  <p class="sub">{listos === obligatorios.length ? 'Todo listo. Puede volver aquí para cambiar cualquier ajuste.' : `${listos} de ${obligatorios.length} pasos listos.`}</p>
+  <div class="cfg-barra" role="progressbar" aria-valuemin="0" aria-valuemax={obligatorios.length} aria-valuenow={listos} aria-label="Avance de la configuración"><span style={`width:${Math.round((listos / obligatorios.length) * 100)}%`}></span></div>
+  <ol class="cfg-pasos">
+    {pasos.map((p) => (
+      <li class={p.listo ? 'listo' : ''}>
+        <a href={p.h}>
+          <span class="marca-paso" aria-hidden="true">{p.listo ? '✓' : ''}</span>
+          <span class="txt"><b>{p.titulo}{p.opcional && <small> · opcional</small>}</b><small>{p.ayuda}</small></span>
+          <span class={`chip ${p.listo ? 'ok' : 'aviso'}`}>{p.listo ? 'Listo' : 'Falta'}</span>
+        </a>
+      </li>
+    ))}
+  </ol>
+  <h2>Más opciones</h2>
+  <ul class="cfg-otros">
+    {otros.map(([h, t, d]) => <li><a href={h}><b>{t}</b><small>{d}</small></a></li>)}
+  </ul>
+  <style>
+    .cfg-barra { height: 8px; background: #fff; border: 1px solid var(--linea); border-radius: 8px; overflow: hidden; max-width: 640px; margin-bottom: 16px; }
+    .cfg-barra span { display: block; height: 100%; background: var(--teal); }
+    .cfg-pasos, .cfg-otros { list-style: none; margin: 0; padding: 0; max-width: 640px; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .cfg-pasos li + li, .cfg-otros li + li { border-top: 1px solid var(--linea); }
+    .cfg-pasos a, .cfg-otros a { display: flex; align-items: center; gap: 14px; padding: 12px 16px; text-decoration: none; color: var(--tinta); }
+    .cfg-pasos a:hover, .cfg-otros a:hover { background: var(--hielo); }
+    .marca-paso { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #c6d4e3; display: grid; place-items: center; font-weight: 700; color: #fff; flex: none; }
+    .listo .marca-paso { background: var(--verde); border-color: var(--verde); }
+    .txt, .cfg-otros a { flex-direction: column; align-items: flex-start; }
+    .txt { display: flex; flex: 1; }
+    .cfg-otros a { gap: 0; }
+    .txt b, .cfg-otros b { color: var(--marino); }
+    .txt small, .cfg-otros small { color: var(--suave); font-size: 13px; }
+    .txt b small { color: var(--suave); font-weight: 400; }
+  </style>
+</Base>

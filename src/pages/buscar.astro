@@ -1,0 +1,76 @@
+---
+// Búsqueda de la barra superior (Ctrl + K): estudiantes del docente y páginas de Nexo.
+import Base from '../layouts/Base.astro';
+import { q } from '../lib/db';
+import { sqlEtiquetaSeccion } from '../lib/util';
+const { user } = Astro.locals;
+const texto = (Astro.url.searchParams.get('q') ?? '').trim();
+const sinTildes = (t: string) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const termino = sinTildes(texto);
+const T = `translate(lower(%), 'áéíóúüñ', 'aeiouun')`;
+const estudiantes = termino.length >= 2 ? await q<any>(
+  `SELECT e.id, e.apellidos, e.nombre, e.cedula, e.activo,
+     (SELECT string_agg(${sqlEtiquetaSeccion()}, ', ' ORDER BY s.nivel, s.nombre) FROM {S}.matriculas m JOIN {S}.secciones s ON s.id=m.seccion_id WHERE m.estudiante_id=e.id) AS secciones
+   FROM {S}.estudiantes e
+   WHERE e.usuario_id=? AND (${T.replace('%', "e.apellidos || ' ' || e.nombre")} LIKE ? OR ${T.replace('%', "e.nombre || ' ' || e.apellidos")} LIKE ? OR e.cedula LIKE ?)
+   ORDER BY e.activo DESC, e.apellidos, e.nombre LIMIT 30`,
+  [user.id, `%${termino}%`, `%${termino}%`, `%${termino.replace(/\D/g, '') || termino}%`]) : [];
+const PAGINAS: [string, string, string][] = [
+  ['/', 'Hoy', 'inicio pendientes clases'],
+  ['/asistencia', 'Pasar lista', 'asistencia ausencias tardias lista'],
+  ['/bitacora', 'Bitácora', 'minuta anotaciones clase'],
+  ['/evaluaciones', 'Evaluaciones', 'calificar pruebas tareas proyectos cotidiano'],
+  ['/estudiantes', 'Estudiantes', 'alumnos encargados lista'],
+  ['/notas', 'Calificaciones', 'notas periodo componentes'],
+  ['/anual', 'Nota anual', 'promedio condicion final'],
+  ['/informes', 'Informes', 'reportes eximidos reconocimientos'],
+  ['/alertas', 'Alerta temprana', 'ausentismo ausencias'],
+  ['/comunicados', 'Comunicados', 'whatsapp encargados hogar mensajes'],
+  ['/configurar', 'Configurar el curso', 'preparar ajustes'],
+  ['/ajustes', 'Materias y ajustes', 'materias escala asistencia'],
+  ['/secciones', 'Secciones', 'grupos subgrupos'],
+  ['/periodos', 'Periodos', 'fechas'],
+  ['/componentes', 'Componentes', 'porcentajes'],
+  ['/indicadores', 'Indicadores', 'trabajo cotidiano rubrica'],
+  ['/plan', 'Plan anual', 'avance temas'],
+  ['/plantillas', 'Mensajes de WhatsApp', 'plantillas avisos'],
+  ['/plantillas-hogar', 'Comunicados al hogar', 'plantillas cuaderno'],
+  ['/herramientas', 'Herramientas', 'importar exportar'],
+  ['/sea', 'Importar y exportar SEA', 'sea notas plantilla'],
+  ['/respaldo', 'Respaldo', 'descargar restaurar'],
+  ['/cuenta', 'Mi cuenta', 'nombre correo contrasena'],
+];
+const paginas = termino ? PAGINAS.filter(([, t, k]) => sinTildes(`${t} ${k}`).includes(termino)) : [];
+---
+<Base titulo={texto ? `Buscar «${texto}»` : 'Buscar'}>
+  <h1>Buscar</h1>
+  <form class="tarjeta fila" method="get" role="search">
+    <label style="flex:1 1 280px">Estudiante, cédula o página<input type="search" name="q" value={texto} autofocus placeholder="Por ejemplo: Mora, 1-2345-6789 o asistencia" /></label>
+    <button type="submit">Buscar</button>
+  </form>
+  {texto && termino.length < 2 && <p class="muted">Escriba al menos dos letras.</p>}
+  {paginas.length > 0 && (
+    <>
+      <h2>Páginas</h2>
+      <ul class="res">{paginas.map(([h, t]) => <li><a href={h}><b>{t}</b></a></li>)}</ul>
+    </>
+  )}
+  {termino.length >= 2 && (
+    <>
+      <h2>Estudiantes</h2>
+      {estudiantes.length === 0
+        ? <p class="muted">Ningún estudiante coincide con «{texto}».</p>
+        : <ul class="res">{estudiantes.map((e) => (
+            <li><a href={`/estudiantes/${e.id}`}><b>{e.apellidos} {e.nombre}</b><small>{e.cedula}{e.secciones && ` · ${e.secciones}`}{!e.activo && ' · inactivo'}</small></a></li>
+          ))}</ul>}
+    </>
+  )}
+  <style>
+    .res { list-style: none; margin: 0; padding: 0; max-width: 680px; background: #fff; border: 1px solid var(--linea); border-radius: 12px; }
+    .res li + li { border-top: 1px solid var(--linea); }
+    .res a { display: flex; flex-direction: column; padding: 11px 16px; text-decoration: none; }
+    .res a:hover { background: var(--hielo); }
+    .res b { color: var(--marino); }
+    .res small { color: var(--suave); font-size: 13px; }
+  </style>
+</Base>

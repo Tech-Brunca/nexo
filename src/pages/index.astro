@@ -8,6 +8,8 @@ import { periodosDe, periodoDeFecha, estudiantesDe } from '../lib/calc';
 import MinutaEditor from '../components/MinutaEditor.astro';
 import { bitacoraRango } from '../lib/bitacora';
 import { revisarAtrasos, resumenPlanes } from '../lib/plan';
+import { pasosPreparar } from '../lib/preparar';
+import { seccionesMenu, ordenarParaMenu } from '../lib/menu';
 const { user, inst } = Astro.locals;
 const aj = await getAjustes(user.id);
 const fecha = hoy();
@@ -44,7 +46,18 @@ const bitHoy = bitSec ? (await bitacoraRango(user.id, bitSec.id, fecha, fecha))[
 const bitEsts = bitSec ? (await estudiantesDe(bitSec.id)).map((e) => ({ id: e.id, nombre: `${e.nombre} ${e.apellidos}` })) : [];
 await revisarAtrasos(user.id, fecha);
 const planes = await resumenPlanes(user.id, fecha);
-const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
+// Orden: primero las que tienen clase hoy (deducido de la asistencia de la semana pasada), luego las más recientes
+const menu = ordenarParaMenu(await seccionesMenu(user.id, fecha, per?.id ?? null));
+const posicion = new Map(menu.map((s, i) => [s.id, i]));
+const conClaseHoy = new Set(menu.filter((s) => s.tocaHoy).map((s) => s.id));
+secciones.sort((a, b) => (posicion.get(a.id) ?? 999) - (posicion.get(b.id) ?? 999));
+// Si aún no hay historial para deducir el horario, se cuentan todas
+const deHoy = conClaseHoy.size ? secciones.filter((s) => conClaseHoy.has(s.id)) : secciones;
+const totalSinLista = deHoy.filter((s) => s.lecciones_hoy === null).length;
+// «Preparar el curso»: aparece mientras falte algo obligatorio
+const pasos = await pasosPreparar(user.id);
+const obligatorios = pasos.filter((p) => !p.opcional);
+const faltan = obligatorios.filter((p) => !p.listo);
 ---
 <Base titulo="Inicio">
   <div class="inicio">
@@ -53,6 +66,13 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
       <p class="sub">{fechaTexto}{per && ` — ${per.nombre}`}. {inst!.nombre}, curso lectivo {aj.curso_lectivo}.</p>
     </header>
     {pendientesUsuarios > 0 && <div class="msg aviso">{pendientesUsuarios === 1 ? 'Hay una solicitud de acceso' : `Hay ${pendientesUsuarios} solicitudes de acceso`} por aprobar. <a href="/admin/usuarios?estado=pendiente">Revisar solicitudes</a></div>}
+    {secciones.length > 0 && faltan.length > 0 && (
+      <section class="preparar" aria-labelledby="prep-titulo">
+        <div class="prep-cab"><h2 id="prep-titulo">Preparar el curso · {obligatorios.length - faltan.length} de {obligatorios.length}</h2><a href="/configurar">Ver todo</a></div>
+        <div class="prep-barra"><span style={`width:${Math.round(((obligatorios.length - faltan.length) / obligatorios.length) * 100)}%`}></span></div>
+        <p class="muted">Falta: {faltan.map((p, i) => <>{i > 0 && ' · '}<a href={p.h}>{p.titulo}</a></>)}</p>
+      </section>
+    )}
 
     {secciones.length === 0 ? (
       <div class="vacio tarjeta">
@@ -77,14 +97,14 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
             )}
           </section>
         )}
-        <p class="resumen">{totalSinLista === 0 ? 'Ya pasó lista hoy en todas sus secciones.' : totalSinLista === secciones.length ? `Hoy aún no ha pasado lista.` : `Falta pasar lista en ${totalSinLista} de ${secciones.length} secciones.`}</p>
+        <p class="resumen">{totalSinLista === 0 ? `Ya pasó lista hoy en todas sus secciones${conClaseHoy.size ? ' con clase hoy' : ''}.` : totalSinLista === deHoy.length ? `Hoy aún no ha pasado lista.` : `Falta pasar lista en ${totalSinLista} de ${deHoy.length} secciones${conClaseHoy.size ? ' con clase hoy' : ''}.`}</p>
         <ul class="secciones-hoy">
           {secciones.map((s) => {
             const pend = pendientesDe(s.id), al = alertaDe(s.id), lista = s.lecciones_hoy !== null;
             return (
               <li class={lista ? 'hecha' : ''}>
                 <div class="id">
-                  <a class="nombre" href={`/secciones/${s.id}`}>{etiquetaSeccion(s)}</a>
+                  <a class="nombre" href={`/secciones/${s.id}`}>{etiquetaSeccion(s)}</a>{conClaseHoy.has(s.id) && <span class="chip clase-hoy">Clase hoy</span>}
                   <span class="muted">{s.asignatura ?? 'Sin asignatura'} · {s.n} {Number(s.n) === 1 ? 'estudiante' : 'estudiantes'}</span>
                 </div>
                 <div class="estado">
@@ -113,6 +133,14 @@ const totalSinLista = secciones.filter((s) => s.lecciones_hoy === null).length;
   </div>
   <style>
     .hoy-enc { margin-bottom: 6px; }
+    .preparar { background: var(--hielo); border: 1px solid #bfe9f5; border-radius: 12px; padding: 12px 16px; margin: 6px 0 18px; }
+    .prep-cab { display: flex; align-items: baseline; gap: 12px; }
+    .prep-cab h2 { margin: 0; font-size: 16px; }
+    .prep-cab a { margin-left: auto; font-size: 14px; }
+    .prep-barra { height: 8px; background: #fff; border-radius: 8px; overflow: hidden; margin: 8px 0; }
+    .prep-barra span { display: block; height: 100%; background: var(--teal); }
+    .preparar p { margin: 0; }
+    .clase-hoy { background: var(--hielo); color: var(--teal); align-self: flex-start; margin-top: 3px; }
     .bitacora-hoy { margin: 4px 0 22px; }
     .bh-cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
     .bh-cab h2 { margin: 0; font-size: 18px; }

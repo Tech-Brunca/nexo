@@ -3,65 +3,102 @@ interface Props { titulo: string; sinMenu?: boolean }
 const { titulo, sinMenu = false } = Astro.props;
 const ruta = Astro.url.pathname;
 import { logoColegio } from '../lib/auth';
+import { hoy } from '../lib/util';
+import { seccionesMenu, ordenarParaMenu, PAGINAS_SECCION, type SeccionMenu } from '../lib/menu';
 const { user, inst, instituciones, periodos = [], periodo = null } = Astro.locals;
-// Menú agrupado por lo que el docente va a hacer. Cada grupo se pliega; el de la página actual queda abierto.
-// Íconos propios (trazo de 1,8 px, 24×24) que heredan el color del texto.
+
+// Menú lateral agrupado (en el teléfono: barra inferior + panel «Más»). Íconos propios de trazo 1,8 px
+// que heredan el color del texto.
 const ICONOS: Record<string, string> = {
-  inicio: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-5.5h4V20"/>',
-  aula: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20l2.5-4M16 20l-2.5-4M7 9h6M7 12h9"/>',
-  grupos: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M15.5 14.4c2.6-.3 4.5 1.3 5 4.1"/>',
-  resultados: '<path d="M4 20h16"/><rect x="5.5" y="11" width="3" height="6.5" rx=".6"/><rect x="10.5" y="7" width="3" height="10.5" rx=".6"/><rect x="15.5" y="13" width="3" height="4.5" rx=".6"/>',
-  familias: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
-  preparar: '<rect x="5" y="4.5" width="14" height="16" rx="2"/><path d="M9 4.5V3.5h6v1"/><path d="m8.5 11 1.8 1.8L13.5 9.6M8.5 16.5h7"/>',
-  evaluar: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m13.5 8.5 3 3"/>',
-  cuenta: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/>',
+  hoy: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-5.5h4V20"/>',
+  bitacora: '<path d="M6 4h10.5A2.5 2.5 0 0 1 19 6.5V20H8.5A2.5 2.5 0 0 1 6 17.5Z"/><path d="M6 17.5A2.5 2.5 0 0 1 8.5 15H19M10 8h5M10 11h3"/>',
+  lista: '<path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="m3.8 6.5 1.3 1.3 2.3-2.4M3.8 12l1.3 1.3 2.3-2.4M3.8 17.5l1.3 1.3 2.3-2.4"/>',
+  evaluar: '<rect x="5" y="4.5" width="14" height="16" rx="2"/><path d="M9 4.5V3.5h6v1"/><path d="m8.5 12.5 2.2 2.2 4.6-4.6"/>',
+  estudiantes: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M15.5 14.4c2.6-.3 4.5 1.3 5 4.1"/>',
+  notas: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 10h16M10 5v14"/>',
+  anual: '<rect x="4.5" y="5.5" width="15" height="14" rx="1.5"/><path d="M4.5 10h15M9 3.5v4M15 3.5v4"/>',
+  informes: '<path d="M4 20h16"/><rect x="5.5" y="11" width="3" height="6.5" rx=".6"/><rect x="10.5" y="7" width="3" height="10.5" rx=".6"/><rect x="15.5" y="13" width="3" height="4.5" rx=".6"/>',
+  alerta: '<path d="M12 4 21 19.5H3Z"/><path d="M12 10v4.5M12 17v.3"/>',
+  comunicados: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>',
+  configurar: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  herramientas: '<path d="M7.5 4v12M4 12.5l3.5 3.5 3.5-3.5M16.5 20V8M13 11.5 16.5 8l3.5 3.5"/>',
   admin: '<path d="M12 3.5 5 6.5v5c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9v-5Z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
+  mas: '<circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/>',
+  buscar: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>',
+  plegar: '<path d="M11 6h9M11 12h9M11 18h9"/><path d="m7.5 9-3 3 3 3"/>',
+  expandir: '<path d="M4 6h9M4 12h9M4 18h9"/><path d="m16.5 9 3 3-3 3"/>',
+  abajo: '<path d="m6 9 6 6 6-6"/>',
+  arriba: '<path d="m6 15 6-6 6 6"/>',
 };
-// Menú superior por proceso: preparar el curso → dar clases → evaluar → resultados → familias.
-// Cada grupo abre un panel (mega menú) con sus páginas y una línea de qué hace cada una; debajo de la barra,
-// las páginas del grupo actual quedan a la vista con la actual marcada.
-type Item = [string, string, string?];
-type Grupo = { clave: string; titulo: string; paso?: number; ayuda: string; items: Item[] };
-const grupos: Grupo[] = [
-  { clave: 'preparar', titulo: 'Preparar', paso: 1, ayuda: 'Lo que se arma al inicio del curso', items: [
-    ['/asistente', 'Asistente: nueva materia', 'Paso a paso: materia, sección y estudiantes'],
-    ['/ajustes', 'Materias y ajustes', 'Materias con su tipo del MEP, escala de asistencia'],
-    ['/secciones', 'Secciones', 'Grupos, subgrupos y su materia'],
-    ['/estudiantes', 'Estudiantes', 'Lista, encargados y perfil de cada uno'],
-    ['/periodos', 'Periodos', 'Fechas del I y II periodo'],
-    ['/componentes', 'Componentes', 'Porcentajes de cada materia y nivel'],
-    ['/indicadores', 'Indicadores', 'Indicadores del trabajo cotidiano'],
-    ['/plan', 'Plan anual', 'Cargar el plan y ver el avance de cada sección'],
+
+const activo = (h: string) => (h === '/' ? ruta === '/' : ruta === h || ruta.startsWith(h + '/'));
+// Páginas de preparación y herramientas: se marcan en su entrada del menú
+const RUTAS_CONFIGURAR = ['/configurar', '/asistente', '/ajustes', '/secciones', '/periodos', '/componentes', '/indicadores', '/plan', '/plantillas', '/plantillas-hogar'];
+const RUTAS_HERRAMIENTAS = ['/herramientas', '/sea', '/respaldo'];
+const enGrupo = (rutas: string[]) => rutas.some((h) => ruta === h || ruta.startsWith(h + '/'));
+
+// Secciones del docente con sus pendientes (los conteos se guardan unos minutos por docente)
+let secciones: SeccionMenu[] = [];
+if (inst && !sinMenu) {
+  try { secciones = await seccionesMenu(user.id, hoy(), periodo?.id ?? null); } catch { secciones = []; }
+}
+const seccionActiva = secciones.find((s) => s.id === Astro.locals.seccionId) ?? null;
+const ordenadas = ordenarParaMenu(secciones);
+// Máximo tres a la vista: las de hoy y, si faltan, las más recientes. La activa siempre aparece.
+let visibles = ordenadas.slice(0, 3);
+if (seccionActiva && !visibles.includes(seccionActiva)) visibles = [...visibles.slice(0, 2), seccionActiva];
+const ocultas = ordenadas.filter((s) => !visibles.includes(s));
+const enPaginaSeccion = PAGINAS_SECCION.includes(ruta);
+const seccionEnRuta = (s: SeccionMenu) => (enPaginaSeccion || /^\/secciones\/\d+$/.test(ruta)) && seccionActiva?.id === s.id;
+const hrefSeccion = (s: SeccionMenu) => `/asistencia?seccion=${s.id}`;
+const volver = encodeURIComponent(ruta + Astro.url.search);
+
+const total = (f: (s: SeccionMenu) => number) => secciones.reduce((n, s) => n + f(s), 0);
+type Item = { h: string; t: string; ico: string; n?: number; alerta?: boolean; on?: boolean; ayuda?: string };
+type Grupo = { titulo: string; items: Item[] };
+const grupos: Grupo[] = inst ? [
+  { titulo: 'Trabajo diario', items: [
+    { h: '/bitacora', t: 'Bitácora', ico: 'bitacora', n: total((s) => (s.minuta ? 1 : 0)), ayuda: 'minutas sin escribir' },
+    { h: '/asistencia', t: 'Pasar lista', ico: 'lista', n: total((s) => (s.lista ? 1 : 0)), ayuda: 'listas de hoy sin pasar' },
+    { h: '/evaluaciones', t: 'Evaluaciones', ico: 'evaluar', n: total((s) => s.porCalificar), ayuda: 'evaluaciones sin calificar' },
+    { h: '/estudiantes', t: 'Estudiantes', ico: 'estudiantes' },
   ] },
-  { clave: 'aula', titulo: 'En clase', paso: 2, ayuda: 'Lo de todos los días', items: [
-    ['/bitacora', 'Bitácora', 'Minuta de la clase y anotaciones'],
-    ['/asistencia', 'Asistencia', 'Pasar lista y ver ausencias'],
+  { titulo: 'Notas e informes', items: [
+    { h: '/notas', t: 'Calificaciones', ico: 'notas' },
+    { h: '/anual', t: 'Nota anual', ico: 'anual' },
+    { h: '/informes', t: 'Informes', ico: 'informes' },
+    { h: '/alertas', t: 'Alerta temprana', ico: 'alerta', n: total((s) => s.alerta), alerta: true, ayuda: 'estudiantes en alerta temprana' },
   ] },
-  { clave: 'evaluar', titulo: 'Evaluar', paso: 3, ayuda: 'Calificar y llevar las notas', items: [
-    ['/evaluaciones', 'Evaluaciones', 'Pruebas, tareas, proyectos y trabajo cotidiano'],
-    ['/notas', 'Calificaciones', 'Nota del periodo por componente'],
-    ['/sea', 'Importar / exportar SEA', 'Plantilla de notas del SEA'],
+  { titulo: 'Familias', items: [{ h: '/comunicados', t: 'Comunicados', ico: 'comunicados' }] },
+  { titulo: 'Configuración', items: [
+    { h: '/configurar', t: 'Configurar el curso', ico: 'configurar', on: enGrupo(RUTAS_CONFIGURAR) && !/^\/secciones\/\d+$/.test(ruta) },
+    { h: '/herramientas', t: 'Herramientas', ico: 'herramientas', on: enGrupo(RUTAS_HERRAMIENTAS) },
   ] },
-  { clave: 'resultados', titulo: 'Resultados', paso: 4, ayuda: 'Informes y seguimiento', items: [
-    ['/anual', 'Nota anual', 'Promedio de los periodos y condición final'],
-    ['/informes', 'Informes', 'Reportes, eximidos y reconocimientos'],
-    ['/alertas', 'Alerta temprana', 'Estudiantes con ausencias que alertar'],
-  ] },
-  { clave: 'familias', titulo: 'Familias', paso: 5, ayuda: 'Comunicación con los encargados', items: [
-    ['/comunicados', 'Comunicados', 'Mensajes por WhatsApp a un grupo'],
-    ['/comunicados#un-estudiante', 'A un estudiante', 'Comunicado al hogar por WhatsApp o impreso'],
-    ['/plantillas', 'Mensajes WhatsApp', 'Plantillas de los avisos'],
-    ['/plantillas-hogar', 'Plantillas al hogar', 'Plantillas de los comunicados al hogar'],
-  ] },
+] : [
+  // Sin colegio elegido solo se puede preparar la cuenta
+  { titulo: 'Configuración', items: [{ h: '/ajustes', t: 'Materias y ajustes', ico: 'configurar' }] },
 ];
-const admin: Grupo = { clave: 'admin', titulo: 'Administración', ayuda: 'Solo administradores', items: [
-  ['/admin/usuarios', 'Usuarios', 'Aprobar y administrar cuentas'], ['/admin/colegios', 'Colegios', 'Colegios y su escudo'],
-  ['/admin/componentes-mep', 'Componentes del MEP', 'Matriz del Reglamento de Evaluación por año'],
-] };
-// Sin colegio elegido solo se puede preparar la cuenta (materias y ajustes)
-const menuGrupos = [...(inst ? grupos : [{ ...grupos[0], items: grupos[0].items.filter(([h]) => h === '/ajustes') }]), ...(user?.rol === 'admin' ? [admin] : [])];
-const activo = (h: string) => (h === '/' ? ruta === '/' : !h.includes('#') && (ruta === h || ruta.startsWith(h + '/')));
-const actual = menuGrupos.find((g) => g.items.some(([h]) => activo(h)));
+if (user?.rol === 'admin') grupos.push({ titulo: 'Administración', items: [
+  { h: '/admin/usuarios', t: 'Usuarios', ico: 'admin' },
+  { h: '/admin/colegios', t: 'Colegios', ico: 'admin' },
+  { h: '/admin/componentes-mep', t: 'Componentes del MEP', ico: 'admin' },
+] });
+
+// Pestañas de la sección activa (en las páginas que trabajan sobre una sección)
+const pestanas = seccionActiva && (enPaginaSeccion || /^\/secciones\/\d+$/.test(ruta)) ? [
+  ['/asistencia', 'Pasar lista'], ['/bitacora', 'Bitácora'], ['/evaluaciones', 'Evaluaciones'], ['/notas', 'Calificaciones'],
+  ['/anual', 'Nota anual'], ['/comunicados', 'Comunicados'], [`/secciones/${seccionActiva.id}`, 'Estudiantes y datos'],
+].map(([h, t]) => ({ h: h.startsWith('/secciones/') ? h : `${h}?seccion=${seccionActiva.id}`, t, on: ruta === h })) : [];
+
+// Barra inferior del teléfono
+const inferior = inst ? [
+  { h: '/', t: 'Hoy', ico: 'hoy', on: ruta === '/' },
+  { h: '/asistencia', t: 'Pasar lista', ico: 'lista', on: ruta === '/asistencia', n: total((s) => (s.lista ? 1 : 0)) },
+  { h: '/evaluaciones', t: 'Evaluar', ico: 'evaluar', on: ruta.startsWith('/evaluaciones'), n: total((s) => s.porCalificar) },
+  { h: '/estudiantes', t: 'Estudiantes', ico: 'estudiantes', on: ruta.startsWith('/estudiantes') },
+] : [];
+
+const plegado = Astro.cookies.get('rd_nav')?.value === '1';
 const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
 ---
 <!doctype html>
@@ -69,7 +106,7 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0A3D91" />
+  <meta name="theme-color" content="#072B6A" />
   <link rel="icon" href="/favicon.svg" />
   <title>{titulo} · Nexo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -85,52 +122,49 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
       --verde: #137a52; --verde-claro: #e2f5ec; --rojo: #b3402f; --rojo-claro: #fbe9e5; --ambar: #a86b00; --ambar-claro: #fff3d6;
       --titulos: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
       --texto: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', 'Segoe UI', system-ui, sans-serif;
+      --alto-barra: 60px; --ancho-menu: 248px; --ancho-riel: 76px;
       font-family: var(--texto); font-size: 15px; line-height: 1.45; color: var(--tinta); background: var(--papel);
     }
     * { box-sizing: border-box; }
     body { margin: 0; }
     a { color: var(--teal); }
     a:hover { color: var(--marino); }
-    /* Barra superior con mega menú (por proceso) */
-    :root { --alto-barra: 60px; }
-    .barra { position: sticky; top: 0; z-index: 50; height: var(--alto-barra); display: flex; align-items: center; gap: 14px; padding: 0 18px;
-      background: linear-gradient(90deg, var(--marino-osc) 0%, var(--marino) 60%); color: #fff; box-shadow: 0 2px 10px rgba(3,18,48,.22); }
-    .marca { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-    .marca img { width: 34px; height: 34px; flex: none; }
+    .ico { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* ── Barra superior: contexto (sección activa, búsqueda, periodo, colegio, cuenta) ── */
+    .barra { position: sticky; top: 0; z-index: 50; height: var(--alto-barra); display: flex; align-items: center; gap: 12px; padding: 0 16px;
+      background: var(--marino-osc); color: #fff; box-shadow: 0 2px 10px rgba(3,18,48,.22); }
+    .barra button.icono { width: 42px; height: 42px; padding: 0; display: grid; place-items: center; flex: none; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff; border-radius: 10px; }
+    .barra button.icono:hover { background: rgba(255,255,255,.2); }
+    .plegar .ico-expandir, body.nav-plegado .plegar .ico-plegar { display: none; }
+    body.nav-plegado .plegar .ico-expandir { display: block; }
+    .marca { display: flex; align-items: center; gap: 10px; text-decoration: none; flex: none; }
+    .marca img { width: 32px; height: 32px; flex: none; }
     .marca b { font-family: var(--titulos); font-weight: 800; font-size: 21px; letter-spacing: .02em; line-height: 1; color: #fff; }
     .marca b span { color: var(--aqua); }
-    .marca small { display: block; font-size: 11px; font-weight: 400; margin-top: 3px; }
-    .barra .marca { flex: none; margin-right: 4px; }
-    .menu-btn { display: none; }
-    nav.menu { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; height: 100%; }
-    nav.menu .ico, .barra .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    nav.menu > a.mm-hoy, .mm > summary { display: flex; align-items: center; gap: 7px; height: 40px; padding: 0 11px; border-radius: 9px; color: #d4e4f7; text-decoration: none;
-      font-size: 14px; font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; list-style: none; -webkit-tap-highlight-color: transparent; position: relative; }
-    .mm > summary::-webkit-details-marker { display: none; }
-    nav.menu > a.mm-hoy:hover, .mm > summary:hover, .mm[open] > summary { background: rgba(255,255,255,.1); color: #fff; }
-    nav.menu > a.mm-hoy.on, .mm[data-aqui="1"] > summary { color: #fff; background: rgba(18,207,243,.18); }
-    nav.menu > a.mm-hoy.on::after, .mm[data-aqui="1"] > summary::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -10px; height: 3px; border-radius: 3px; background: var(--cian); }
-    .mm > summary:focus-visible, nav.menu > a:focus-visible { outline: 3px solid rgba(18,207,243,.6); outline-offset: -2px; }
-    .num-paso { font-style: normal; display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; font-size: 11px; font-weight: 700;
-      background: rgba(255,255,255,.14); color: #fff; }
-    .mm[data-aqui="1"] .num-paso { background: var(--cian); color: var(--marino-osc); }
-    .flecha { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transition: transform .15s ease; }
-    .mm[open] > summary .flecha { transform: rotate(180deg); }
-    .mm { position: relative; }
-    .mm-panel { position: absolute; top: calc(100% + 10px); left: 0; z-index: 60; width: max-content; min-width: 300px; max-width: min(620px, 92vw);
-      background: #fff; color: var(--tinta); border: 1px solid var(--linea); border-radius: 14px; padding: 14px; box-shadow: 0 18px 40px rgba(3,18,48,.22); }
-    .mm-panel::before { content: ''; position: absolute; top: -7px; left: 22px; width: 12px; height: 12px; background: #fff; border-left: 1px solid var(--linea); border-top: 1px solid var(--linea); transform: rotate(45deg); }
-    .mm:nth-last-of-type(-n+2) .mm-panel { left: auto; right: 0; }
-    .mm:nth-last-of-type(-n+2) .mm-panel::before { left: auto; right: 22px; }
-    .mm-ayuda { margin: 0 4px 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--teal); }
-    .mm-items { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(220px, 1fr)); gap: 2px 8px; }
-    .mm-items a { display: block; padding: 9px 12px; border-radius: 9px; text-decoration: none; color: var(--tinta); border-left: 3px solid transparent; }
-    .mm-items a b { display: block; font-size: 14.5px; color: var(--marino); }
-    .mm-items a small { display: block; font-size: 12.5px; color: var(--suave); margin-top: 1px; }
-    .mm-items a:hover { background: var(--hielo); }
-    .mm-items a.on { background: var(--hielo); border-left-color: var(--cian); }
-    .barra-der { display: flex; align-items: center; gap: 10px; flex: none; }
-    .barra .per-barra { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: #a9c4e6; }
+    .selsec { position: relative; flex: none; }
+    .selsec > summary { list-style: none; cursor: pointer; height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 10px;
+      background: rgba(18,207,243,.16); border: 1px solid rgba(73,225,255,.45); color: #fff; font-size: 14px; white-space: nowrap; }
+    .selsec > summary::-webkit-details-marker { display: none; }
+    .selsec > summary .et { color: #a9c4e6; }
+    .selsec > summary .pt { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+    .selsec > summary:hover, .selsec[open] > summary { background: rgba(18,207,243,.26); }
+    .panel { position: absolute; top: calc(100% + 8px); left: 0; z-index: 60; min-width: 260px; max-height: 70vh; overflow-y: auto;
+      background: #fff; color: var(--tinta); border: 1px solid var(--linea); border-radius: 14px; padding: 6px; box-shadow: 0 18px 40px rgba(3,18,48,.22); }
+    .panel a { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 6px 10px; border-radius: 9px; text-decoration: none; color: var(--tinta); font-size: 14px; }
+    .panel a:hover { background: var(--hielo); }
+    .panel a.on { background: var(--hielo); color: var(--marino); font-weight: 700; }
+    .panel a .pt { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+    .panel a small { color: var(--suave); }
+    .panel .cnt { margin-left: auto; }
+    .buscar { flex: 1 1 220px; min-width: 0; max-width: 440px; height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; margin: 0;
+      background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); border-radius: 10px; color: #cfe0f5; }
+    .buscar:focus-within { border-color: var(--aqua); background: rgba(255,255,255,.16); }
+    .buscar input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; box-shadow: none !important; color: #fff; font-size: 14px; padding: 0; }
+    .buscar input::placeholder { color: #a9c4e6; }
+    .buscar kbd { font: inherit; font-size: 11.5px; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; padding: 1px 6px; color: #cfe0f5; }
+    .barra-der { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
+    .per-barra { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: #a9c4e6; }
     .per-barra select { font-weight: 600; font-size: 14px; padding: 6px 8px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
     .per-barra select option { color: var(--tinta); }
     .colegio-chip { display: flex; align-items: center; gap: 8px; max-width: 190px; color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; line-height: 1.15; }
@@ -139,24 +173,71 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
     .colegio-chip:hover { color: var(--aqua); }
     .cuenta { position: relative; }
     .cuenta > summary { list-style: none; cursor: pointer; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
-      background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.28); color: #fff; }
+      background: var(--cian); color: var(--marino-osc); }
     .cuenta > summary::-webkit-details-marker { display: none; }
-    .cuenta > summary:hover, .cuenta[open] > summary { background: rgba(255,255,255,.24); }
-    .cuenta .mm-panel { left: auto; right: 0; min-width: 240px; }
-    .cuenta .mm-panel::before { left: auto; right: 14px; }
-    .cuenta-quien { padding: 4px 12px 10px; border-bottom: 1px solid var(--linea); margin-bottom: 6px; }
+    .cuenta .panel { left: auto; right: 0; min-width: 240px; }
+    .cuenta-quien { padding: 6px 10px 10px; border-bottom: 1px solid var(--linea); margin-bottom: 6px; }
     .cuenta-quien b { display: block; color: var(--marino); }
     .cuenta-quien span { font-size: 12.5px; color: var(--suave); }
     .cuenta form button { width: 100%; margin-top: 8px; }
-    .menu-movil-cab { display: none; }
+    .barra details > summary:focus-visible, .barra button:focus-visible { outline: 3px solid rgba(18,207,243,.6); outline-offset: 2px; }
 
-    /* Páginas del grupo actual: siempre a la vista bajo la barra */
-    .subnav { display: flex; align-items: center; gap: 4px; padding: 0 30px; background: #fff; border-bottom: 1px solid var(--linea); overflow-x: auto; scrollbar-width: thin; }
-    .subnav .sg { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--teal); margin-right: 10px; padding: 12px 0; }
-    .subnav .sg .num-paso { background: var(--hielo); color: var(--teal); }
-    .subnav a { flex: none; padding: 12px 12px 10px; font-size: 14px; color: var(--suave); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
-    .subnav a:hover { color: var(--marino); background: var(--gris); }
-    .subnav a.on { color: var(--marino); font-weight: 700; border-bottom-color: var(--cian); }
+    /* ── Cuerpo: menú lateral + contenido ── */
+    .cuerpo { display: flex; align-items: stretch; min-height: calc(100vh - var(--alto-barra)); }
+    .contenido { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .contenido > main { width: 100%; }
+    .lateral { flex: none; width: var(--ancho-menu); background: var(--marino); color: #cfe0f5; padding: 12px 10px 16px; display: flex; flex-direction: column; gap: 2px;
+      position: sticky; top: var(--alto-barra); height: calc(100vh - var(--alto-barra)); overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.25) transparent; }
+    .lateral .grupo { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+    .lateral .titulo-g { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #8fb0d9; padding: 8px 10px 3px; margin: 0; }
+    .it { position: relative; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 10px; border-radius: 9px; color: #cfe0f5; text-decoration: none;
+      font-size: 14.5px; background: none; border: 0; width: 100%; text-align: left; cursor: pointer; font-weight: 400; list-style: none; }
+    .it::-webkit-details-marker { display: none; }
+    .it:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .it.on { background: rgba(18,207,243,.2); color: #fff; font-weight: 700; }
+    .it:focus-visible { outline: 3px solid rgba(73,225,255,.6); outline-offset: -2px; }
+    .it .tx { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .it .tx small { color: #8fb0d9; font-size: 12.5px; font-weight: 400; margin-left: 4px; }
+    .it .pt { width: 19px; height: 19px; display: grid; place-items: center; flex: none; }
+    .it .pt::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+    .it .num, .it .mas-n { display: none; }
+    .cnt { flex: none; min-width: 21px; height: 21px; padding: 0 6px; border-radius: 11px; display: grid; place-items: center; font-size: 11.5px; font-weight: 700; background: var(--cian); color: var(--marino-osc); }
+    .cnt.al { background: #ffd27a; color: #4a2f00; }
+    .mas-sec > summary .ico-arriba, .mas-sec[open] > summary .ico-abajo { display: none; }
+    .mas-sec[open] > summary .ico-arriba { display: block; }
+    .mas-sec[open] > summary .txt-mas, .mas-sec:not([open]) > summary .txt-menos { display: none; }
+    .lateral .pie { margin-top: auto; border-top: 1px solid rgba(255,255,255,.12); padding-top: 10px; }
+    .lateral .pie .av { width: 32px; height: 32px; border-radius: 50%; background: var(--cian); color: var(--marino-osc); display: grid; place-items: center; font-weight: 700; font-size: 12.5px; flex: none; }
+    .lateral .pie .tx { line-height: 1.2; }
+    .lateral .pie .tx small { display: block; margin: 0; }
+    .lateral .solo-movil { display: none; }
+
+    /* Menú plegado (computadora): riel con íconos; las secciones muestran su número */
+    @media (min-width: 1081px) {
+      body.nav-plegado .lateral { width: var(--ancho-riel); padding-left: 8px; padding-right: 8px; }
+      body.nav-plegado .lateral .titulo-g { font-size: 0; padding: 6px 0 2px; border-top: 1px solid rgba(255,255,255,.12); margin: 4px 6px 0; }
+      body.nav-plegado .lateral .grupo:first-child .titulo-g { border-top: 0; }
+      body.nav-plegado .it { justify-content: center; padding: 6px 4px; }
+      body.nav-plegado .it .tx, body.nav-plegado .it .pt { display: none; }
+      body.nav-plegado .it .num { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; line-height: 1; padding: 3px 0; }
+      body.nav-plegado .it .num::after { content: ''; width: 20px; height: 3px; border-radius: 2px; background: var(--c); }
+      body.nav-plegado .it .mas-n { display: block; font-size: 12.5px; font-weight: 700; }
+      body.nav-plegado .mas-sec > summary .ico { display: none !important; }
+      body.nav-plegado .it .cnt { position: absolute; top: -4px; right: -3px; min-width: 17px; height: 17px; font-size: 10px; padding: 0 4px; box-shadow: 0 0 0 2px var(--marino); }
+      body.nav-plegado .lateral .pie .tx { display: none; }
+    }
+
+    /* Pestañas de la sección activa */
+    .pestanas { display: flex; align-items: center; gap: 2px; padding: 0 30px; background: #fff; border-bottom: 1px solid var(--linea); overflow-x: auto; scrollbar-width: thin; }
+    .pestanas .sg { flex: none; display: flex; align-items: center; gap: 7px; margin-right: 10px; padding: 12px 0; font-family: var(--titulos); font-weight: 700; color: var(--marino); }
+    .pestanas .sg .pt { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+    .pestanas .sg small { font-family: var(--texto); font-weight: 400; color: var(--suave); font-size: 13px; }
+    .pestanas a { flex: none; padding: 12px 12px 10px; font-size: 14px; color: var(--suave); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+    .pestanas a:hover { color: var(--marino); background: var(--gris); }
+    .pestanas a.on { color: var(--marino); font-weight: 700; border-bottom-color: var(--cian); }
+
+    /* Barra inferior del teléfono */
+    .inferior { display: none; }
     .velo { display: none; }
 
     /* Contenido */
@@ -216,50 +297,53 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
 
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
-    /* Pantallas medianas y teléfono: el menú pasa a un panel lateral con los grupos plegables;
-       el grupo de la página actual queda abierto y los demás cerrados */
+    /* Pantallas medianas: se esconden etiquetas para dar espacio a la búsqueda */
     @media (max-width: 1280px) {
-      .barra .per-barra > span, .barra-der .colegio-chip span { display: none; }
+      .per-barra > span, .barra-der .colegio-chip span { display: none; }
       .barra-der .colegio-chip:not(:has(img)) { display: none; }
-      nav.menu > a.mm-hoy, .mm > summary { padding: 0 9px; gap: 6px; }
-      .mm > summary .flecha { display: none; }
+      .selsec > summary .et { display: none; }
     }
+    /* Teléfono y tableta: barra inferior con lo diario; el menú completo sale como panel con «Más» */
     @media (max-width: 1080px) {
-      .barra { gap: 10px; padding: 0 12px; }
-      .menu-btn { display: grid; place-items: center; flex: none; width: 42px; height: 42px; padding: 0; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); color: #fff; font-size: 20px; line-height: 1; }
-      .barra-der { margin-left: auto; }
-      .per-barra, .colegio-chip { display: none; }
-      nav.menu { position: fixed; z-index: 70; inset: 0 auto 0 0; width: min(320px, 86vw); height: 100dvh; flex-direction: column; align-items: stretch; gap: 2px;
-        padding: 14px 12px 40px; overflow-y: auto; background: linear-gradient(180deg, var(--marino) 0%, var(--marino-osc) 100%);
+      .barra { gap: 8px; padding: 0 10px; }
+      .barra button.plegar, .barra-der .per-barra, .barra-der .colegio-chip, .buscar kbd { display: none; }
+      .marca b { font-size: 19px; }
+      .marca img { display: none; }
+      .selsec { flex: 1 1 auto; min-width: 0; }
+      .selsec > summary { min-width: 0; height: 42px; }
+      .selsec > summary .nom { overflow: hidden; text-overflow: ellipsis; }
+      .selsec .panel { position: fixed; left: 8px; right: 8px; top: calc(var(--alto-barra) + 4px); }
+      .buscar { flex: 0 0 auto; width: 42px; padding: 0; justify-content: center; cursor: pointer; }
+      .buscar input { display: none; }
+      .buscar.abierta { position: absolute; left: 8px; right: 8px; width: auto; max-width: none; z-index: 5; background: var(--marino-osc); padding: 0 12px; justify-content: flex-start; }
+      .buscar.abierta input { display: block; }
+      .barra-der { margin-left: 0; }
+      .lateral { position: fixed; z-index: 70; top: 0; left: 0; bottom: 0; height: 100dvh; width: min(320px, 88vw); padding: 14px 12px 30px;
         transform: translateX(-102%); transition: transform .22s ease; box-shadow: 4px 0 24px rgba(3,18,48,.35); }
-      body.menu-abierto nav.menu { transform: none; }
-      body.menu-abierto .barra { z-index: 80; }
-      .mm > summary .flecha { display: block; }
+      body.menu-abierto .lateral { transform: none; }
       body.menu-abierto .velo { display: block; position: fixed; inset: 0; z-index: 65; background: rgba(3,18,48,.5); }
       body.menu-abierto { overflow: hidden; }
-      .menu-movil-cab { display: flex; flex-direction: column; gap: 10px; margin: 0 4px 12px; color: #cfe0f5; font-size: 13px; }
-      .menu-movil-cab .marca small { color: #a9c4e6; }
-      .menu-movil-cab .colegio-chip { display: flex; max-width: none; }
-      .menu-movil-cab .colegio-chip span { display: inline; white-space: normal; }
-      .menu-movil-cab .per-barra { display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: #a9c4e6; font-size: 12.5px; }
-      .menu-movil-cab .per-barra select { width: 100%; font-weight: 600; font-size: 15px; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(73,225,255,.35); }
-      .menu-movil-cab .per-barra select option { color: var(--tinta); }
-      .menu-movil-cab .per-barra > span { display: inline; }
-      nav.menu > a.mm-hoy, .mm > summary { height: auto; padding: 12px 10px; font-size: 15px; }
-      nav.menu > a.mm-hoy.on::after, .mm[data-aqui="1"] > summary::after { display: none; }
-      .mm > summary .flecha { margin-left: auto; }
-      .mm-panel { position: static; width: auto; min-width: 0; max-width: none; background: transparent; border: 0; box-shadow: none; padding: 2px 0 8px 18px; }
-      .mm-panel::before, .mm-ayuda { display: none; }
-      .mm-items { grid-template-columns: 1fr !important; border-left: 1px solid rgba(255,255,255,.14); padding-left: 8px; }
-      .mm-items a { color: #d4e4f7; padding: 10px; }
-      .mm-items a b { color: inherit; font-weight: 600; font-size: 15px; }
-      .mm-items a small { display: none; }
-      .mm-items a:hover { background: rgba(255,255,255,.08); }
-      .mm-items a.on { background: rgba(18,207,243,.16); color: #fff; }
-      .subnav { padding: 0 10px; }
+      .lateral .solo-movil { display: flex; }
+      .lateral .cab-movil { flex-direction: column; gap: 10px; margin: 0 4px 10px; font-size: 13px; }
+      .lateral .cab-movil .colegio-chip { max-width: none; }
+      .lateral .cab-movil .colegio-chip span { white-space: normal; }
+      .lateral .cab-movil .per-barra { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+      .lateral .cab-movil .per-barra select { width: 100%; font-size: 15px; }
+      .it { min-height: 46px; font-size: 15px; }
+      .pestanas { padding: 0 8px; }
+      .inferior { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; z-index: 55; left: 0; right: 0; bottom: 0;
+        height: calc(64px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: #fff; border-top: 1px solid var(--linea); box-shadow: 0 -4px 14px rgba(3,18,48,.06); }
+      .inferior a, .inferior button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; border: 0; border-radius: 0;
+        background: none; color: var(--suave); font-size: 12px; font-weight: 600; text-decoration: none; }
+      .inferior a:hover, .inferior button:hover { background: var(--gris); color: var(--marino); }
+      .inferior .on { color: var(--marino); font-weight: 700; }
+      .inferior .on .ico { stroke-width: 2.2; }
+      .inferior .ic { position: relative; display: grid; place-items: center; }
+      .inferior .ico { width: 23px; height: 23px; }
+      .inferior .cnt { position: absolute; top: -7px; left: 14px; min-width: 18px; height: 18px; font-size: 10.5px; padding: 0 5px; }
     }
     @media (max-width: 800px) {
-      main { padding: 16px 14px 90px; min-width: 0; }
+      main { padding: 16px 14px calc(96px + env(safe-area-inset-bottom)); min-width: 0; }
       h1 { font-size: 21px; }
       h2 { font-size: 16px; }
 
@@ -290,7 +374,7 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
       .acceso { justify-content: center; padding: 16px; background-position: 75% center; }
     }
     @media print {
-      .barra, .subnav, .velo, .no-print, button, .btn { display: none !important; }
+      .barra, .lateral, .pestanas, .inferior, .velo, .no-print, button, .btn { display: none !important; }
       main { padding: 0; max-width: none; }
       .tarjeta, .tabla { border: none; box-shadow: none; } .solo-print { display: block; }
       th { position: static; color: var(--tinta); background: #eef3f6; }
@@ -298,37 +382,40 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
     }
   </style>
 </head>
-<body>
+<body class={plegado ? 'nav-plegado' : undefined}>
   {sinMenu ? <slot /> : (
     <>
       <header class="barra">
-        <button type="button" class="menu-btn" aria-label="Abrir menú" aria-controls="menu" aria-expanded="false" data-menu>☰</button>
+        <button type="button" class="icono plegar" data-plegar aria-controls="menu" aria-expanded={plegado ? 'false' : 'true'} aria-label={plegado ? 'Expandir el menú' : 'Plegar el menú'} title={plegado ? 'Expandir el menú' : 'Plegar el menú'}>
+          <svg class="ico ico-plegar" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.plegar} />
+          <svg class="ico ico-expandir" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.expandir} />
+        </button>
         <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><b>NE<span>XO</span></b></a>
-        <nav class="menu" id="menu" aria-label="Menú principal">
-          <div class="menu-movil-cab">
-            <a class="marca" href="/"><img src="/logo-claro.svg" alt="" /><div><b>NE<span>XO</span></b><small>Registro digital docente</small></div></a>
-            {inst && <a class="colegio-chip" href={instituciones.length > 1 ? '/elegir-colegio' : '/'}>{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<span>{inst.nombre}</span></a>}
-            {inst && periodos.length > 0 && (
-              <label class="per-barra"><span>Periodo de trabajo</span>
-                <select onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
-                  {periodos.map((p) => <option value={p.id} selected={p.id === periodo?.id}>{p.nombre}</option>)}
-                </select>
-              </label>
-            )}
-          </div>
-          {inst && <a href="/" class={`mm-hoy ${activo('/') ? 'on' : ''}`} aria-current={activo('/') ? 'page' : undefined}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.inicio} />Inicio</a>}
-          {menuGrupos.map((g) => (
-            <details class="mm" data-g={g.clave} data-aqui={g === actual ? '1' : ''}>
-              <summary>{g.paso ? <i class="num-paso">{g.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[g.clave]} />}<span>{g.titulo}</span><svg class="flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
-              <div class="mm-panel">
-                <p class="mm-ayuda">{g.paso && `Paso ${g.paso} · `}{g.ayuda}</p>
-                <div class="mm-items" style={`--cols:${g.items.length > 4 ? 2 : 1}`}>
-                  {g.items.map(([h, t, d]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}><b>{t}</b>{d && <small>{d}</small>}</a>)}
-                </div>
-              </div>
-            </details>
-          ))}
-        </nav>
+        {secciones.length > 0 && (
+          <details class="selsec">
+            <summary aria-label="Sección activa">
+              {seccionActiva
+                ? <><span class="pt" style={`--c:${seccionActiva.color}`}></span><span class="et">Sección</span><b class="nom">{seccionActiva.etiqueta}{seccionActiva.asignatura && <span class="et"> · {seccionActiva.asignatura}</span>}</b></>
+                : <span class="nom">Elegir sección</span>}
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.abajo} />
+            </summary>
+            <div class="panel">
+              {ordenadas.map((s) => (
+                <a href={`/seccion?id=${s.id}&volver=${volver}`} class={s.id === seccionActiva?.id ? 'on' : ''} title={s.detalle}>
+                  <span class="pt" style={`--c:${s.color}`}></span><b>{s.etiqueta}</b><small>{s.asignatura}{s.tocaHoy && ' · hoy'}</small>
+                  {s.pendientes > 0 && <span class="cnt">{s.pendientes}</span>}
+                </a>
+              ))}
+            </div>
+          </details>
+        )}
+        {inst && (
+          <form class="buscar" action="/buscar" method="get" role="search" data-buscar>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.buscar} />
+            <input type="search" name="q" placeholder="Buscar estudiante o página" aria-label="Buscar estudiante o página" value={ruta === '/buscar' ? Astro.url.searchParams.get('q') ?? '' : ''} />
+            <kbd>Ctrl K</kbd>
+          </form>
+        )}
         <div class="barra-der">
           {inst && periodos.length > 0 && (
             <label class="per-barra"><span>Periodo</span>
@@ -340,46 +427,145 @@ const iniciales = (user?.nombre ?? '?').split(/\s+/).slice(0, 2).map((w: string)
           {inst && <a class="colegio-chip" title={instituciones.length > 1 ? `${inst.nombre} · cambiar de colegio` : inst.nombre} href={instituciones.length > 1 ? '/elegir-colegio' : '/'}>{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<span>{inst.nombre}</span></a>}
           <details class="cuenta">
             <summary aria-label="Mi cuenta" title={user?.nombre}>{iniciales}</summary>
-            <div class="mm-panel">
+            <div class="panel">
               <div class="cuenta-quien"><b>{user?.nombre}</b><span>{user?.correo}</span></div>
-              <div class="mm-items">
-                <a href="/cuenta" class={activo('/cuenta') ? 'on' : ''}><b>Mi cuenta</b><small>Nombre, correo y contraseña</small></a>
-                <a href="/respaldo" class={activo('/respaldo') ? 'on' : ''}><b>Respaldo</b><small>Descargar o restaurar sus datos</small></a>
-                {instituciones.length > 1 && <a href="/elegir-colegio"><b>Cambiar de colegio</b></a>}
-              </div>
+              <a href="/cuenta" class={activo('/cuenta') ? 'on' : ''}>Mi cuenta</a>
+              <a href="/respaldo" class={activo('/respaldo') ? 'on' : ''}>Respaldo</a>
+              {instituciones.length > 1 && <a href="/elegir-colegio">Cambiar de colegio</a>}
               <form method="post" action="/login?salir=1"><button type="submit" class="sec">Salir</button></form>
             </div>
           </details>
         </div>
       </header>
-      <div class="velo" data-menu></div>
-      {actual && (
-        <nav class="subnav" aria-label={actual.titulo}>
-          <span class="sg">{actual.paso ? <i class="num-paso">{actual.paso}</i> : <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[actual.clave]} />}{actual.titulo}</span>
-          {actual.items.map(([h, t]) => <a href={h} class={activo(h) ? 'on' : ''} aria-current={activo(h) ? 'page' : undefined}>{t}</a>)}
+
+      <div class="cuerpo">
+        <nav class="lateral" id="menu" aria-label="Menú principal">
+          <div class="solo-movil cab-movil">
+            {inst && <a class="colegio-chip" href={instituciones.length > 1 ? '/elegir-colegio' : '/'}>{logoColegio(inst) && <img class="escudo" src={logoColegio(inst)!} alt="" />}<span>{inst.nombre}</span></a>}
+            {inst && periodos.length > 0 && (
+              <label class="per-barra"><span>Periodo de trabajo</span>
+                <select onchange={`location = '/periodo?id=' + this.value + '&volver=' + encodeURIComponent(location.pathname + location.search)`}>
+                  {periodos.map((p) => <option value={p.id} selected={p.id === periodo?.id}>{p.nombre}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+          {inst && (
+            <div class="grupo">
+              <a class={`it ${ruta === '/' ? 'on' : ''}`} href="/" title="Hoy" aria-current={ruta === '/' ? 'page' : undefined}>
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.hoy} /><span class="tx">Hoy</span>
+              </a>
+            </div>
+          )}
+          {secciones.length > 0 && (
+            <div class="grupo">
+              <p class="titulo-g">Mis secciones</p>
+              {visibles.map((s) => (
+                <a class={`it ${seccionEnRuta(s) ? 'on' : ''}`} href={hrefSeccion(s)} title={s.detalle} style={`--c:${s.color}`}>
+                  <span class="pt" aria-hidden="true"></span><span class="num" aria-hidden="true">{s.etiqueta}</span>
+                  <span class="tx">{s.etiqueta}{s.asignatura && <small>{s.asignatura}</small>}</span>
+                  {s.pendientes > 0 && <span class="cnt" aria-label={`${s.pendientes} pendientes`}>{s.pendientes}</span>}
+                  {s.pendientes === 0 && s.alerta > 0 && <span class="cnt al" aria-label={`${s.alerta} en alerta`}>{s.alerta}</span>}
+                </a>
+              ))}
+              {ocultas.length > 0 && (
+                <details class="mas-sec">
+                  <summary class="it" title={`Más secciones (${ocultas.length})`}>
+                    <svg class="ico ico-abajo" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.abajo} />
+                    <svg class="ico ico-arriba" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.arriba} />
+                    <span class="mas-n" aria-hidden="true"><span class="txt-mas">+{ocultas.length}</span><span class="txt-menos">−</span></span>
+                    <span class="tx"><span class="txt-mas">Más secciones ({ocultas.length})</span><span class="txt-menos">Menos secciones</span></span>
+                  </summary>
+                  {ocultas.map((s) => (
+                    <a class={`it ${seccionEnRuta(s) ? 'on' : ''}`} href={hrefSeccion(s)} title={s.detalle} style={`--c:${s.color}`}>
+                      <span class="pt" aria-hidden="true"></span><span class="num" aria-hidden="true">{s.etiqueta}</span>
+                      <span class="tx">{s.etiqueta}{s.asignatura && <small>{s.asignatura}</small>}</span>
+                      {s.pendientes > 0 && <span class="cnt" aria-label={`${s.pendientes} pendientes`}>{s.pendientes}</span>}
+                      {s.pendientes === 0 && s.alerta > 0 && <span class="cnt al" aria-label={`${s.alerta} en alerta`}>{s.alerta}</span>}
+                    </a>
+                  ))}
+                </details>
+              )}
+            </div>
+          )}
+          {grupos.map((g) => (
+            <div class="grupo">
+              <p class="titulo-g">{g.titulo}</p>
+              {g.items.map((it) => {
+                const on = it.on ?? activo(it.h);
+                return (
+                  <a class={`it ${on ? 'on' : ''}`} href={it.h} title={it.n ? `${it.t} · ${it.n} ${it.ayuda}` : it.t} aria-current={on ? 'page' : undefined}>
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[it.ico]} /><span class="tx">{it.t}</span>
+                    {!!it.n && <span class={`cnt ${it.alerta ? 'al' : ''}`} aria-label={`${it.n} ${it.ayuda}`}>{it.n}</span>}
+                  </a>
+                );
+              })}
+            </div>
+          ))}
+          <div class="pie">
+            <a class={`it ${activo('/cuenta') ? 'on' : ''}`} href="/cuenta" title="Mi cuenta">
+              <span class="av" aria-hidden="true">{iniciales}</span><span class="tx">{user?.nombre}<small>Mi cuenta</small></span>
+            </a>
+          </div>
+        </nav>
+
+        <div class="contenido">
+          {pestanas.length > 0 && seccionActiva && (
+            <nav class="pestanas" aria-label={`Sección ${seccionActiva.etiqueta}`}>
+              <span class="sg" style={`--c:${seccionActiva.color}`}><span class="pt" aria-hidden="true"></span>{seccionActiva.etiqueta}{seccionActiva.asignatura && <small>{seccionActiva.asignatura}</small>}</span>
+              {pestanas.map((p) => <a href={p.h} class={p.on ? 'on' : ''} aria-current={p.on ? 'page' : undefined}>{p.t}</a>)}
+            </nav>
+          )}
+          <main><slot /></main>
+        </div>
+      </div>
+
+      {inferior.length > 0 && (
+        <nav class="inferior" aria-label="Accesos rápidos">
+          {inferior.map((b) => (
+            <a href={b.h} class={b.on ? 'on' : ''} aria-current={b.on ? 'page' : undefined}>
+              <span class="ic"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS[b.ico]} />{!!b.n && <span class="cnt">{b.n}</span>}</span>{b.t}
+            </a>
+          ))}
+          <button type="button" data-menu aria-controls="menu" aria-expanded="false"><span class="ic"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" set:html={ICONOS.mas} /></span>Más</button>
         </nav>
       )}
-      <main><slot /></main>
+      <div class="velo" data-menu></div>
     </>
   )}
   <script is:inline>
     (() => {
-      const angosto = () => matchMedia('(max-width: 1080px)').matches;
-      const menus = [...document.querySelectorAll('.barra details.mm, .barra details.cuenta')];
-      // En el panel del teléfono, el grupo actual empieza abierto y los demás cerrados
-      if (angosto()) document.querySelector('.barra details.mm[data-aqui="1"]')?.setAttribute('open', '');
-      // En la PC, un solo panel abierto a la vez; se cierra al tocar fuera o con Escape
-      menus.forEach((d) => d.addEventListener('toggle', () => {
-        if (d.open && (!angosto() || d.classList.contains('cuenta'))) menus.forEach((o) => { if (o !== d) o.open = false; });
-      }));
-      const cerrar = () => menus.forEach((d) => { if (!angosto() || d.classList.contains('cuenta')) d.open = false; });
-      document.addEventListener('click', (e) => { if (!e.target.closest('.barra details')) cerrar(); });
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const a = menus.find((d) => d.open); cerrar(); a?.querySelector('summary')?.focus(); } });
-      // Panel lateral del teléfono
+      const paneles = [...document.querySelectorAll('.barra details')];
+      // Un solo panel de la barra abierto a la vez; se cierra al tocar fuera o con Escape
+      paneles.forEach((d) => d.addEventListener('toggle', () => { if (d.open) paneles.forEach((o) => { if (o !== d) o.open = false; }); }));
+      document.addEventListener('click', (e) => { if (!e.target.closest('.barra details')) paneles.forEach((d) => (d.open = false)); });
+      const buscar = document.querySelector('[data-buscar]');
+      const abrirBusqueda = () => { buscar?.classList.add('abierta'); buscar?.querySelector('input')?.focus(); };
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          const a = paneles.find((d) => d.open); paneles.forEach((d) => (d.open = false)); a?.querySelector('summary')?.focus();
+          buscar?.classList.remove('abierta'); document.body.classList.remove('menu-abierto');
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && buscar) { e.preventDefault(); abrirBusqueda(); }
+      });
+      // En el teléfono la búsqueda es solo la lupa: al tocarla se abre el campo
+      buscar?.addEventListener('click', (e) => { if (!buscar.classList.contains('abierta') && matchMedia('(max-width: 1080px)').matches) { e.preventDefault(); abrirBusqueda(); } });
+      buscar?.querySelector('input')?.addEventListener('blur', () => setTimeout(() => buscar.classList.remove('abierta'), 150));
+      // Plegar o expandir el menú lateral (se recuerda en una cookie)
+      document.querySelector('[data-plegar]')?.addEventListener('click', (e) => {
+        const plegado = document.body.classList.toggle('nav-plegado');
+        document.cookie = 'rd_nav=' + (plegado ? 1 : 0) + '; path=/; max-age=34560000; samesite=lax';
+        const b = e.currentTarget, t = plegado ? 'Expandir el menú' : 'Plegar el menú';
+        b.setAttribute('aria-expanded', String(!plegado)); b.setAttribute('aria-label', t); b.title = t;
+      });
+      // Panel del menú completo en el teléfono («Más»)
       document.querySelectorAll('[data-menu]').forEach((el) => el.addEventListener('click', () => {
         const abierto = document.body.classList.toggle('menu-abierto');
-        document.querySelector('.menu-btn')?.setAttribute('aria-expanded', String(abierto));
+        document.querySelectorAll('button[data-menu]').forEach((b) => b.setAttribute('aria-expanded', String(abierto)));
       }));
+      // «Más secciones» queda abierto si la sección actual está entre las ocultas
+      const mas = document.querySelector('.mas-sec');
+      if (mas?.querySelector('.it.on')) mas.open = true;
     })();
   </script>
 </body>

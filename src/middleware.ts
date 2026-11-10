@@ -2,6 +2,7 @@ import { defineMiddleware } from 'astro:middleware';
 import { COOKIE, COOKIE_INST, leerSesion, type Usuario, type Institucion } from './lib/auth';
 import { one, q, asegurarEsquema, conEsquema } from './lib/db';
 import { periodoDeFecha } from './lib/calc';
+import { invalidarMenu, PAGINAS_SECCION } from './lib/menu';
 
 const PUBLICAS = ['/login', '/registro'];
 // Páginas que funcionan sin colegio activo
@@ -43,5 +44,28 @@ if (
   const perElegido = Number(ctx.cookies.get('rd_per')?.value ?? 0);
   ctx.locals.periodo = ctx.locals.periodos.find((p) => p.id === perElegido) ?? periodoDeFecha(ctx.locals.periodos) ?? null;
   if (!inst && !SIN_COLEGIO.some((p) => ruta.startsWith(p))) return ctx.redirect('/cuenta?bienvenida=1');
-  return conEsquema(inst?.esquema ?? null, next);
+
+  // Sección activa: la última que el docente abrió (en cualquier página con ?seccion=) queda en la cookie
+  // y las páginas por sección la usan cuando no se indica otra. Se verifica que sea del docente.
+  const enRuta = /^\/secciones\/(\d+)$/.exec(ruta);
+  const pedida = Number(ctx.url.searchParams.get('seccion') ?? 0) || Number(enRuta?.[1] ?? 0);
+  const recordada = Number(ctx.cookies.get('rd_sec')?.value ?? 0);
+  ctx.locals.seccionId = pedida > 0 ? pedida : recordada > 0 ? recordada : null;
+  if (ctx.request.method === 'GET' && pedida > 0 && pedida !== recordada)
+    ctx.cookies.set('rd_sec', String(pedida), { path: '/', sameSite: 'lax', maxAge: 400 * 86400 });
+  if (ctx.request.method !== 'GET') invalidarMenu(user.id);
+
+  return conEsquema(inst?.esquema ?? null, async () => {
+    if (inst && ctx.request.method === 'GET' && PAGINAS_SECCION.includes(ruta) && !ctx.url.searchParams.has('seccion') && recordada > 0) {
+      const mia = await one('SELECT 1 FROM {S}.secciones WHERE id=? AND usuario_id=?', [recordada, user.id]);
+      if (mia) {
+        const destino = new URL(ctx.url);
+        destino.searchParams.set('seccion', String(recordada));
+        return ctx.redirect(destino.pathname + destino.search);
+      }
+      ctx.cookies.delete('rd_sec', { path: '/' });
+      ctx.locals.seccionId = null;
+    }
+    return next();
+  });
 });
